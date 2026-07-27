@@ -144,7 +144,9 @@ If your WM's window layout doesn't map cleanly onto sway's model
 part to think hardest about — see the `Window.rect` docstring in
 `model.py` for the constraints it needs to satisfy. Open an issue or
 a draft PR if you get stuck; I'd genuinely like to see this work on
-more than just sway.
+more than just sway. (note here: I am currently working on the scrollable
+WMs user interface, considering 3 long strips in the preview.. work to be done
+later this week, but a priority for me. Want to make this accessible.) 
 
 ## Why
 
