@@ -14,13 +14,14 @@ This is an early project of mine — the beauty is that it's fairly simple to ru
 This is a from-scratch rebuild, actively in progress. Right now it can:
 
 - Read live window/workspace state from **sway** via the `sway.py` provider (expandable to any WM, I hope!)
-- Render a workspace sidebar and a live preview of the focused
-  workspace's windows (read-only for now — no interaction yet)
+- Render a workspace sidebar and a live preview of the focused workspace's windows
+- Tab through workspaces in the sidebar — the preview follows your selection, independent of sway's own focus
+- Press Enter to actually switch sway to the selected workspace and exit
 - Load layout and settings from a TOML config, with transparent,
   human-editable presets (no hidden defaults in code)
 
 Not yet built: i3/other WM providers, quick actions, launcher, bars,
-input handling beyond "press any key to quit", and more. See the
+selecting individual windows in the preview, and more. See the
 architecture section below for where this is headed.
 
 ## Try it
@@ -34,7 +35,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Requires a running sway session (i3 and others coming later).
+Tab to move between workspaces, Enter to switch to one, `q` to quit
+without switching. Requires a running sway session (i3 and others
+coming later).
 
 ## Architecture
 
@@ -43,6 +46,9 @@ The core does three things, and only three things:
 - **WM provider layer** — translates window-manager state (sway, later
   i3/others) into a generic model (`Window`, `Region`, `WMState`), so
   nothing else in the codebase needs to know which WM you're running.
+  Providers also expose actions back to the WM (switching workspace,
+  focusing a window) through the same contract, so `main.py` never
+  hardcodes a WM-specific command.
 - **Layout engine** — converts a layout's ratios (0..1, independent of
   terminal size) into absolute terminal cells for each module. This gives
   you the freedom to run it fullscreen, as I do, or however you like.
@@ -51,10 +57,14 @@ The core does three things, and only three things:
   which module an item belongs to. I hope to make the navigation feel
   intuitive — feedback welcome :)
 
-Everything else — the sidebar, the preview, and future modules like
-quick actions or a launcher — is a swappable, movable, and (eventually)
-disableable module built on top of this core, registered by name rather
-than hardcoded.
+Modules — the sidebar, the preview, and future ones like quick actions
+or a launcher — live as standalone files under `modules/`, each owning
+both how it draws itself and where its own focusable items are. The
+core never guesses a module's internal layout, and never hardcodes a
+module's name. Modules can talk to each other only indirectly, through
+values `main.py` computes and passes to all of them — e.g. selecting a
+workspace in the sidebar tells the preview what to show, without either
+module knowing the other exists.
 
 Config and presets are plain, transparent TOML — what you see is what
 you get, no hidden defaults baked into Python. If you delete your config,
@@ -69,9 +79,13 @@ src/tuicc/
 ├── layout_engine.py       # ratios -> absolute terminal cells
 ├── navigation.py          # NavItem, tab/spatial/hotkey navigation
 ├── config.py               # loads + merges packaged defaults, presets, user config
-├── render.py                # curses rendering, module registry
+├── render.py                # module registry (draw + nav_items per module)
+├── render_utils.py          # shared curses drawing helpers
 ├── defaults/config.toml     # packaged default config
 ├── presets/                 # layout presets (plain TOML)
+├── modules/
+│   ├── sidebar.py             # workspace list, reports nav items
+│   └── preview.py             # windows of the currently focused workspace
 └── providers/
     ├── base.py               # Provider contract every WM provider implements
     ├── registry.py            # provider name -> Provider class
