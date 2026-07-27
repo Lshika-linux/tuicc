@@ -30,6 +30,7 @@ USER_CONFIG_PATH = Path.home() / ".config" / "tuicc" / "config.toml"
 class Config:
     layout: Layout
     tab_order: str
+    provider_name: str
 
 
 def ensure_user_config_exists() -> None:
@@ -67,5 +68,6 @@ def load_config() -> Config:
     layout = build_layout_from_preset(preset_number)
 
     tab_order_mode = user_data["navigation"]["tab_order"]
+    provider_name = user_data["wm"]["provider"]
 
-    return Config(layout=layout, tab_order=tab_order_mode)
+    return Config(layout=layout, tab_order=tab_order_mode, provider_name=provider_name)
