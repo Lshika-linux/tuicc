@@ -92,6 +92,60 @@ src/tuicc/
     └── sway.py                # sway implementation
 ```
 
+## Writing your own WM provider
+
+tuicc doesn't know what sway, i3, or anything else is — it only knows
+the `Provider` contract in `src/tuicc/providers/base.py`. If your WM
+can implement this contract, tuicc can run on it, no changes needed
+anywhere else in the codebase.
+
+A provider must implement three methods:
+
+```python
+class Provider(ABC):
+    def get_state(self) -> WMState:
+        """Return the current window-manager state."""
+
+    def focus_region(self, region_id: str) -> None:
+        """Switch the WM's focus to the given region (e.g. workspace)."""
+
+    def focus_window(self, window_id: str) -> None:
+        """Switch the WM's focus to the given window."""
+```
+
+`WMState` (defined in `model.py`) is the generic shape every provider
+translates into: a list of `Region`s (workspaces, or whatever your WM
+calls them), each holding a list of `Window`s, with positions
+normalized to 0..1 relative to their region — not pixels, so tuicc
+never needs to know your screen resolution.
+
+`src/tuicc/providers/sway.py` is the reference implementation — it's
+short and worth reading end to end before writing your own. It uses
+the `i3ipc` library to read sway's window tree and translate it into
+`WMState`, and sends `workspace <id>` / `[con_id=<id>] focus` commands
+back to sway for the two focus methods.
+
+Once your provider class exists, register it in
+`src/tuicc/providers/registry.py`:
+
+```python
+PROVIDERS = {
+    "sway": SwayProvider,
+    "yourwm": YourWMProvider,  # add this line
+}
+```
+
+Users select it with `provider = "yourwm"` under `[wm]` in their
+config. That's the whole integration surface — nothing in `main.py`,
+`render.py`, or any module needs to change.
+
+If your WM's window layout doesn't map cleanly onto sway's model
+(e.g. scrolling/infinite layouts), the `rect` normalization is the
+part to think hardest about — see the `Window.rect` docstring in
+`model.py` for the constraints it needs to satisfy. Open an issue or
+a draft PR if you get stuck; I'd genuinely like to see this work on
+more than just sway.
+
 ## Why
 
 Oh lord, that's the big question.
@@ -101,5 +155,3 @@ Because I don't rice, I use. I want a functioning, no-bullshit, no-bells-and-whi
 Existing tiling WM status bars and launchers tend to be single-purpose
 and WM-specific. tuicc aims for one keybind, one place, that adapts to
 whichever tiling WM (or scrolling WM) you're actually running.
-
-If you read this, genuinely, many thanks for taking the time. If you have questions, or wanna contact me for any reason, please do not hesitate, it will absolutely make my day. Have a great day internet stranger!!
