@@ -1,0 +1,13 @@
+[[box]]
+name = "sidebar"
+x = 0.0
+y = 0.0
+w = 0.2
+h = 1.0
+
+[[box]]
+name = "preview"
+x = 0.2
+y = 0.0
+w = 0.8
+h = 1.0

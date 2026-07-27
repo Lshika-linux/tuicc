@@ -1,0 +1,5 @@
+[layout]
+preset = 1
+
+[navigation]
+tab_order = "columns_first"
