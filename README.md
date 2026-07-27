@@ -101,3 +101,5 @@ Because I don't rice, I use. I want a functioning, no-bullshit, no-bells-and-whi
 Existing tiling WM status bars and launchers tend to be single-purpose
 and WM-specific. tuicc aims for one keybind, one place, that adapts to
 whichever tiling WM (or scrolling WM) you're actually running.
+
+If you read this, genuinely, many thanks for taking the time. If you have questions, or wanna contact me for any reason, please do not hesitate, it will absolutely make my day. Have a great day internet stranger!!
