@@ -10,7 +10,7 @@ from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
 
 
-def draw(stdscr, box, state, selected_id=None):
+def draw(stdscr, box, state, selected_id=None, focus_id=None):
     x, y, w, h = box
 
     draw_box_outline(stdscr, y, x, h, w)
@@ -31,5 +31,6 @@ def nav_items(box, state) -> list[NavItem]:
         items.append(NavItem(
             id=f"sidebar:{region.id}",
             rect=(x, y + 1 + i, w, 1),
+            focus_target=region.id,
         ))
     return items

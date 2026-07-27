@@ -25,7 +25,7 @@ class NavItem:
     id: str
     rect: tuple[float, float, float, float]  # x, y, w, h — normalized 0..1, same space as ModuleBox
     hotkey: str | None = None
-
+    focus_target: str | None = None
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:
     if mode == "columns_first":

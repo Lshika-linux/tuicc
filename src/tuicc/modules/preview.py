@@ -11,14 +11,16 @@ from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
 
 
-def draw(stdscr, box, state, selected_id=None):
+def draw(stdscr, box, state, selected_id=None, focus_id=None):
     x, y, w, h = box
 
     draw_box_outline(stdscr, y, x, h, w)
 
+    target_id = focus_id if focus_id is not None else state.focused_region_id
+
     focused_region = None
     for region in state.regions:
-        if region.id == state.focused_region_id:
+        if region.id == target_id:
             focused_region = region
 
     if focused_region is None:
