@@ -10,6 +10,12 @@ class SwayProvider(Provider):
     def __init__(self):
         self.conn = Connection()
 
+    def focus_region(self, region_id: str) -> None:
+            self.conn.command(f"workspace {region_id}")
+    
+    def focus_window(self, window_id: str) -> None:
+            self.conn.command(f"[con_id={window_id}] focus")
+   
     def get_state(self) -> WMState:
         tree = self.conn.get_tree()
     
@@ -49,3 +55,5 @@ class SwayProvider(Provider):
         focused_region_id = str(focused_ws_num) if focused_ws_num is not None else None
     
         return WMState(regions=regions, focused_region_id=focused_region_id)
+
+

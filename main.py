@@ -57,6 +57,9 @@ def main(stdscr):
         key = stdscr.getch()
         if key == ord("q"):
             break
+        elif key == 10 and focus_id is not None:
+            provider.focus_region(focus_id)
+            break
         elif key == ord("\t") and ordered:
             current_index = 0
             for i, item in enumerate(ordered):
@@ -65,7 +68,6 @@ def main(stdscr):
                     break
             next_index = (current_index + 1) % len(ordered)
             selected_id = ordered[next_index].id
-
-
+        
 if __name__ == "__main__":
     curses.wrapper(main)

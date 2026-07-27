@@ -10,9 +10,18 @@ from abc import ABC, abstractmethod
 
 from tuicc.model import WMState
 
-
 class Provider(ABC):
     @abstractmethod
     def get_state(self) -> WMState:
         """Return the current window-manager state as a WMState."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def focus_region(self, region_id: str) -> None:
+        """Switch the WM's focus to the given region (e.g. workspace)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def focus_window(self, window_id: str) -> None:
+        """Switch the WM's focus to the given window."""
         raise NotImplementedError
