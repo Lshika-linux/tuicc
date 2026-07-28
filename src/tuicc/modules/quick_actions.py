@@ -18,6 +18,15 @@ def draw(stdscr, box, ctx):
 
     draw_box_outline(stdscr, y, x, h, w, theme.get("border", 0))
 
+    if ctx.pending_confirm is not None:
+        label = ctx.pending_confirm["label"]
+        try:
+            stdscr.addstr(y + 1, x + 1, f"Run {label}?"[:max(w - 2, 0)], theme.get("urgent", 0))
+            stdscr.addstr(y + 2, x + 1, "y = yes, n = cancel"[:max(w - 2, 0)], theme.get("text", 0))
+        except curses.error:
+            pass
+        return
+
     for i, action in enumerate(actions):
         is_selected = f"quick_actions:{i}" == ctx.selected_id
         prefix = "> " if is_selected else "  "
@@ -30,7 +39,6 @@ def draw(stdscr, box, ctx):
             stdscr.addstr(y + 1 + i, x + 1, label[:max(w - 2, 0)], color)
         except curses.error:
             pass
-
 
 def nav_items(box, ctx) -> list[NavItem]:
     x, y, w, h = box

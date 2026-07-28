@@ -69,6 +69,7 @@ def main(stdscr):
 
     selected_id = None
     focus_id = None
+    pending_confirm = None
 
     while True:
         stdscr.erase()
@@ -86,6 +87,7 @@ def main(stdscr):
             focus_id=focus_id,
             theme=theme_pairs,
             config=cfg,
+            pending_confirm=pending_confirm,
         )
 
         items = collect_nav_items(cfg.layout, boxes, ctx)
@@ -116,6 +118,15 @@ def main(stdscr):
         stdscr.refresh()
 
         key = stdscr.getch()
+
+        if pending_confirm is not None:
+            if key == ord("y"):
+                subprocess.Popen(pending_confirm["command"], shell=True)
+                break
+            elif key == ord("n") or key == cfg.keybinds["quit"]:
+                pending_confirm = None
+            continue
+
         if key == cfg.keybinds["quit"]:
             break
         elif key == cfg.keybinds["confirm"] and selected_item is not None:
@@ -126,8 +137,13 @@ def main(stdscr):
                 provider.focus_window(selected_item.focus_target)
                 break
             elif selected_item.target_kind == "action":
-                subprocess.Popen(selected_item.focus_target, shell=True)
-                break
+                action_index = int(selected_item.id.split(":")[1])
+                action = cfg.quick_actions[action_index]
+                if action["confirm"]:
+                    pending_confirm = action
+                else:
+                    subprocess.Popen(action["command"], shell=True)
+                    break
         elif key == cfg.keybinds["tab"] and ordered:
             region_items = [item for item in ordered if item.target_kind == "region"]
             if region_items:

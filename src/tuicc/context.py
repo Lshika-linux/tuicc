@@ -17,3 +17,4 @@ class RenderContext:
     focus_id: str | None
     theme: dict
     config: object
+    pending_confirm: object = None
