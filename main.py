@@ -65,6 +65,7 @@ def _first_item_in_module(ordered, module_name):
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(False)
+    stdscr.timeout(1000)
     stdscr.keypad(True)
 
     cfg = load_config()
@@ -131,6 +132,9 @@ def main(stdscr):
         stdscr.refresh()
 
         key = stdscr.getch()
+    
+        if key == -1:
+            continue
 
         if pending_confirm is not None:
             if key == ord("y"):

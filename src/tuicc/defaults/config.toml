@@ -67,3 +67,7 @@ label = "Shutdown"
 icon = ""
 command = "systemctl poweroff"
 confirm = true
+
+[clock]
+time_format = "%H:%M:%S"
+date_format = "%a %d.%m."

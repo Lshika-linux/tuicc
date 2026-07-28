@@ -31,3 +31,7 @@ def draw_filled_box(stdscr, y, x, h, w, color_pair=0):
             stdscr.addstr(y + i, x, " " * w, color_pair)
     except curses.error:
         pass
+
+def centered_x(box_x, box_w, text):
+    padding = max(box_w - len(text), 0)
+    return box_x + padding // 2

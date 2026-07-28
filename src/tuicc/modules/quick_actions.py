@@ -9,15 +9,9 @@ import curses
 import subprocess
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline
-
+from tuicc.render_utils import draw_box_outline, centered_x
 
 ITEM_HEIGHT = 3
-
-
-def _centered_x(box_x, box_w, text):
-    padding = max(box_w - len(text), 0)
-    return box_x + padding // 2
 
 
 def draw(stdscr, box, ctx, module_name):
@@ -40,8 +34,8 @@ def draw(stdscr, box, ctx, module_name):
         dialog_x = x + max((w - dialog_w) // 2, 0)
         dialog_y = y + max((h - dialog_h) // 2, 0)
 
-        question_x = _centered_x(dialog_x, dialog_w, question)
-        hint_x = _centered_x(dialog_x, dialog_w, answer_hint)
+        question_x = centered_x(dialog_x, dialog_w, question)
+        hint_x = centered_x(dialog_x, dialog_w, answer_hint)
 
         try:
             stdscr.addstr(dialog_y + 1, question_x, question[:max(dialog_w, 0)], theme.get("urgent", 0))
@@ -64,7 +58,7 @@ def draw(stdscr, box, ctx, module_name):
             label = action["label"]
 
         inner_w = w - 2
-        label_x = _centered_x(x + 1, inner_w, label)
+        label_x = centered_x(x + 1, inner_w, label)
         try:
             stdscr.addstr(item_y + 1, label_x, label[:max(inner_w - 2, 0)], text_color)
         except curses.error:

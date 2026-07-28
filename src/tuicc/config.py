@@ -37,8 +37,10 @@ class Config:
     tab_order: str
     provider_name: str
     theme: dict
-    keybinds:dict
+    keybinds: dict
     quick_actions: list
+    clock_time_format: str
+    clock_date_format: str
     
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -93,7 +95,10 @@ def load_config() -> Config:
             "command": action_data["command"],
             "confirm": action_data.get("confirm", False),
         })
-    
+
+    clock_time_format = user_data["clock"]["time_format"]
+    clock_date_format = user_data["clock"]["date_format"]
+
     return Config(
         layout=layout,
         tab_order=tab_order_mode,
@@ -101,4 +106,6 @@ def load_config() -> Config:
         theme=theme,
         keybinds=keybinds,
         quick_actions=quick_actions,
+        clock_time_format=clock_time_format,
+        clock_date_format=clock_date_format,
     )
