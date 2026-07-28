@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tuicc.layout import Layout, ModuleBox
+from tuicc.theme import resolve_color
 
 
 PACKAGE_DIR = Path(__file__).parent
@@ -31,7 +32,7 @@ class Config:
     layout: Layout
     tab_order: str
     provider_name: str
-
+    theme: dict
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -70,4 +71,8 @@ def load_config() -> Config:
     tab_order_mode = user_data["navigation"]["tab_order"]
     provider_name = user_data["wm"]["provider"]
 
-    return Config(layout=layout, tab_order=tab_order_mode, provider_name=provider_name)
+    theme = {}
+    for role, value in user_data["theme"].items():
+        theme[role] = resolve_color(value)
+
+    return Config(layout=layout, tab_order=tab_order_mode, provider_name=provider_name, theme=theme)

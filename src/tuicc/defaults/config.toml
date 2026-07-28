@@ -6,3 +6,13 @@ tab_order = "columns_first"
 
 [wm]
 provider = "sway"
+
+[theme]
+background = "inherit"
+border = "white"
+border_selected = "cyan"
+text = "white"
+accent = "cyan"
+selected = "blue"
+warning = "yellow"
+urgent = "red"

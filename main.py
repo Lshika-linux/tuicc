@@ -10,13 +10,14 @@ from tuicc.providers.registry import build_provider
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order
 from tuicc.render import draw_all, collect_nav_items
-
+from tuicc.theme_setup import setup_theme
 
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(False)
 
     cfg = load_config()
+    theme_pairs = setup_theme(cfg.theme)
     provider = build_provider(cfg.provider_name)
 
     selected_id = None
