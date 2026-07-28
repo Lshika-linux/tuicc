@@ -152,7 +152,7 @@ def main(stdscr):
                 break
 
        
-        elif key == curses.KEY_BTAB:
+        elif key == cfg.keybinds["switch_module"]:
             module_names = [box.name for box in cfg.layout.boxes]
             if module_names:
                 current_index = 0
