@@ -27,7 +27,7 @@ def draw(stdscr, box, state, selected_id=None, focus_id=None, theme=None):
         except curses.error:
             pass
 
-def nav_items(box, state) -> list[NavItem]:
+def nav_items(box, state, focus_id=None) -> list[NavItem]:
     x, y, w, h = box
     items = []
     for i, region in enumerate(state.regions):

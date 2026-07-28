@@ -26,6 +26,8 @@ class NavItem:
     rect: tuple[float, float, float, float]  # x, y, w, h — normalized 0..1, same space as ModuleBox
     hotkey: str | None = None
     focus_target: str | None = None
+    target_kind: str = "region"
+
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:
     if mode == "columns_first":
@@ -38,33 +40,47 @@ def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem
     return sorted(items, key=key)
 
 
+def _overlap_amount(a_start, a_end, b_start, b_end):
+    return max(0, min(a_end, b_end) - max(a_start, b_start))
+
+
 def nearest_in_direction(items: list[NavItem], current: NavItem, direction: str) -> NavItem | None:
-    cx, cy = current.rect[0], current.rect[1]
+    cx0, cy0, cw, ch = current.rect
+    cx1, cy1 = cx0 + cw, cy0 + ch
 
     candidates = []
     for item in items:
         if item is current:
             continue
 
-        ix, iy = item.rect[0], item.rect[1]
+        ix0, iy0, iw, ih = item.rect
+        ix1, iy1 = ix0 + iw, iy0 + ih
 
-        if direction == "right" and ix > cx:
+        if direction == "right" and ix0 >= cx1:
             candidates.append(item)
-        elif direction == "left" and ix < cx:
+        elif direction == "left" and ix1 <= cx0:
             candidates.append(item)
-        elif direction == "down" and iy > cy:
+        elif direction == "down" and iy0 >= cy1:
             candidates.append(item)
-        elif direction == "up" and iy < cy:
+        elif direction == "up" and iy1 <= cy0:
             candidates.append(item)
 
     if not candidates:
         return None
 
     def score(item):
-        ix, iy = item.rect[0], item.rect[1]
-        y_diff = abs(iy - cy)
-        distance = ((ix - cx) ** 2 + (iy - cy) ** 2) ** 0.5
-        return (y_diff, distance)
+        ix0, iy0, iw, ih = item.rect
+        ix1, iy1 = ix0 + iw, iy0 + ih
+
+        if direction in ("left", "right"):
+            overlap = _overlap_amount(cy0, cy1, iy0, iy1)
+            gap = ix0 - cx1 if direction == "right" else cx0 - ix1
+        else:
+            overlap = _overlap_amount(cx0, cx1, ix0, ix1)
+            gap = iy0 - cy1 if direction == "down" else cy0 - iy1
+
+        has_overlap = overlap > 0
+        return (not has_overlap, gap)
 
     return min(candidates, key=score)
 

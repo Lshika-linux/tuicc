@@ -33,11 +33,11 @@ def draw_all(stdscr, layout, boxes, state, selected_id=None, focus_id=None, them
             continue
         draw_fn(stdscr, boxes[module_box.name], state, selected_id, focus_id, theme)
 
-def collect_nav_items(layout, boxes, state):
+def collect_nav_items(layout, boxes, state, focus_id=None):
     items = []
     for module_box in layout.boxes:
         nav_fn = NAV_PROVIDERS.get(module_box.name)
         if nav_fn is None:
             continue
-        items.extend(nav_fn(boxes[module_box.name], state))
+        items.extend(nav_fn(boxes[module_box.name], state, focus_id))
     return items
