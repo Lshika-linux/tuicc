@@ -17,7 +17,7 @@ class Window:
     title: str
     focused: bool
     rect: tuple[float, float, float, float]  # x, y, w, h — normalized 0..1 within the region
-
+    floating: bool = False
 
 @dataclass
 class Region:
