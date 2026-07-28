@@ -3,14 +3,14 @@ name = "sidebar"
 x = 0.0
 y = 0.0
 w = 0.2
-h = 0.8
+h = 0.70
 
 [[box]]
 name = "quick_actions"
 x = 0.0
-y = 0.8
+y = 0.70
 w = 0.2
-h = 0.2
+h = 0.30
 
 
 [[box]]
