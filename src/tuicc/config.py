@@ -38,6 +38,7 @@ class Config:
     provider_name: str
     theme: dict
     keybinds:dict
+    quick_actions: list
     
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -84,10 +85,20 @@ def load_config() -> Config:
     for action, key_name in user_data["navigation"]["keys"].items():
         keybinds[action] = resolve_key(key_name)
 
+    quick_actions = []
+    for action_data in user_data["quick_actions"]["action"]:
+        quick_actions.append({
+            "label": action_data["label"],
+            "icon": action_data.get("icon", ""),
+            "command": action_data["command"],
+            "confirm": action_data.get("confirm", False),
+        })
+    
     return Config(
         layout=layout,
         tab_order=tab_order_mode,
         provider_name=provider_name,
         theme=theme,
         keybinds=keybinds,
+        quick_actions=quick_actions,
     )

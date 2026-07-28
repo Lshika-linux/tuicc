@@ -1,7 +1,5 @@
 """Preview module: shows windows of the currently focused workspace.
 
-No navigable items yet — previews are read-only for now.
-
 ---
 IMPORTANT: Each module owns both how it draws itself and where its own focusable
 items are — the core never guesses a module's internal layout.
@@ -13,16 +11,16 @@ from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, draw_filled_box
 
 
-def draw(stdscr, box, state, selected_id=None, focus_id=None, theme=None):
+def draw(stdscr, box, ctx):
     x, y, w, h = box
-    theme = theme or {}
+    theme = ctx.theme or {}
 
     draw_box_outline(stdscr, y, x, h, w, theme.get("border", 0))
 
-    target_id = focus_id if focus_id is not None else state.focused_region_id
+    target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
 
     focused_region = None
-    for region in state.regions:
+    for region in ctx.state.regions:
         if region.id == target_id:
             focused_region = region
 
@@ -33,15 +31,15 @@ def draw(stdscr, box, state, selected_id=None, focus_id=None, theme=None):
     floating = [win for win in focused_region.windows if win.floating]
 
     for window in tiled:
-        is_selected = f"preview:{window.id}" == selected_id
+        is_selected = f"preview:{window.id}" == ctx.selected_id
         border_color = theme.get("selected", 0) if is_selected else theme.get("border", 0)
         _draw_window(stdscr, window, x, y, w, h, border_color, theme.get("text", 0))
 
     for window in floating:
-        is_selected = f"preview:{window.id}" == selected_id
+        is_selected = f"preview:{window.id}" == ctx.selected_id
         color = theme.get("selected", 0) if is_selected else theme.get("accent", 0)
         _draw_window(stdscr, window, x, y, w, h, color, color, filled=True)
-        
+
 
 def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, filled=False):
     rx, ry, rw, rh = window.rect
@@ -62,13 +60,13 @@ def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, filled=Fa
         pass
 
 
-def nav_items(box, state, focus_id=None) -> list[NavItem]:
+def nav_items(box, ctx) -> list[NavItem]:
     x, y, w, h = box
 
-    target_id = focus_id if focus_id is not None else state.focused_region_id
+    target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
 
     focused_region = None
-    for region in state.regions:
+    for region in ctx.state.regions:
         if region.id == target_id:
             focused_region = region
 

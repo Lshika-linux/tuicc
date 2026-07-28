@@ -1,6 +1,7 @@
 """Entry point: ties config, provider, layout engine and rendering together."""
 
 import curses
+import subprocess
 import sys
 import locale
 
@@ -9,6 +10,7 @@ locale.setlocale(locale.LC_ALL, "")
 sys.path.insert(0, "src")
 
 from tuicc.config import load_config
+from tuicc.context import RenderContext
 from tuicc.providers.registry import build_provider
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order, nearest_in_direction
@@ -78,7 +80,15 @@ def main(stdscr):
         if focus_id is None:
             focus_id = state.focused_region_id
 
-        items = collect_nav_items(cfg.layout, boxes, state, focus_id)
+        ctx = RenderContext(
+            state=state,
+            selected_id=selected_id,
+            focus_id=focus_id,
+            theme=theme_pairs,
+            config=cfg,
+        )
+
+        items = collect_nav_items(cfg.layout, boxes, ctx)
         ordered = tab_order(items, mode=cfg.tab_order)
 
         still_valid = any(item.id == selected_id for item in ordered)
@@ -94,6 +104,7 @@ def main(stdscr):
                 selected_id = ordered[0].id
             else:
                 selected_id = None
+            ctx.selected_id = selected_id
 
         selected_item = None
         for item in ordered:
@@ -101,7 +112,7 @@ def main(stdscr):
                 selected_item = item
                 break
 
-        draw_all(stdscr, cfg.layout, boxes, state, selected_id, focus_id, theme_pairs)
+        draw_all(stdscr, cfg.layout, boxes, ctx)
         stdscr.refresh()
 
         key = stdscr.getch()
@@ -113,6 +124,9 @@ def main(stdscr):
                 break
             elif selected_item.target_kind == "window":
                 provider.focus_window(selected_item.focus_target)
+                break
+            elif selected_item.target_kind == "action":
+                subprocess.Popen(selected_item.focus_target, shell=True)
                 break
         elif key == cfg.keybinds["tab"] and ordered:
             region_items = [item for item in ordered if item.target_kind == "region"]

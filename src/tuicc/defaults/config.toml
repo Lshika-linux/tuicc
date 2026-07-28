@@ -38,3 +38,31 @@ down = "Down"
 tab = "Tab"
 confirm = "Enter"
 quit = "q"
+
+
+[[quick_actions.action]]
+# label is shown, icon is optional (leave "" for none), command runs
+# on Enter, confirm=true asks y/n before running (use for destructive
+# actions like shutdown).
+label = "Lock"
+icon = ""
+command = "swaylock"
+confirm = false
+
+[[quick_actions.action]]
+label = "Logout"
+icon = ""
+command = "swaymsg exit"
+confirm = true
+
+[[quick_actions.action]]
+label = "Reboot"
+icon = ""
+command = "systemctl reboot"
+confirm = true
+
+[[quick_actions.action]]
+label = "Shutdown"
+icon = ""
+command = "systemctl poweroff"
+confirm = true
