@@ -6,6 +6,7 @@ items are — the core never guesses a module's internal layout.
 """
 
 import curses
+import subprocess
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
@@ -84,3 +85,15 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             target_kind="action",
         ))
     return items
+
+
+TARGET_KIND = "action"
+
+
+def handle(provider, item, cfg):
+    action_index = int(item.id.split(":")[1])
+    action = cfg.quick_actions[action_index]
+    if action["confirm"]:
+        return False, action
+    subprocess.Popen(action["command"], shell=True)
+    return True, None

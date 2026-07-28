@@ -1,7 +1,6 @@
 """Entry point: ties config, provider, layout engine and rendering together."""
 
 import curses
-import subprocess
 import sys
 import locale
 
@@ -16,6 +15,7 @@ from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order, nearest_in_direction
 from tuicc.render import draw_all, collect_nav_items
 from tuicc.theme_setup import setup_theme
+from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
 
 
 def _sibling_in_same_group(ordered, current, direction):
@@ -143,20 +143,15 @@ def main(stdscr):
         if key == cfg.keybinds["quit"]:
             break
         elif key == cfg.keybinds["confirm"] and selected_item is not None:
-            if selected_item.target_kind == "region":
-                provider.focus_region(selected_item.focus_target)
+            handler = ACTION_HANDLERS.get(selected_item.target_kind)
+            if handler is not None:
+                should_exit, pending = handler(provider, selected_item, cfg)
+            if pending is not None:
+                pending_confirm = pending
+            if should_exit:
                 break
-            elif selected_item.target_kind == "window":
-                provider.focus_window(selected_item.focus_target)
-                break
-            elif selected_item.target_kind == "action":
-                action_index = int(selected_item.id.split(":")[1])
-                action = cfg.quick_actions[action_index]
-                if action["confirm"]:
-                    pending_confirm = action
-                else:
-                    subprocess.Popen(action["command"], shell=True)
-                    break
+
+       
         elif key == curses.KEY_BTAB:
             module_names = [box.name for box in cfg.layout.boxes]
             if module_names:
