@@ -13,16 +13,16 @@ This is an early project of mine — the beauty is that it's fairly simple to ru
 
 This is a from-scratch rebuild, actively in progress. Right now it can:
 
-- Read live window/workspace state from **sway** via the `sway.py` provider (expandable to any WM, I hope!)
-- Render a workspace sidebar and a live preview of the focused workspace's windows
+- Read live window/workspace state from **sway** via the `sway.py` provider (expandable to any WM, I hope!), including floating windows alongside tiled ones
+- Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
 - Tab through workspaces in the sidebar — the preview follows your selection, independent of sway's own focus
-- Press Enter to actually switch sway to the selected workspace and exit
-- Load layout and settings from a TOML config, with transparent,
-  human-editable presets (no hidden defaults in code)
+- Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, exiting tuicc
+- Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
 
-Not yet built: i3/other WM providers, quick actions, launcher, bars,
-selecting individual windows in the preview, and more. See the
-architecture section below for where this is headed.
+Not yet built: i3/other WM providers (scrollable-WM preview support is
+in progress, see below), quick actions, launcher, bars, and a way to
+summon tuicc with a keybind instead of running it from a terminal.
+See the architecture section below for where this is headed.
 
 ## Try it
 
@@ -35,9 +35,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Tab to move between workspaces, Enter to switch to one, `q` to quit
-without switching. Requires a running sway session (i3 and others
-coming later).
+Tab cycles through workspaces. Arrow keys move into the preview and
+between windows, or back out to the sidebar. Enter switches to the
+selected workspace or focuses the selected window, then exits. `q`
+quits without doing anything. Requires a running sway session (i3
+and others coming later).
 
 ## Architecture
 
@@ -54,8 +56,10 @@ The core does three things, and only three things:
   you the freedom to run it fullscreen, as I do, or however you like.
 - **Input routing** — tab order, spatial (arrow-key) navigation, and
   hotkeys, all operating on a generic `NavItem` list, independent of
-  which module an item belongs to. I hope to make the navigation feel
-  intuitive — feedback welcome :)
+  which module an item belongs to. Navigation inside a module (e.g.
+  cycling windows in the preview) uses a predictable left-to-right
+  order rather than pure spatial search, which breaks down once
+  windows overlap (floating windows in particular).
 
 Modules — the sidebar, the preview, and future ones like quick actions
 or a launcher — live as standalone files under `modules/`, each owning
@@ -65,6 +69,17 @@ module's name. Modules can talk to each other only indirectly, through
 values `main.py` computes and passes to all of them — e.g. selecting a
 workspace in the sidebar tells the preview what to show, without either
 module knowing the other exists.
+
+Colors are resolved from config into curses color pairs at startup
+(`theme.py` for the pure resolution logic, `theme_setup.py` for the
+one-time curses setup) and passed down to every module the same way —
+a module that doesn't care about a given role just ignores it.
+
+Floating windows aren't drawn to mirror reality exactly (they can
+overlap arbitrarily, and sway doesn't expose true stacking order) —
+the goal is a readable overview of everything that's open, so tiled
+windows draw first and floating windows draw on top, always, in a
+distinct accent color with a filled background.
 
 Config and presets are plain, transparent TOML — what you see is what
 you get, no hidden defaults baked into Python. If you delete your config,
@@ -78,6 +93,8 @@ src/tuicc/
 ├── layout.py              # ModuleBox, Layout — module positions as ratios
 ├── layout_engine.py       # ratios -> absolute terminal cells
 ├── navigation.py          # NavItem, tab/spatial/hotkey navigation
+├── theme.py                 # resolves config colors (named/hex/RGB) to curses color numbers
+├── theme_setup.py           # one-time curses color pair setup at startup
 ├── config.py               # loads + merges packaged defaults, presets, user config
 ├── render.py                # module registry (draw + nav_items per module)
 ├── render_utils.py          # shared curses drawing helpers
@@ -117,7 +134,8 @@ class Provider(ABC):
 translates into: a list of `Region`s (workspaces, or whatever your WM
 calls them), each holding a list of `Window`s, with positions
 normalized to 0..1 relative to their region — not pixels, so tuicc
-never needs to know your screen resolution.
+never needs to know your screen resolution. `Window.floating` marks
+windows that don't participate in a tiled layout.
 
 `src/tuicc/providers/sway.py` is the reference implementation — it's
 short and worth reading end to end before writing your own. It uses
@@ -144,9 +162,12 @@ If your WM's window layout doesn't map cleanly onto sway's model
 part to think hardest about — see the `Window.rect` docstring in
 `model.py` for the constraints it needs to satisfy. Open an issue or
 a draft PR if you get stuck; I'd genuinely like to see this work on
-more than just sway. (note here: I am currently working on the scrollable
-WMs user interface, considering 3 long strips in the preview.. work to be done
-later this week, but a priority for me. Want to make this accessible.) 
+more than just sway.
+
+**Note:** I'm actively working on preview support for scrollable WMs
+right now — thinking three visible columns (previous/current/next)
+instead of trying to render an entire infinite strip. Priority for me
+this week, since I want this to actually be usable beyond sway.
 
 ## Why
 
