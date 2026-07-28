@@ -1,13 +1,24 @@
 [layout]
+# Which preset to use — see src/tuicc/presets/ for available numbers.
 preset = 1
 
 [navigation]
+# How Tab cycles through items: "columns_first" (top to bottom, then
+# next column) or "rows_first" (left to right, then next row).
+# leave default.. useful only if you wanted a horizontal sidebar
+# [horizontal sidebar module not built yet, but planned]
 tab_order = "columns_first"
 
 [wm]
+# Which WM provider to use. Built in: "sway". See README for how to
+# add your own.
 provider = "sway"
 
 [theme]
+# Each value accepts: "inherit" (use the terminal's own color),
+# a named color (black, red, green, yellow, blue, magenta, cyan, white),
+# a hex string ("#7dd3fc"), or an [R, G, B] list (e.g. [125, 211, 252]).
+# Hex and RGB are approximated to the nearest of curses's 256 colors.
 background = "inherit"
 border = "white"
 border_selected = "cyan"
@@ -18,6 +29,8 @@ warning = "yellow"
 urgent = "red"
 
 [navigation.keys]
+# Named keys: Left, Right, Up, Down, Tab, Shift+Tab, Enter, Escape,
+# Space. Or any single character, e.g. "h", "j", "k", "l".
 left = "Left"
 right = "Right"
 up = "Up"
