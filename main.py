@@ -2,6 +2,9 @@
 
 import curses
 import sys
+import locale
+
+locale.setlocale(locale.LC_ALL, "")
 
 sys.path.insert(0, "src")
 
