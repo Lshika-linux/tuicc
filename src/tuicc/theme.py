@@ -9,12 +9,11 @@ Accepts three formats per role: a named color ("cyan"), a hex string
 palette), an [R, G, B] list (same approximation), or the literal
 string "inherit" (curses's default terminal color, -1).
 
-TO BE DECIDED!!!
 This file only resolves color values into numbers curses understands
-(0-255, or -1 for inherit). It does not call curses.init_pair() or
-curses.start_color() — that wiring doesn't exist yet as of writing
-this, and needs a decision on where it lives (main.py at startup,
-or a dedicated setup file) before modules can actually draw in color.
+(0-255, or -1 for inherit) — it stays pure and curses-free, testable
+without a running screen. Turning those numbers into actual drawable
+curses.init_pair() pairs happens in theme_setup.py, run once at
+startup.
 """
 
 
