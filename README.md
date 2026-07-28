@@ -15,16 +15,17 @@ This is an early project of mine — the beauty is that it's fairly simple to ru
 
 This is a from-scratch rebuild, actively in progress. Right now it can:
 
-- Read live window/workspace state from **sway** via the `sway.py` provider (expandable to any WM, I hope!), including floating windows alongside tiled ones
+- Read live window/workspace state from **sway** and **i3** via the `sway.py` and `i3.py` providers (expandable to any WM, I hope!), including floating windows alongside tiled ones
 - Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
-- Tab through workspaces in the sidebar — the preview follows your selection, independent of sway's own focus
+- Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
 - Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, exiting tuicc
 - Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
+- Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM
 
-Not yet built: i3/other WM providers (scrollable-WM preview support is
-in progress, see below), quick actions, launcher, bars, and a way to
-summon tuicc with a keybind instead of running it from a terminal.
-See the architecture section below for where this is headed.
+Not yet built: scrollable-WM support (`scroll`/niri, see below), quick
+actions, launcher, bars, and a way to summon tuicc with a keybind
+instead of running it from a terminal. See the architecture section
+below for where this is headed.
 
 ## Try it
 
@@ -40,19 +41,20 @@ python main.py
 Tab cycles through workspaces. Arrow keys move into the preview and
 between windows, or back out to the sidebar. Enter switches to the
 selected workspace or focuses the selected window, then exits. `q`
-quits without doing anything. Requires a running sway session (i3
-and others coming later).
+quits without doing anything. Requires a running sway or i3 session;
+set `provider = "sway"` or `provider = "i3"` under `[wm]` in your
+config (see below).
 
 ## Architecture
 
 The core does three things, and only three things:
 
-- **WM provider layer** — translates window-manager state (sway, later
-  i3/others) into a generic model (`Window`, `Region`, `WMState`), so
-  nothing else in the codebase needs to know which WM you're running.
-  Providers also expose actions back to the WM (switching workspace,
-  focusing a window) through the same contract, so `main.py` never
-  hardcodes a WM-specific command.
+- **WM provider layer** — translates window-manager state (sway, i3,
+  and later others) into a generic model (`Window`, `Region`,
+  `WMState`), so nothing else in the codebase needs to know which WM
+  you're running. Providers also expose actions back to the WM
+  (switching workspace, focusing a window) through the same contract,
+  so `main.py` never hardcodes a WM-specific command.
 - **Layout engine** — converts a layout's ratios (0..1, independent of
   terminal size) into absolute terminal cells for each module. This gives
   you the freedom to run it fullscreen, as I do, or however you like.
@@ -78,10 +80,10 @@ one-time curses setup) and passed down to every module the same way —
 a module that doesn't care about a given role just ignores it.
 
 Floating windows aren't drawn to mirror reality exactly (they can
-overlap arbitrarily, and sway doesn't expose true stacking order) —
-the goal is a readable overview of everything that's open, so tiled
-windows draw first and floating windows draw on top, always, in a
-distinct accent color with a filled background.
+overlap arbitrarily, and neither sway nor i3 exposes true stacking
+order) — the goal is a readable overview of everything that's open, so
+tiled windows draw first and floating windows draw on top, always, in
+a distinct accent color with a filled background.
 
 Config and presets are plain, transparent TOML — what you see is what
 you get, no hidden defaults baked into Python. If you delete your config,
@@ -108,7 +110,8 @@ src/tuicc/
 └── providers/
     ├── base.py               # Provider contract every WM provider implements
     ├── registry.py            # provider name -> Provider class
-    └── sway.py                # sway implementation
+    ├── sway.py                # sway implementation
+    └── i3.py                  # i3 implementation
 ```
 
 ## Writing your own WM provider
@@ -139,11 +142,21 @@ normalized to 0..1 relative to their region — not pixels, so tuicc
 never needs to know your screen resolution. `Window.floating` marks
 windows that don't participate in a tiled layout.
 
-`src/tuicc/providers/sway.py` is the reference implementation — it's
-short and worth reading end to end before writing your own. It uses
-the `i3ipc` library to read sway's window tree and translate it into
-`WMState`, and sends `workspace <id>` / `[con_id=<id>] focus` commands
-back to sway for the two focus methods.
+`src/tuicc/providers/sway.py` and `src/tuicc/providers/i3.py` are the
+reference implementations — both are short and worth reading end to
+end before writing your own. Both use the `i3ipc` library to read the
+WM's window tree and translate it into `WMState`, and send IPC
+commands back to the WM for the two focus methods. They're
+deliberately kept close in structure so you can diff them to see
+exactly what changes between a Wayland/wlroots WM and an X11 one:
+i3 has no `app_id` (falls back to `window_class`), wraps floating
+windows in a `floating_con` container that sway flattens away, and
+i3's `workspace.leaves()` includes floating windows too, so the i3
+provider has to de-duplicate them against `floating_nodes` explicitly.
+If you're targeting a wlroots-based WM (sway, or a sway fork like
+`scroll`), start from `sway.py`; if you're targeting anything else
+speaking i3's IPC protocol (i3 itself, or a fork like `scroll`, which
+speaks a superset of it), start from `i3.py`.
 
 Once your provider class exists, register it in
 `src/tuicc/providers/registry.py`:
@@ -151,6 +164,7 @@ Once your provider class exists, register it in
 ```python
 PROVIDERS = {
     "sway": SwayProvider,
+    "i3": I3Provider,
     "yourwm": YourWMProvider,  # add this line
 }
 ```
@@ -164,12 +178,15 @@ If your WM's window layout doesn't map cleanly onto sway's model
 part to think hardest about — see the `Window.rect` docstring in
 `model.py` for the constraints it needs to satisfy. Open an issue or
 a draft PR if you get stuck; I'd genuinely like to see this work on
-more than just sway.
+more than just sway and i3.
 
-**Note:** I'm actively working on preview support for scrollable WMs
-right now — thinking three visible columns (previous/current/next)
-instead of trying to render an entire infinite strip. Priority for me
-this week, since I want this to actually be usable beyond sway.
+**Note:** I'm actively researching what a `scroll`/niri provider would
+need — `scroll` (a sway fork with a PaperWM-style scrolling layout)
+turns out to speak a superset of sway's IPC, plus a `fully_visible`
+flag per window that's a natural fit for a filmstrip-style preview
+(previous/current/next column) instead of trying to render an entire
+infinite strip. Nothing built yet, but the shape of the problem is
+clearer than it was.
 
 ## Why
 
