@@ -21,3 +21,13 @@ def draw_box_outline(stdscr, y, x, h, w, color_pair=0):
         stdscr.addstr(y + h - 1, x, "+" + "-" * (w - 2) + "+", color_pair)
     except curses.error:
         pass
+
+def draw_filled_box(stdscr, y, x, h, w, color_pair=0):
+    if h < 1 or w < 1:
+        return
+
+    try:
+        for i in range(h):
+            stdscr.addstr(y + i, x, " " * w, color_pair)
+    except curses.error:
+        pass
