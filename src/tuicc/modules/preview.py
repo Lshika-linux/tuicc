@@ -11,11 +11,14 @@ from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, draw_filled_box
 
 
-def draw(stdscr, box, ctx):
+def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
 
-    draw_box_outline(stdscr, y, x, h, w, theme.get("border", 0))
+    is_active = module_name == ctx.active_module
+    outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
+
+    draw_box_outline(stdscr, y, x, h, w, outer_color)
 
     target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
 
@@ -60,7 +63,7 @@ def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, filled=Fa
         pass
 
 
-def nav_items(box, ctx) -> list[NavItem]:
+def nav_items(box, ctx, module_name) -> list[NavItem]:
     x, y, w, h = box
 
     target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id

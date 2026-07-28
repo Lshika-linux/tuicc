@@ -18,3 +18,4 @@ class RenderContext:
     theme: dict
     config: object
     pending_confirm: object = None
+    active_module: str | None = None

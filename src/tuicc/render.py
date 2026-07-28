@@ -31,7 +31,7 @@ def draw_all(stdscr, layout, boxes, ctx):
         draw_fn = MODULES.get(module_box.name)
         if draw_fn is None:
             continue
-        draw_fn(stdscr, boxes[module_box.name], ctx)
+        draw_fn(stdscr, boxes[module_box.name], ctx, module_box.name)
 
 
 def collect_nav_items(layout, boxes, ctx):
@@ -40,5 +40,5 @@ def collect_nav_items(layout, boxes, ctx):
         nav_fn = NAV_PROVIDERS.get(module_box.name)
         if nav_fn is None:
             continue
-        items.extend(nav_fn(boxes[module_box.name], ctx))
+        items.extend(nav_fn(boxes[module_box.name], ctx, module_box.name))
     return items

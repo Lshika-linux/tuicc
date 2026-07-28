@@ -51,6 +51,17 @@ def _region_item_for_focus(ordered, focus_id):
     return None
 
 
+def _module_of_item(item):
+    return item.id.split(":")[0]
+
+
+def _first_item_in_module(ordered, module_name):
+    for item in ordered:
+        if _module_of_item(item) == module_name:
+            return item
+    return None
+
+
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(False)
@@ -70,6 +81,7 @@ def main(stdscr):
     selected_id = None
     focus_id = None
     pending_confirm = None
+    active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
     while True:
         stdscr.erase()
@@ -88,6 +100,7 @@ def main(stdscr):
             theme=theme_pairs,
             config=cfg,
             pending_confirm=pending_confirm,
+            active_module=active_module,
         )
 
         items = collect_nav_items(cfg.layout, boxes, ctx)
@@ -144,17 +157,32 @@ def main(stdscr):
                 else:
                     subprocess.Popen(action["command"], shell=True)
                     break
-        elif key == cfg.keybinds["tab"] and ordered:
-            region_items = [item for item in ordered if item.target_kind == "region"]
-            if region_items:
+        elif key == curses.KEY_BTAB:
+            module_names = [box.name for box in cfg.layout.boxes]
+            if module_names:
                 current_index = 0
-                for i, item in enumerate(region_items):
+                if active_module in module_names:
+                    current_index = module_names.index(active_module)
+                next_index = (current_index + 1) % len(module_names)
+                active_module = module_names[next_index]
+
+                first_item = _first_item_in_module(ordered, active_module)
+                if first_item is not None:
+                    selected_id = first_item.id
+                    if first_item.target_kind == "region":
+                        focus_id = first_item.focus_target
+        elif key == cfg.keybinds["tab"] and ordered:
+            module_items = [item for item in ordered if _module_of_item(item) == active_module]
+            if module_items:
+                current_index = 0
+                for i, item in enumerate(module_items):
                     if item.id == selected_id:
                         current_index = i
                         break
-                next_index = (current_index + 1) % len(region_items)
-                selected_id = region_items[next_index].id
-                focus_id = region_items[next_index].focus_target
+                next_index = (current_index + 1) % len(module_items)
+                selected_id = module_items[next_index].id
+                if module_items[next_index].target_kind == "region":
+                    focus_id = module_items[next_index].focus_target
         elif key in direction_keys and selected_item is not None:
             direction = direction_keys[key]
 
@@ -170,6 +198,7 @@ def main(stdscr):
 
             if next_item is not None:
                 selected_id = next_item.id
+                active_module = _module_of_item(next_item)
                 if next_item.target_kind == "region":
                     focus_id = next_item.focus_target
 

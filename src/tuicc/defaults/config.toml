@@ -20,8 +20,8 @@ provider = "sway"
 # a hex string ("#7dd3fc"), or an [R, G, B] list (e.g. [125, 211, 252]).
 # Hex and RGB are approximated to the nearest of curses's 256 colors.
 background = "inherit"
-border = "white"
-border_selected = "cyan"
+border = "#808080"
+border_selected = "white"
 text = "white"
 accent = "cyan"
 selected = "blue"
