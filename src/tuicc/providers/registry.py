@@ -8,9 +8,11 @@ not be imported by any of them.
 
 from tuicc.providers.base import Provider
 from tuicc.providers.sway import SwayProvider
+from tuicc.providers.i3 import I3Provider
 
 PROVIDERS = {
     "sway": SwayProvider,
+    "i3": I3Provider,
 }
 
 
