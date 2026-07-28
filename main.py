@@ -52,7 +52,7 @@ def main(stdscr):
                 focus_id = item.focus_target
                 break
 
-        draw_all(stdscr, cfg.layout, boxes, state, selected_id, focus_id)
+        draw_all(stdscr, cfg.layout, boxes, state, selected_id, focus_id, theme_pairs)
         stdscr.refresh()
 
         key = stdscr.getch()

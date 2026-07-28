@@ -10,17 +10,20 @@ from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
 
 
-def draw(stdscr, box, state, selected_id=None, focus_id=None):
+def draw(stdscr, box, state, selected_id=None, focus_id=None, theme=None):
     x, y, w, h = box
+    theme = theme or {}
 
-    draw_box_outline(stdscr, y, x, h, w)
+    draw_box_outline(stdscr, y, x, h, w, theme.get("border", 0))
 
     for i, region in enumerate(state.regions):
         label = f"[{region.id}] {region.name}"
-        prefix = "> " if f"sidebar:{region.id}" == selected_id else "  "
+        is_selected = f"sidebar:{region.id}" == selected_id
+        prefix = "> " if is_selected else "  "
         label = prefix + label
+        color = theme.get("selected", 0) if is_selected else theme.get("text", 0)
         try:
-            stdscr.addstr(y + 1 + i, x + 1, label[:max(w - 2, 0)])
+            stdscr.addstr(y + 1 + i, x + 1, label[:max(w - 2, 0)], color)
         except curses.error:
             pass
 

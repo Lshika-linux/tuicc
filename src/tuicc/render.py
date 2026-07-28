@@ -26,12 +26,12 @@ NAV_PROVIDERS = {
 }
 
 
-def draw_all(stdscr, layout, boxes, state, selected_id=None, focus_id=None):
+def draw_all(stdscr, layout, boxes, state, selected_id=None, focus_id=None, theme=None):
     for module_box in layout.boxes:
         draw_fn = MODULES.get(module_box.name)
         if draw_fn is None:
             continue
-        draw_fn(stdscr, boxes[module_box.name], state, selected_id, focus_id)
+        draw_fn(stdscr, boxes[module_box.name], state, selected_id, focus_id, theme)
 
 def collect_nav_items(layout, boxes, state):
     items = []
