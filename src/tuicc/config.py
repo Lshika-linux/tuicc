@@ -10,8 +10,12 @@ If the user's config file is missing, it is created by copying the
 packaged default — so there is always a real, editable file at a
 predictable location, never a silent in-memory fallback the user
 can't see or edit.
-"""
 
+Beyond layout, this also resolves [theme] colors (via theme.py) and
+[navigation.keys] keybindings (via keybinds.py) into ready-to-use
+values — config.py is where raw TOML becomes the objects/numbers
+the rest of tuicc actually consumes.
+"""
 import shutil
 import tomllib
 from dataclasses import dataclass
@@ -19,7 +23,7 @@ from pathlib import Path
 
 from tuicc.layout import Layout, ModuleBox
 from tuicc.theme import resolve_color
-
+from tuicc.keybinds import resolve_key
 
 PACKAGE_DIR = Path(__file__).parent
 DEFAULT_CONFIG_PATH = PACKAGE_DIR / "defaults" / "config.toml"
@@ -33,7 +37,8 @@ class Config:
     tab_order: str
     provider_name: str
     theme: dict
-
+    keybinds:dict
+    
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
         USER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -75,4 +80,14 @@ def load_config() -> Config:
     for role, value in user_data["theme"].items():
         theme[role] = resolve_color(value)
 
-    return Config(layout=layout, tab_order=tab_order_mode, provider_name=provider_name, theme=theme)
+    keybinds = {}
+    for action, key_name in user_data["navigation"]["keys"].items():
+        keybinds[action] = resolve_key(key_name)
+
+    return Config(
+        layout=layout,
+        tab_order=tab_order_mode,
+        provider_name=provider_name,
+        theme=theme,
+        keybinds=keybinds,
+    )

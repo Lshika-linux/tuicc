@@ -16,14 +16,6 @@ from tuicc.render import draw_all, collect_nav_items
 from tuicc.theme_setup import setup_theme
 
 
-DIRECTION_KEYS = {
-    curses.KEY_LEFT: "left",
-    curses.KEY_RIGHT: "right",
-    curses.KEY_UP: "up",
-    curses.KEY_DOWN: "down",
-}
-
-
 def _sibling_in_same_group(ordered, current, direction):
     same_kind = [item for item in ordered if item.target_kind == current.target_kind]
     same_kind_sorted = sorted(same_kind, key=lambda item: item.rect[0])
@@ -66,6 +58,13 @@ def main(stdscr):
     theme_pairs = setup_theme(cfg.theme)
     provider = build_provider(cfg.provider_name)
 
+    direction_keys = {
+        cfg.keybinds["left"]: "left",
+        cfg.keybinds["right"]: "right",
+        cfg.keybinds["up"]: "up",
+        cfg.keybinds["down"]: "down",
+    }
+
     selected_id = None
     focus_id = None
 
@@ -106,16 +105,16 @@ def main(stdscr):
         stdscr.refresh()
 
         key = stdscr.getch()
-        if key == ord("q"):
+        if key == cfg.keybinds["quit"]:
             break
-        elif key == 10 and selected_item is not None:
+        elif key == cfg.keybinds["confirm"] and selected_item is not None:
             if selected_item.target_kind == "region":
                 provider.focus_region(selected_item.focus_target)
                 break
             elif selected_item.target_kind == "window":
                 provider.focus_window(selected_item.focus_target)
                 break
-        elif key == ord("\t") and ordered:
+        elif key == cfg.keybinds["tab"] and ordered:
             region_items = [item for item in ordered if item.target_kind == "region"]
             if region_items:
                 current_index = 0
@@ -126,8 +125,8 @@ def main(stdscr):
                 next_index = (current_index + 1) % len(region_items)
                 selected_id = region_items[next_index].id
                 focus_id = region_items[next_index].focus_target
-        elif key in DIRECTION_KEYS and selected_item is not None:
-            direction = DIRECTION_KEYS[key]
+        elif key in direction_keys and selected_item is not None:
+            direction = direction_keys[key]
 
             next_item = None
             if selected_item.target_kind == "window" and direction in ("left", "right"):

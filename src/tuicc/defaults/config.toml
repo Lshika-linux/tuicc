@@ -16,3 +16,12 @@ accent = "cyan"
 selected = "blue"
 warning = "yellow"
 urgent = "red"
+
+[navigation.keys]
+left = "Left"
+right = "Right"
+up = "Up"
+down = "Down"
+tab = "Tab"
+confirm = "Enter"
+quit = "q"
