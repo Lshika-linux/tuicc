@@ -9,6 +9,8 @@ generic model, with everything else as swappable modules.
 
 This is an early project of mine — the beauty is that it's fairly simple to run on any WM, as long as you're able to write your own WM provider: the only part of the code that talks directly to your WM and translates it into tuicc's data.
 
+![tuicc showing a workspace with overlapping floating windows](./screenshot.png)
+
 ## Status: early / experimental
 
 This is a from-scratch rebuild, actively in progress. Right now it can:
