@@ -1,6 +1,7 @@
 """Entry point: ties config, provider, layout engine and rendering together."""
 
 import curses
+import subprocess
 import sys
 import locale
 
@@ -150,10 +151,10 @@ def main(stdscr):
             handler = ACTION_HANDLERS.get(selected_item.target_kind)
             if handler is not None:
                 should_exit, pending = handler(provider, selected_item, cfg)
-            if pending is not None:
-                pending_confirm = pending
-            if should_exit:
-                break
+                if pending is not None:
+                    pending_confirm = pending
+                if should_exit:
+                    break
 
        
         elif key == cfg.keybinds["switch_module"]:
