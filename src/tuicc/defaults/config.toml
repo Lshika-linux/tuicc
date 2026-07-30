@@ -10,9 +10,14 @@ preset = 1
 tab_order = "columns_first"
 
 [wm]
-# Which WM provider to use. Built in: "sway". See README for how to
+# Which WM provider to use. Built in: "sway", "i3". See README for how to
 # add your own.
 provider = "sway"
+# How many workspace slots the sidebar always shows, regardless of how
+# many are actually in use.
+# "Only show real workspaces" is NOT a feature, would introduce complexity that
+# I do not want. You're ofc free to alter the code.
+total_workspaces = 10
 
 [theme]
 # Each value accepts: "inherit" (use the terminal's own color),
@@ -71,3 +76,12 @@ confirm = true
 [clock]
 time_format = "%H:%M:%S"
 date_format = "%a %d.%m."
+
+[title_condense]
+# App IDs classified as terminals: their window title is shown in full
+# (it's usually the running command or cwd, which is exactly useful).
+terminal_apps = ["kitty", "alacritty", "foot", "wezterm", "st", "urxvt", "xterm", "ghostty"]
+# App IDs classified as browsers: only the site/page name is shown,
+# not the browser's own name repeated in every title.
+browser_apps = ["librewolf", "firefox", "chromium", "chrome", "google-chrome"]
+browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]

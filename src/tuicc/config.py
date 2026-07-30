@@ -36,11 +36,15 @@ class Config:
     layout: Layout
     tab_order: str
     provider_name: str
+    total_workspaces: int
     theme: dict
     keybinds: dict
     quick_actions: list
     clock_time_format: str
     clock_date_format: str
+    terminal_apps: set
+    browser_apps: set
+    browser_title_names: set
     
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -78,6 +82,7 @@ def load_config() -> Config:
 
     tab_order_mode = user_data["navigation"]["tab_order"]
     provider_name = user_data["wm"]["provider"]
+    total_workspaces = user_data["wm"]["total_workspaces"]
 
     theme = {}
     for role, value in user_data["theme"].items():
@@ -98,14 +103,21 @@ def load_config() -> Config:
 
     clock_time_format = user_data["clock"]["time_format"]
     clock_date_format = user_data["clock"]["date_format"]
+    terminal_apps = set(user_data["title_condense"]["terminal_apps"])
+    browser_apps = set(user_data["title_condense"]["browser_apps"])
+    browser_title_names = set(user_data["title_condense"]["browser_title_names"])
 
     return Config(
         layout=layout,
         tab_order=tab_order_mode,
         provider_name=provider_name,
+        total_workspaces=total_workspaces,
         theme=theme,
         keybinds=keybinds,
         quick_actions=quick_actions,
         clock_time_format=clock_time_format,
         clock_date_format=clock_date_format,
+        terminal_apps=terminal_apps,
+        browser_apps=browser_apps,
+        browser_title_names=browser_title_names,
     )
