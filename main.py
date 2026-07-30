@@ -13,54 +13,16 @@ from tuicc.config import load_config
 from tuicc.context import RenderContext
 from tuicc.providers.registry import build_provider
 from tuicc.layout_engine import compute_boxes
-from tuicc.navigation import tab_order, nearest_in_direction
-from tuicc.render import draw_all, collect_nav_items
-from tuicc.theme_setup import setup_theme
+from tuicc.navigation import (
+    tab_order,
+    nearest_in_direction,
+    sibling_in_same_group,
+    region_item_for_focus,
+    module_of_item,
+    first_item_in_module,
+)
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
-
-
-def _sibling_in_same_group(ordered, current, direction):
-    same_kind = [item for item in ordered if item.target_kind == current.target_kind]
-    same_kind_sorted = sorted(same_kind, key=lambda item: item.rect[0])
-
-    current_index = None
-    for i, item in enumerate(same_kind_sorted):
-        if item.id == current.id:
-            current_index = i
-            break
-
-    if current_index is None:
-        return None
-
-    if direction == "right":
-        next_index = current_index + 1
-    elif direction == "left":
-        next_index = current_index - 1
-    else:
-        return None
-
-    if 0 <= next_index < len(same_kind_sorted):
-        return same_kind_sorted[next_index]
-
-    return None
-
-
-def _region_item_for_focus(ordered, focus_id):
-    for item in ordered:
-        if item.target_kind == "region" and item.focus_target == focus_id:
-            return item
-    return None
-
-
-def _module_of_item(item):
-    return item.id.split(":")[0]
-
-
-def _first_item_in_module(ordered, module_name):
-    for item in ordered:
-        if _module_of_item(item) == module_name:
-            return item
-    return None
+from tuicc.theme_setup import setup_theme
 
 
 def main(stdscr):
@@ -133,7 +95,7 @@ def main(stdscr):
         stdscr.refresh()
 
         key = stdscr.getch()
-    
+
         if key == -1:
             continue
 
@@ -141,12 +103,10 @@ def main(stdscr):
             if key == ord("y"):
                 subprocess.Popen(pending_confirm["command"], shell=True)
                 break
-            elif key == ord("n") or key == cfg.keybinds["quit"]:
+            elif key == ord("n"):
                 pending_confirm = None
             continue
 
-        if key == cfg.keybinds["quit"]:
-            break
         elif key == cfg.keybinds["confirm"] and selected_item is not None:
             handler = ACTION_HANDLERS.get(selected_item.target_kind)
             if handler is not None:
@@ -156,7 +116,6 @@ def main(stdscr):
                 if should_exit:
                     break
 
-       
         elif key == cfg.keybinds["switch_module"]:
             module_names = [box.name for box in cfg.layout.boxes]
             if module_names:
@@ -166,13 +125,13 @@ def main(stdscr):
                 next_index = (current_index + 1) % len(module_names)
                 active_module = module_names[next_index]
 
-                first_item = _first_item_in_module(ordered, active_module)
+                first_item = first_item_in_module(ordered, active_module)
                 if first_item is not None:
                     selected_id = first_item.id
                     if first_item.target_kind == "region":
                         focus_id = first_item.focus_target
         elif key == cfg.keybinds["tab"] and ordered:
-            module_items = [item for item in ordered if _module_of_item(item) == active_module]
+            module_items = [item for item in ordered if module_of_item(item) == active_module]
             if module_items:
                 current_index = 0
                 for i, item in enumerate(module_items):
@@ -188,17 +147,17 @@ def main(stdscr):
 
             next_item = None
             if selected_item.target_kind == "window" and direction in ("left", "right"):
-                next_item = _sibling_in_same_group(ordered, selected_item, direction)
+                next_item = sibling_in_same_group(ordered, selected_item, direction)
 
             if next_item is None and selected_item.target_kind == "window" and direction == "left":
-                next_item = _region_item_for_focus(ordered, focus_id)
+                next_item = region_item_for_focus(ordered, focus_id)
 
             if next_item is None:
                 next_item = nearest_in_direction(ordered, selected_item, direction)
 
             if next_item is not None:
                 selected_id = next_item.id
-                active_module = _module_of_item(next_item)
+                active_module = module_of_item(next_item)
                 if next_item.target_kind == "region":
                     focus_id = next_item.focus_target
 

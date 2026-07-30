@@ -43,7 +43,6 @@ down = "Down"
 tab = "Tab"
 switch_module = "Shift+Tab"
 confirm = "Enter"
-quit = "q"
 
 
 [[quick_actions.action]]
