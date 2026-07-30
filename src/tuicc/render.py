@@ -10,7 +10,7 @@ nav-item logic, and must never hardcode a module's name in an if/else.
 not editing draw_all() or collect_nav_items(). !!!
 """
 
-from tuicc.modules import sidebar, preview, quick_actions, clock, launcher, connectivity
+from tuicc.modules import sidebar, preview, quick_actions, clock, launcher, connectivity, power_menu
 from tuicc.actions import BASE_HANDLERS
 
 
@@ -21,6 +21,7 @@ MODULES = {
     "clock": clock.draw,
     "launcher": launcher.draw,
     "connectivity": connectivity.draw,
+    "power_menu": power_menu.draw,
 }
 
 NAV_PROVIDERS = {
@@ -30,10 +31,12 @@ NAV_PROVIDERS = {
     "clock": clock.nav_items,
     "launcher": launcher.nav_items,
     "connectivity": connectivity.nav_items,
+    "power_menu": power_menu.nav_items,
 }
 
 ACTION_HANDLERS = dict(BASE_HANDLERS)
 ACTION_HANDLERS[quick_actions.TARGET_KIND] = quick_actions.handle
+ACTION_HANDLERS[power_menu.TARGET_KIND] = power_menu.handle
 ACTION_HANDLERS.update(connectivity.HANDLERS)
 
 def draw_all(stdscr, layout, boxes, ctx):

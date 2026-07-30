@@ -48,6 +48,7 @@ class Config:
     vim_mode: bool
     wifi_backend_name: str
     bluetooth_backend_name: str
+    power_menu_actions: list
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -104,6 +105,15 @@ def load_config() -> Config:
             "confirm": action_data.get("confirm", False),
         })
 
+    power_menu_actions = []
+    for action_data in user_data["power_menu"]["action"]:
+        power_menu_actions.append({
+            "label": action_data["label"],
+            "icon": action_data.get("icon", ""),
+            "command": action_data["command"],
+            "confirm": action_data.get("confirm", False),
+        })
+    
     clock_time_format = user_data["clock"]["time_format"]
     clock_date_format = user_data["clock"]["date_format"]
     terminal_apps = set(user_data["title_condense"]["terminal_apps"])
@@ -129,4 +139,5 @@ def load_config() -> Config:
         vim_mode=vim_mode,
         wifi_backend_name=wifi_backend_name,
         bluetooth_backend_name=bluetooth_backend_name,
+        power_menu_actions=power_menu_actions,
     )
