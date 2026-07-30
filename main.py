@@ -23,6 +23,7 @@ from tuicc.navigation import (
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
 from tuicc.theme_setup import setup_theme
+from tuicc.modules.launcher import resolve_selected
 
 
 def main(stdscr):
@@ -47,15 +48,37 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    while True:
-        stdscr.erase()
+    typing_mode = False
+    search_query = ""
+    search_selected_index = 0
+    saved_selected_id = None
+    saved_active_module = None
+    pending_moves = []
+    MAX_MOVE_TICKS = 15
 
+    while True:
+        stdscr.timeout(50 if pending_moves else 1000)
+        stdscr.erase()
+        
         term_height, term_width = stdscr.getmaxyx()
         boxes = compute_boxes(cfg.layout, term_width, term_height)
         state = provider.get_state()
 
         if focus_id is None:
             focus_id = state.focused_region_id
+
+        if pending_moves:
+            front = pending_moves[0]
+            current_ids = {w.id for r in state.regions for w in r.windows}
+            new_ids = current_ids - front["known_ids"]
+            if new_ids:
+                new_id = next(iter(new_ids))
+                provider.move_window_to_region(new_id, front["target_region"])
+                pending_moves.pop(0)
+            else:
+                front["ticks"] += 1
+                if front["ticks"] > MAX_MOVE_TICKS:
+                    pending_moves.pop(0)
 
         ctx = RenderContext(
             state=state,
@@ -65,6 +88,9 @@ def main(stdscr):
             config=cfg,
             pending_confirm=pending_confirm,
             active_module=active_module,
+            typing_mode=typing_mode,
+            search_query=search_query,
+            search_selected_index=search_selected_index,
         )
 
         items = collect_nav_items(cfg.layout, boxes, ctx)
@@ -101,13 +127,60 @@ def main(stdscr):
 
         if pending_confirm is not None:
             if key == ord("y"):
-                subprocess.Popen(pending_confirm["command"], shell=True)
+                subprocess.Popen(
+                    pending_confirm["command"], shell=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
                 break
             elif key == ord("n"):
                 pending_confirm = None
             continue
 
-        elif key == cfg.keybinds["confirm"] and selected_item is not None:
+        if typing_mode:
+            if key == 27:  # Escape
+                typing_mode = False
+                search_query = ""
+                search_selected_index = 0
+                selected_id = saved_selected_id
+                active_module = saved_active_module
+            elif key in (curses.KEY_BACKSPACE, 127, 8):
+                if search_query:
+                    search_query = search_query[:-1]
+                    search_selected_index = 0
+                else:
+                    typing_mode = False
+                    selected_id = saved_selected_id
+                    active_module = saved_active_module
+            elif key == cfg.keybinds["confirm"]:
+                cmd = resolve_selected(search_query, search_selected_index)
+                if cmd is not None:
+                    known_ids = {w.id for r in state.regions for w in r.windows}
+                    subprocess.Popen(
+                        cmd, shell=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    pending_moves.append({
+                        "target_region": focus_id,
+                        "known_ids": known_ids,
+                        "ticks": 0,
+                    })
+                typing_mode = False
+            elif key == cfg.keybinds["left"]:
+                search_selected_index = max(search_selected_index - 1, 0)
+            elif key == cfg.keybinds["right"]:
+                search_selected_index += 1
+            elif 32 <= key <= 126:
+                search_query += chr(key)
+                search_selected_index = 0
+            continue
+
+        if key == cfg.keybinds["confirm"] and selected_item is not None:
             handler = ACTION_HANDLERS.get(selected_item.target_kind)
             if handler is not None:
                 should_exit, pending = handler(provider, selected_item, cfg)
@@ -160,6 +233,20 @@ def main(stdscr):
                 active_module = module_of_item(next_item)
                 if next_item.target_kind == "region":
                     focus_id = next_item.focus_target
+        elif cfg.vim_mode and key == cfg.keybinds["insert"]:
+            saved_selected_id = selected_id
+            saved_active_module = active_module
+            typing_mode = True
+            search_query = ""
+            search_selected_index = 0
+            active_module = "launcher"
+        elif not cfg.vim_mode and 32 <= key <= 126:
+            saved_selected_id = selected_id
+            saved_active_module = active_module
+            typing_mode = True
+            search_query = chr(key)
+            search_selected_index = 0
+            active_module = "launcher"
 
 
 if __name__ == "__main__":

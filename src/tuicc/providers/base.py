@@ -25,3 +25,10 @@ class Provider(ABC):
     def focus_window(self, window_id: str) -> None:
         """Switch the WM's focus to the given window."""
         raise NotImplementedError
+
+    @abstractmethod
+    def move_window_to_region(self, window_id: str, region_id: str) -> None:
+        """Move the given window to the given region, without changing
+        which region is currently visible.
+        """
+        raise NotImplementedError

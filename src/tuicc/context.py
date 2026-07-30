@@ -19,3 +19,6 @@ class RenderContext:
     config: object
     pending_confirm: object = None
     active_module: str | None = None
+    typing_mode: bool = False
+    search_query: str = ""
+    search_selected_index: int = 0

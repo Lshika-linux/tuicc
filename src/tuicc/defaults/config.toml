@@ -2,12 +2,18 @@
 # Which preset to use — see src/tuicc/presets/ for available numbers.
 preset = 1
 
+
 [navigation]
 # How Tab cycles through items: "columns_first" (top to bottom, then
 # next column) or "rows_first" (left to right, then next row).
 # leave default.. useful only if you wanted a horizontal sidebar
 # [horizontal sidebar module not built yet, but planned]
 tab_order = "columns_first"
+# switch to true only if plan to use vim controls. they collide w the smooth
+# start writing from anywhere to launch, so Vim keybind users need to press the 
+# "insert" button first to type
+vim_mode = false
+
 
 [wm]
 # Which WM provider to use. Built in: "sway", "i3". See README for how to

@@ -45,6 +45,7 @@ class Config:
     terminal_apps: set
     browser_apps: set
     browser_title_names: set
+    vim_mode: bool
     
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -106,7 +107,8 @@ def load_config() -> Config:
     terminal_apps = set(user_data["title_condense"]["terminal_apps"])
     browser_apps = set(user_data["title_condense"]["browser_apps"])
     browser_title_names = set(user_data["title_condense"]["browser_title_names"])
-
+    vim_mode = user_data["navigation"]["vim_mode"]
+    
     return Config(
         layout=layout,
         tab_order=tab_order_mode,
@@ -120,4 +122,5 @@ def load_config() -> Config:
         terminal_apps=terminal_apps,
         browser_apps=browser_apps,
         browser_title_names=browser_title_names,
+        vim_mode=vim_mode,
     )

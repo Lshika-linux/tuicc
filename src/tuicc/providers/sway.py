@@ -67,6 +67,9 @@ class SwayProvider(Provider):
     def focus_window(self, window_id: str) -> None:
         self.conn.command(f"[con_id={window_id}] focus")
 
+    def move_window_to_region(self, window_id: str, region_id: str) -> None:
+        self.conn.command(f"[con_id={window_id}] move container to workspace number {region_id}")
+
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())
 
