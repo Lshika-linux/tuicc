@@ -3,6 +3,7 @@
 import curses
 import subprocess
 import sys
+import time
 import locale
 
 locale.setlocale(locale.LC_ALL, "")
@@ -64,7 +65,7 @@ def main(stdscr):
     saved_selected_id = None
     saved_active_module = None
     pending_moves = []
-    MAX_MOVE_TICKS = 15
+    MOVE_TIMEOUT_SECONDS = 8.0
 
     while True:
         stdscr.timeout(50 if (pending_moves or connectivity.has_pending()) else 1000)
@@ -85,10 +86,8 @@ def main(stdscr):
                 new_id = next(iter(new_ids))
                 provider.move_window_to_region(new_id, front["target_region"])
                 pending_moves.pop(0)
-            else:
-                front["ticks"] += 1
-                if front["ticks"] > MAX_MOVE_TICKS:
-                    pending_moves.pop(0)
+            elif time.monotonic() - front["started_at"] > MOVE_TIMEOUT_SECONDS:
+                pending_moves.pop(0)
 
         ctx = RenderContext(
             state=state,
@@ -181,7 +180,7 @@ def main(stdscr):
                     pending_moves.append({
                         "target_region": focus_id,
                         "known_ids": known_ids,
-                        "ticks": 0,
+                        "started_at": time.monotonic(),
                     })
                 typing_mode = False
             elif key == cfg.keybinds["left"]:

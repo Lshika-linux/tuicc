@@ -3,32 +3,40 @@ name = "sidebar"
 x = 0.0
 y = 0.0
 w = 0.22
-h = 0.55
+h = 0.65
 
 [[box]]
 name = "connectivity"
 x = 0.0
-y = 0.55
+y = 0.65
 w = 0.22
-h = 0.21
+h = 0.20
 
 [[box]]
 name = "quick_actions"
 x = 0.0
-y = 0.76
+y = 0.85
 w = 0.22
-h = 0.24
+h = 0.15
 
 [[box]]
 name = "launcher"
 x = 0.22
 y = 0.0
-w = 0.78
-h = 0.09
+w = 0.57
+h = 0.075
+
+[[box]]
+name = "clock"
+x = 0.80
+y = 0.0
+w = 0.20
+h = 0.075
+
 
 [[box]]
 name = "preview"
 x = 0.22
-y = 0.09
+y = 0.080
 w = 0.78
-h = 0.91
+h = 0.92
