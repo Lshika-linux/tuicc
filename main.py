@@ -11,7 +11,10 @@ sys.path.insert(0, "src")
 
 from tuicc.config import load_config
 from tuicc.context import RenderContext
+from tuicc.actions import ActionContext
 from tuicc.providers.registry import build_provider
+from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
+from tuicc.connectivity.worker import ConnectivityWorker
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
     tab_order,
@@ -36,6 +39,13 @@ def main(stdscr):
     theme_pairs = setup_theme(cfg.theme)
     provider = build_provider(cfg.provider_name)
 
+    wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
+    bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
+    connectivity = ConnectivityWorker(wifi_backend, bluetooth_backend)
+    connectivity.start()
+
+    action_ctx = ActionContext(provider=provider, connectivity=connectivity)
+
     direction_keys = {
         cfg.keybinds["left"]: "left",
         cfg.keybinds["right"]: "right",
@@ -57,9 +67,9 @@ def main(stdscr):
     MAX_MOVE_TICKS = 15
 
     while True:
-        stdscr.timeout(50 if pending_moves else 1000)
+        stdscr.timeout(50 if (pending_moves or connectivity.has_pending()) else 1000)
         stdscr.erase()
-        
+
         term_height, term_width = stdscr.getmaxyx()
         boxes = compute_boxes(cfg.layout, term_width, term_height)
         state = provider.get_state()
@@ -91,6 +101,9 @@ def main(stdscr):
             typing_mode=typing_mode,
             search_query=search_query,
             search_selected_index=search_selected_index,
+            wifi_networks=connectivity.get_wifi_networks(),
+            bluetooth_devices=connectivity.get_bluetooth_devices(),
+            connectivity=connectivity,
         )
 
         items = collect_nav_items(cfg.layout, boxes, ctx)
@@ -183,7 +196,7 @@ def main(stdscr):
         if key == cfg.keybinds["confirm"] and selected_item is not None:
             handler = ACTION_HANDLERS.get(selected_item.target_kind)
             if handler is not None:
-                should_exit, pending = handler(provider, selected_item, cfg)
+                should_exit, pending = handler(action_ctx, selected_item, cfg)
                 if pending is not None:
                     pending_confirm = pending
                 if should_exit:

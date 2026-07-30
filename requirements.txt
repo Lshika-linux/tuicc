@@ -1,3 +1,4 @@
 i3ipc==2.2.1
 python-xlib==0.33
 six==1.17.0
+jeepney

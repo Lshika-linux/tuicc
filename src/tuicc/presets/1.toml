@@ -3,7 +3,21 @@ name = "sidebar"
 x = 0.0
 y = 0.0
 w = 0.22
-h = 1.0
+h = 0.55
+
+[[box]]
+name = "connectivity"
+x = 0.0
+y = 0.55
+w = 0.22
+h = 0.21
+
+[[box]]
+name = "quick_actions"
+x = 0.0
+y = 0.76
+w = 0.22
+h = 0.24
 
 [[box]]
 name = "launcher"

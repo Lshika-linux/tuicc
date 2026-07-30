@@ -90,3 +90,7 @@ terminal_apps = ["kitty", "alacritty", "foot", "wezterm", "st", "urxvt", "xterm"
 # not the browser's own name repeated in every title.
 browser_apps = ["librewolf", "firefox", "chromium", "chrome", "google-chrome"]
 browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]
+
+[network]
+wifi_backend = "iwd"
+bluetooth_backend = "bluez"

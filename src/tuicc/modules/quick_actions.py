@@ -84,7 +84,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 TARGET_KIND = "action"
 
 
-def handle(provider, item, cfg):
+def handle(ctx, item, cfg):
     action_index = int(item.id.split(":")[1])
     action = cfg.quick_actions[action_index]
     if action["confirm"]:

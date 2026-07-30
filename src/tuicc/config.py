@@ -46,7 +46,9 @@ class Config:
     browser_apps: set
     browser_title_names: set
     vim_mode: bool
-    
+    wifi_backend_name: str
+    bluetooth_backend_name: str
+
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
         USER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +110,8 @@ def load_config() -> Config:
     browser_apps = set(user_data["title_condense"]["browser_apps"])
     browser_title_names = set(user_data["title_condense"]["browser_title_names"])
     vim_mode = user_data["navigation"]["vim_mode"]
+    wifi_backend_name = user_data["network"]["wifi_backend"]
+    bluetooth_backend_name = user_data["network"]["bluetooth_backend"]
     
     return Config(
         layout=layout,
@@ -123,4 +127,6 @@ def load_config() -> Config:
         browser_apps=browser_apps,
         browser_title_names=browser_title_names,
         vim_mode=vim_mode,
+        wifi_backend_name=wifi_backend_name,
+        bluetooth_backend_name=bluetooth_backend_name,
     )
