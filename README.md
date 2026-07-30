@@ -197,3 +197,10 @@ Because I don't rice, I use. I want a functioning, no-bullshit, no-bells-and-whi
 Existing tiling WM status bars and launchers tend to be single-purpose
 and WM-specific. tuicc aims for one keybind, one place, that adapts to
 whichever tiling WM (or scrolling WM) you're actually running.
+
+## License
+
+GPLv3 — see [LICENSE](LICENSE) for the full text. In short: you're free to
+use, modify, and distribute tuicc, including commercially, but if you
+distribute a modified version, it must stay open source under the same
+license. So that everybody gets a better tuicc :)
