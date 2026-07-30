@@ -2,8 +2,8 @@
 Layout model: where each module sits on screen, as ratios of the whole terminal.
 
     preset (built-in) ──┐
-                         ├─> Layout [ratios, defined here] ─┐
-    user config delta ──┘                                   │
+                         ├─> Layout [ratios, defined here]   ─┐
+    user config delta ──┘                                     │
                                                               v
                                                 layout_engine + terminal size
                                                               │
@@ -24,7 +24,12 @@ from dataclasses import dataclass, field
 @dataclass
 class ModuleBox:
     name: str
-    rect: tuple[float, float, float, float]  # x, y, w, h — normalized 0..1, relative to the whole screen
+    x: float
+    y: float
+    w: float
+    # Exactly one of h/rows is set — enforced at load time (config.py), not here.
+    h: float | None = None       # ratio 0..1, scales with terminal height
+    rows: int | None = None      # absolute row count, does not scale
     clickable: bool = True
 
 

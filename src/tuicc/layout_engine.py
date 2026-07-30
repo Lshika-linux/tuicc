@@ -28,12 +28,10 @@ def compute_boxes(layout: Layout, term_width: int, term_height: int) -> dict[str
     boxes = {}
 
     for box in layout.boxes:
-        rx, ry, rw, rh = box.rect
-
-        x = round(rx * term_width)
-        y = round(ry * term_height)
-        w = round(rw * term_width)
-        h = round(rh * term_height)
+        x = round(box.x * term_width)
+        y = round(box.y * term_height)
+        w = round(box.w * term_width)
+        h = box.rows if box.rows is not None else round(box.h * term_height)
 
         boxes[box.name] = (x, y, w, h)
 

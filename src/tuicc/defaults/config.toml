@@ -23,6 +23,7 @@ provider = "sway"
 # many are actually in use.
 # "Only show real workspaces" is NOT a feature, would introduce complexity that
 # I do not want. You're ofc free to alter the code.
+
 total_workspaces = 10
 
 [theme]
@@ -94,3 +95,35 @@ browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]
 [network]
 wifi_backend = "iwd"
 bluetooth_backend = "bluez"
+
+[[power_menu.action]]
+# label is shown in the tile (and in the confirm prompt, if confirm_text
+# is not set). icon is optional (leave "" for none — no Nerd Font glyph
+# is bundled by default). confirm_text is optional: only shown for
+# confirm=true actions, and only if you want a question above the Y/N
+# prompt instead of just Y/N alone.
+label = "^L"
+icon = "\uf023"
+command = "swaylock"
+confirm = false
+
+[[power_menu.action]]
+label = "^O"
+icon = "\uf08b"
+command = "swaymsg exit"
+confirm = true
+confirm_text = "Log out?"
+
+[[power_menu.action]]
+label = "^R"
+icon = "\uf021"
+command = "systemctl reboot"
+confirm = true
+confirm_text = "Reboot now?"
+
+[[power_menu.action]]
+label = "^P"
+icon = "\U000f0425"
+command = "systemctl poweroff"
+confirm = true
+confirm_text = "Shut down now?"

@@ -1,34 +1,53 @@
+# Layout preset — defines where each panel sits on screen.
+#
+# x, y, w = position and width, always as a fraction of the terminal (0.0–1.0).
+#   e.g. x = 0.26 means "starts 26% of the way across the screen".
+#
+# Every box needs a height too, set with EXACTLY ONE of these two keys:
+#   h    = fraction of the terminal height (0.0–1.0), same idea as x/y/w.
+#          Scales automatically with terminal size — use this for most boxes.
+#   rows = a fixed number of terminal rows (e.g. 6), does NOT scale.
+#          Use this only for a box whose content has a fixed size
+#          (like power_menu's icon grid), so it never gets cut off on a
+#          small terminal or leaves empty space on a large one.
+#
+# Boxes do not coordinate with each other — if you change one box's size,
+# neighboring boxes will NOT automatically resize or move to compensate.
+# You may need to adjust their x/y/w/h/rows by hand so edges line up again.
+
+# This is by design. What you see is what you get. It should remain this way.
+
 [[box]]
 name = "sidebar"
 x = 0.0
 y = 0.0
-w = 0.26
-h = 0.55
+w = 0.23
+h = 0.571429
 
 [[box]]
 name = "connectivity"
 x = 0.0
-y = 0.55
-w = 0.26
-h = 0.23
+y = 0.571429
+w = 0.23
+h = 0.285714
 
 [[box]]
 name = "power_menu"
 x = 0.0
-y = 0.78
-w = 0.26
-h = 0.22
+y = 0.857143
+w = 0.23
+rows = 7   # border(2) + 1 grid row * CELL_HEIGHT(4) + uptime(1) — exact row count, not a ratio
 
 [[box]]
 name = "launcher"
-x = 0.26
+x = 0.23
 y = 0.0
-w = 0.74
+w = 0.77
 h = 0.09
 
 [[box]]
 name = "preview"
-x = 0.26
+x = 0.23
 y = 0.09
-w = 0.74
+w = 0.77
 h = 0.91

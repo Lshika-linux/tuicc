@@ -67,9 +67,20 @@ def build_layout_from_preset(preset_number: int) -> Layout:
 
     boxes = []
     for box_data in data["box"]:
+        has_h = "h" in box_data
+        has_rows = "rows" in box_data
+        if has_h == has_rows:  # both set, or neither — both are ambiguous
+            raise KeyError(
+                f"box '{box_data.get('name', '?')}' in preset {preset_number} must set "
+                f"exactly one of 'h' (ratio) or 'rows' (absolute), not {'both' if has_h else 'neither'}"
+            )
         box = ModuleBox(
             name=box_data["name"],
-            rect=(box_data["x"], box_data["y"], box_data["w"], box_data["h"]),
+            x=box_data["x"],
+            y=box_data["y"],
+            w=box_data["w"],
+            h=box_data.get("h"),
+            rows=box_data.get("rows"),
         )
         boxes.append(box)
 
@@ -112,6 +123,7 @@ def load_config() -> Config:
             "icon": action_data.get("icon", ""),
             "command": action_data["command"],
             "confirm": action_data.get("confirm", False),
+            "confirm_text": action_data.get("confirm_text"),
         })
     
     clock_time_format = user_data["clock"]["time_format"]

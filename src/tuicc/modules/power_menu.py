@@ -20,7 +20,9 @@ from tuicc.render_utils import draw_box_outline
 
 
 GRID_COLS = 4
-CELL_HEIGHT = 3
+CELL_HEIGHT = 4      # icon box (3 rows: border/icon/border) + label row (1 row)
+ICON_BOX_W = 6        # chars wide — terminal chars are ~2x taller than wide,
+ICON_BOX_H = 3         # so a wider-than-tall box reads as visually square
 
 
 def _read_uptime_seconds():
@@ -36,7 +38,8 @@ def _format_uptime(seconds):
         return "uptime unavailable"
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
-    return f"up {hours}h {minutes}m"
+    secs = int(seconds % 60)
+    return f"uptime: {hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def _cell_rect(box, index):
@@ -49,6 +52,12 @@ def _cell_rect(box, index):
     return cell_x, cell_y, cell_w, CELL_HEIGHT
 
 
+def _icon_box_rect(cell_x, cell_y, cell_w):
+    box_w = min(ICON_BOX_W, cell_w)  # clamp so it never exceeds the cell on a narrow terminal
+    box_x = cell_x + max((cell_w - box_w) // 2, 0)
+    return box_x, cell_y, box_w, ICON_BOX_H
+
+
 def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
@@ -59,13 +68,15 @@ def draw(stdscr, box, ctx, module_name):
     draw_box_outline(stdscr, y, x, h, w, outer_color, title="Power Menu")
 
     if ctx.pending_confirm is not None:
-        label = ctx.pending_confirm["label"]
-        question = f"Run {label}?"
+        confirm_text = ctx.pending_confirm.get("confirm_text")
         answer_hint = "Y/N"
         row = y + 1 + h // 3
         try:
-            stdscr.addstr(row, x + 2, question[:max(w - 4, 0)], theme.get("urgent", 0))
-            stdscr.addstr(row + 1, x + 2, answer_hint[:max(w - 4, 0)], theme.get("text", 0))
+            if confirm_text:
+                stdscr.addstr(row, x + 2, confirm_text[:max(w - 4, 0)], theme.get("urgent", 0))
+                stdscr.addstr(row + 1, x + 2, answer_hint[:max(w - 4, 0)], theme.get("text", 0))
+            else:
+                stdscr.addstr(row, x + 2, answer_hint[:max(w - 4, 0)], theme.get("text", 0))
         except curses.error:
             pass
         return
@@ -74,7 +85,9 @@ def draw(stdscr, box, ctx, module_name):
         cell_x, cell_y, cell_w, cell_h = _cell_rect(box, i)
         is_selected = f"power_menu:{i}" == ctx.selected_id
         border_color = theme.get("selected", 0) if is_selected else theme.get("border", 0)
-        draw_box_outline(stdscr, cell_y, cell_x, cell_h, cell_w, border_color)
+
+        icon_box_x, icon_box_y, icon_box_w, icon_box_h = _icon_box_rect(cell_x, cell_y, cell_w)
+        draw_box_outline(stdscr, icon_box_y, icon_box_x, icon_box_h, icon_box_w, border_color)
 
         icon = action.get("icon") or "?"
         label = action["label"]
@@ -82,13 +95,13 @@ def draw(stdscr, box, ctx, module_name):
         if is_selected:
             text_color = theme.get("selected", 0)
 
-        icon_x = cell_x + max((cell_w - len(icon)) // 2, 0)
+        icon_x = icon_box_x + max((icon_box_w - len(icon)) // 2, 0)
         label_trunc = label[:max(cell_w - 2, 0)]
         label_x = cell_x + max((cell_w - len(label_trunc)) // 2, 0)
 
         try:
-            stdscr.addstr(cell_y + 1, icon_x, icon, text_color | curses.A_BOLD)
-            stdscr.addstr(cell_y + 2, label_x, label_trunc, text_color)
+            stdscr.addstr(icon_box_y + 1, icon_x, icon, text_color | curses.A_BOLD)
+            stdscr.addstr(cell_y + ICON_BOX_H, label_x, label_trunc, text_color)
         except curses.error:
             pass
 
