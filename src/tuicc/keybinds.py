@@ -12,6 +12,13 @@ General "any key + Shift" isn't attempted: curses doesn't expose
 modifier state separately from the key itself for most keys, and
 support for e.g. Shift+arrow varies by terminal.
 
+"Ctrl+<letter>" IS supported, unlike Shift — terminals report it
+reliably as a plain ASCII control code (Ctrl+A=1 ... Ctrl+Z=26, i.e.
+ord(letter.upper()) - 64), with no modifier-detection ambiguity.
+Ctrl combos with anything other than a single letter (digits,
+punctuation, arrows) are not attempted, for the same reliability
+reason Shift combos mostly aren't.
+
 Kept pure (no live curses screen needed to resolve a constant), same
 reasoning as theme.py vs theme_setup.py.
 """
@@ -36,10 +43,19 @@ def resolve_key(name: str) -> int:
     if name in SPECIAL_KEYS:
         return SPECIAL_KEYS[name]
 
+    if name.startswith("Ctrl+"):
+        letter = name[len("Ctrl+"):]
+        if len(letter) == 1 and letter.isalpha():
+            return ord(letter.upper()) - 64
+        raise ValueError(
+            f"Unknown key name: {name!r}. Ctrl+ combos are only supported "
+            f"for a single letter, e.g. \"Ctrl+L\"."
+        )
+
     if len(name) == 1:
         return ord(name)
 
     raise ValueError(
         f"Unknown key name: {name!r}. Expected one of "
-        f"{list(SPECIAL_KEYS.keys())}, or a single character."
+        f"{list(SPECIAL_KEYS.keys())}, a single character, or \"Ctrl+<letter>\"."
     )

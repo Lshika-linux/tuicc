@@ -49,6 +49,7 @@ class Config:
     wifi_backend_name: str
     bluetooth_backend_name: str
     power_menu_actions: list
+    global_shortcuts: dict
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -120,12 +121,35 @@ def load_config() -> Config:
     for action_data in user_data["power_menu"]["action"]:
         power_menu_actions.append({
             "label": action_data["label"],
+            "shortcut": action_data.get("shortcut"),
             "icon": action_data.get("icon", ""),
             "command": action_data["command"],
             "confirm": action_data.get("confirm", False),
             "confirm_text": action_data.get("confirm_text"),
         })
-    
+
+    # Global shortcuts: a key bound to an action's shortcut works from
+    # anywhere in the running app, not just when that action is selected.
+    # Built here (not per-module) because the collision check below needs
+    # to see every binding — navigation keys and every module's shortcuts —
+    # at once, in one place, rather than each module checking in isolation
+    # and missing conflicts with the others.
+    global_shortcuts = {}
+    used_by = {code: name for name, code in keybinds.items()}  # key_code -> name of what already claimed it
+    for i, action in enumerate(power_menu_actions):
+        if action["shortcut"] is None:
+            continue
+        key_code = resolve_key(action["shortcut"])
+        item_id = f"power_menu:{i}"
+        if key_code in used_by:
+            raise KeyError(
+                f"shortcut {action['shortcut']!r} for power_menu action "
+                f"'{action['label']}' collides with '{used_by[key_code]}' — "
+                f"each key can only be bound once"
+            )
+        used_by[key_code] = item_id
+        global_shortcuts[key_code] = {"target_kind": "power_action", "item_id": item_id}
+
     clock_time_format = user_data["clock"]["time_format"]
     clock_date_format = user_data["clock"]["date_format"]
     terminal_apps = set(user_data["title_condense"]["terminal_apps"])
@@ -134,7 +158,7 @@ def load_config() -> Config:
     vim_mode = user_data["navigation"]["vim_mode"]
     wifi_backend_name = user_data["network"]["wifi_backend"]
     bluetooth_backend_name = user_data["network"]["bluetooth_backend"]
-    
+
     return Config(
         layout=layout,
         tab_order=tab_order_mode,
@@ -152,4 +176,5 @@ def load_config() -> Config:
         wifi_backend_name=wifi_backend_name,
         bluetooth_backend_name=bluetooth_backend_name,
         power_menu_actions=power_menu_actions,
+        global_shortcuts=global_shortcuts,
     )

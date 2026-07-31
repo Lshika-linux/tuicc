@@ -48,3 +48,13 @@ def draw_filled_box(stdscr, y, x, h, w, color_pair=0):
 def centered_x(box_x, box_w, text):
     padding = max(box_w - len(text), 0)
     return box_x + padding // 2
+
+
+def format_shortcut(key_name: str) -> str:
+    """Turn a keybinds.py-style key spec into display text, e.g.
+    "Ctrl+L" -> "[^L]". Shared so any module showing a keybind hint
+    uses the same convention instead of inventing its own.
+    """
+    if key_name.startswith("Ctrl+"):
+        return f"[^{key_name[len('Ctrl+'):].upper()}]"
+    return f"[{key_name}]"

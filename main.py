@@ -18,6 +18,7 @@ from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_back
 from tuicc.connectivity.worker import ConnectivityWorker
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
+    NavItem,
     tab_order,
     nearest_in_direction,
     sibling_in_same_group,
@@ -149,6 +150,23 @@ def main(stdscr):
                 break
             elif key == ord("n"):
                 pending_confirm = None
+            continue
+
+        if key in cfg.global_shortcuts:
+            shortcut = cfg.global_shortcuts[key]
+            item = NavItem(
+                id=shortcut["item_id"],
+                rect=(0, 0, 0, 0),
+                focus_target=None,
+                target_kind=shortcut["target_kind"],
+            )
+            handler = ACTION_HANDLERS.get(item.target_kind)
+            if handler is not None:
+                should_exit, pending = handler(action_ctx, item, cfg)
+                if pending is not None:
+                    pending_confirm = pending
+                if should_exit:
+                    break
             continue
 
         if typing_mode:
