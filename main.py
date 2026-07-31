@@ -5,10 +5,15 @@ import subprocess
 import sys
 import time
 import locale
+from pathlib import Path
 
 locale.setlocale(locale.LC_ALL, "")
 
-sys.path.insert(0, "src")
+# Relative to main.py's own location, not to cwd — so tuicc works whether
+# you launch it via `cd tuicc && python main.py` (cwd == tuicc) or via a
+# WM keybind spawning it from an arbitrary directory (e.g. a floating
+# terminal launched with a custom app_id, cwd defaults to $HOME).
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from tuicc.config import load_config
 from tuicc.context import RenderContext
