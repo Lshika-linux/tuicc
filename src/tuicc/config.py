@@ -4,12 +4,25 @@
                                                  ├─> merged Config
     ~/.config/tuicc/config.toml (user) ──────────┘
                                                  │
-    src/tuicc/presets/<N>.toml ──────────────────┘ (referenced by layout.preset)
+    src/tuicc/presets/<N>.toml (packaged) ───────┤
+    ~/.config/tuicc/presets/<N>.toml (user) ─────┘ (referenced by layout.preset)
 
 If the user's config file is missing, it is created by copying the
 packaged default — so there is always a real, editable file at a
 predictable location, never a silent in-memory fallback the user
 can't see or edit.
+
+Presets follow the exact same pattern, but per-preset-number instead of
+a single file: ~/.config/tuicc/presets/<N>.toml is where a preset ACTUALLY
+lives once it's been used — copied from the packaged src/tuicc/presets/
+templates the first time that number is requested, if the user doesn't
+already have their own. This (not a single shared layout file) is
+deliberate: [layout] preset stays live-switchable (changing the number in
+config.toml picks a different file, any time, not just on first run), a
+live resize/save-preset feature has a real per-number file to write to,
+and none of it can collide with or corrupt config.toml's hand-written
+[theme]/[navigation.keys]/etc — which Python's tomllib can't write back
+out anyway without losing comments and formatting.
 
 Beyond layout, this also resolves [theme] colors (via theme.py) and
 [navigation.keys] keybindings (via keybinds.py) into ready-to-use
@@ -27,8 +40,9 @@ from tuicc.keybinds import resolve_key
 
 PACKAGE_DIR = Path(__file__).parent
 DEFAULT_CONFIG_PATH = PACKAGE_DIR / "defaults" / "config.toml"
-PRESETS_DIR = PACKAGE_DIR / "presets"
+PACKAGED_PRESETS_DIR = PACKAGE_DIR / "presets"
 USER_CONFIG_PATH = Path.home() / ".config" / "tuicc" / "config.toml"
+USER_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "presets"
 
 
 @dataclass
@@ -57,9 +71,33 @@ def ensure_user_config_exists() -> None:
         shutil.copy(DEFAULT_CONFIG_PATH, USER_CONFIG_PATH)
 
 
+def ensure_preset_exists(preset_number: int) -> Path:
+    """Returns the path to preset_number's live, user-editable file —
+    ~/.config/tuicc/presets/<N>.toml — copying it there from the packaged
+    template the first time this preset number is used. Never touches an
+    already-existing user file (so live edits, or a future resize mode's
+    saves, are never silently overwritten by this).
+    """
+    user_path = USER_PRESETS_DIR / f"{preset_number}.toml"
+    if user_path.exists():
+        return user_path
+
+    packaged_path = PACKAGED_PRESETS_DIR / f"{preset_number}.toml"
+    if not packaged_path.exists():
+        raise FileNotFoundError(
+            f"Preset {preset_number} doesn't exist — no "
+            f"'{user_path}' and no built-in template at '{packaged_path}'."
+        )
+
+    USER_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy(packaged_path, user_path)
+    return user_path
+
+
 def load_toml(path: Path) -> dict:
     with open(path, "rb") as f:
         return tomllib.load(f)
+
 
 def _require_exactly_one(box_data, preset_number, *field_names):
     present = [name for name in field_names if name in box_data]
@@ -71,7 +109,7 @@ def _require_exactly_one(box_data, preset_number, *field_names):
 
 
 def build_layout_from_preset(preset_number: int) -> Layout:
-    preset_path = PRESETS_DIR / f"{preset_number}.toml"
+    preset_path = ensure_preset_exists(preset_number)
     data = load_toml(preset_path)
 
     boxes = []
@@ -98,6 +136,7 @@ def build_layout_from_preset(preset_number: int) -> Layout:
         boxes.append(box)
 
     return Layout(boxes=boxes)
+
 
 def load_config() -> Config:
     ensure_user_config_exists()

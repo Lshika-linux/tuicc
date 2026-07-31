@@ -85,7 +85,7 @@ def _write_config(tmp_path, monkeypatch, power_menu_actions_toml):
     (presets_dir / "1.toml").write_text(PRESET_TOML)
 
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", user_config)
-    monkeypatch.setattr(config_module, "PRESETS_DIR", presets_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", presets_dir)
 
 
 def _action_toml(label, shortcut=None, confirm=False):
