@@ -40,6 +40,7 @@ def main(stdscr):
     cfg = load_config()
     theme_pairs = setup_theme(cfg.theme)
     provider = build_provider(cfg.provider_name)
+    provider.mark_self()
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)

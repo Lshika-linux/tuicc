@@ -32,3 +32,20 @@ class Provider(ABC):
         which region is currently visible.
         """
         raise NotImplementedError
+
+    def mark_self(self) -> None:
+        """
+        We need to hide tuicc itself from the preview and sidebar..
+        
+        Mark the currently-focused window (called once at startup,
+        when tuicc's own window is assumed to be the freshly-focused
+        one) so get_state() can exclude it from the Windows it reports
+        downstream — tuicc never lists itself in its own preview/sidebar.
+
+        NOT abstract: not every WM has an equivalent concept to sway/i3's
+        marks. The default here is a no-op — a provider for a WM without
+        one simply won't be able to filter tuicc's own window out, which
+        is a known degraded case (tuicc may show up as a window in its
+        own preview), not a crash or a required feature.
+        """
+        pass

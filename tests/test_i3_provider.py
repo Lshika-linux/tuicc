@@ -5,7 +5,7 @@ from pathlib import Path
 
 from i3ipc import Con
 
-from tuicc.providers.i3 import parse_tree
+from tuicc.providers.i3 import parse_tree, MARK_PREFIX
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -79,3 +79,79 @@ def test_full_scene_matches_expected_layout():
         return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
 
     assert overlaps(floating[0], floating[1])
+
+
+def _tiled_leaf(id_, marks=()):
+    return {
+        "id": id_, "type": "con", "app_id": None, "window_class": "XTerm",
+        "name": f"window-{id_}", "focused": False, "marks": list(marks),
+        "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+    }
+
+
+def _floating_leaf(id_, marks=()):
+    # i3 wraps every floating window in a floating_con container that
+    # carries none of the window's own properties — the real window (with
+    # its marks) is the single nested child, same shape _unwrap_floating()
+    # expects in the real provider code.
+    return {
+        "id": id_ * 100, "type": "floating_con", "marks": [],
+        "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+        "nodes": [{
+            "id": id_, "type": "con", "app_id": None, "window_class": "XTerm",
+            "name": f"window-{id_}", "focused": False, "marks": list(marks),
+            "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+        }],
+    }
+
+
+def _tree_with_windows(tiled=(), floating=()):
+    """A minimal synthetic tree — just enough fields for parse_tree() to
+    work — rather than a full recorded fixture, since these tests only
+    care about the marks-based filtering, not realistic geometry.
+    """
+    return Con({
+        "id": 1, "type": "root",
+        "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+        "nodes": [{
+            "id": 2, "type": "workspace", "num": 1, "name": "1",
+            "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+            "floating_nodes": list(floating),
+            "nodes": list(tiled),
+        }],
+    }, None, None)
+
+
+def test_marked_tiled_window_is_excluded_from_state():
+    tree = _tree_with_windows(tiled=[_tiled_leaf(10), _tiled_leaf(11, marks=[f"{MARK_PREFIX}12345"])])
+    state = parse_tree(tree)
+    windows = [w for r in state.regions for w in r.windows]
+    assert [w.id for w in windows] == ["10"]
+
+
+def test_marked_floating_window_is_excluded_from_state():
+    tree = _tree_with_windows(floating=[
+        _floating_leaf(20),
+        _floating_leaf(21, marks=[f"{MARK_PREFIX}12345"]),
+    ])
+    state = parse_tree(tree)
+    windows = [w for r in state.regions for w in r.windows]
+    assert [w.id for w in windows] == ["20"]
+
+
+def test_unmarked_windows_are_unaffected():
+    tree = _tree_with_windows(tiled=[_tiled_leaf(30, marks=["some-other-mark"])])
+    state = parse_tree(tree)
+    windows = [w for r in state.regions for w in r.windows]
+    assert [w.id for w in windows] == ["30"]
+
+
+def test_two_different_tuicc_instances_both_get_excluded():
+    tree = _tree_with_windows(tiled=[
+        _tiled_leaf(40),
+        _tiled_leaf(41, marks=[f"{MARK_PREFIX}111"]),
+        _tiled_leaf(42, marks=[f"{MARK_PREFIX}222"]),
+    ])
+    state = parse_tree(tree)
+    windows = [w for r in state.regions for w in r.windows]
+    assert [w.id for w in windows] == ["40"]

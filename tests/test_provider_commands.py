@@ -72,3 +72,23 @@ def test_i3_focus_window():
     provider.focus_window("42")
 
     assert conn.commands == ["[con_id=42] focus"]
+
+
+def test_sway_mark_self():
+    import os
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.mark_self()
+
+    assert conn.commands == [f"mark --add _tuicc_self_{os.getpid()}"]
+
+
+def test_i3_mark_self():
+    import os
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.mark_self()
+
+    assert conn.commands == [f"mark --add _tuicc_self_{os.getpid()}"]
