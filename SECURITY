@@ -1,0 +1,22 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+Please don't open a public issue for a security concern. Instead, use GitHub's [private vulnerability reporting](https://github.com/Lshika-linux/tuicc/security/advisories/new) (Security tab → Report a vulnerability) so it can be looked at before details are public.
+
+I'll aim to respond within a few days — this is a solo-maintained early-stage project, so please be patient.
+
+## Threat model, honestly
+
+tuicc is a local, single-user terminal tool. It has no network listener and doesn't run as a service — it's something you launch yourself in your own terminal session.
+
+The one thing worth being deliberate about: **`power_menu.action` and `quick_actions.action` entries in config run arbitrary shell commands** (`subprocess.Popen(..., shell=True)`). This is intentional and by design — the whole point is letting you bind your own commands — but it means:
+
+- **Don't run a `config.toml` or preset file you got from someone you don't trust.** Treat it the same way you'd treat a shell script — read it before running it, the same as you would for anything else that executes commands on your behalf.
+- tuicc itself never generates or modifies these commands; it only ever runs exactly what's written in your own config file.
+
+Outside of that, the realistic surface is: parsing your own local config (TOML), talking to your own WM over its local IPC socket, and talking to `iwd`/`bluetoothctl` for connectivity — all local, all things you already trust by virtue of running them yourself.
+
+## Supported versions
+
+There isn't a versioned release yet — `main` is the only thing that exists. Security fixes land there.
