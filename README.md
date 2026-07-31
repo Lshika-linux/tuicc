@@ -1,8 +1,10 @@
-# tuicc
+57435u# tuicc
 
 A minimal, function-oriented TUI control center for tiling window managers.
 
-One key summons it, and you operate the whole system from one place — sidebar with your workspaces, live preview of what's on screen, and (eventually) quick actions, launcher, systeminfo, and more.
+One key summons it, and you operate the whole system from one place —
+sidebar with your workspaces, live preview of what's on screen, an
+app launcher, wifi/bluetooth connectivity, and a power menu.
 
 Built on a small core that only translates window-manager state into a
 generic model, with everything else as swappable modules.
@@ -19,13 +21,20 @@ This is a from-scratch rebuild, actively in progress. Right now it can:
 - Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
 - Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
 - Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, exiting tuicc
+- Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
+- Show wifi and bluetooth status (known networks only — connecting to a new network needs a passphrase flow that isn't built yet) and toggle connections
+- A power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
+- Global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
 - Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
-- Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM
+- Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM — 124 tests total, covering everything from provider parsing to layout math to config validation
 
-Not yet built: scrollable-WM support (`scroll`/niri, see below), quick
-actions, launcher, bars, and a way to summon tuicc with a keybind
-instead of running it from a terminal. See the architecture section
-below for where this is headed.
+Not yet built: scrollable-WM support (`scroll`/niri, see below), a
+`quick_actions` module exists in the code but isn't wired into the
+default layout yet (reserved for something more open-ended later), and
+there's no way to summon tuicc itself with a keybind — that part's on
+your WM's own config for now (bind a key to launch `tuicc` in a
+terminal, or a scratchpad terminal, however you'd normally do it). See
+the architecture section below for where this is headed.
 
 ## Try it
 
@@ -38,12 +47,71 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Tab cycles through workspaces. Arrow keys move into the preview and
-between windows, or back out to the sidebar. Enter switches to the
-selected workspace or focuses the selected window, then exits. `q`
-quits without doing anything. Requires a running sway or i3 session;
-set `provider = "sway"` or `provider = "i3"` under `[wm]` in your
-config (see below).
+Shift+Tab cycles through modules; Tab cycles through items within the
+active module. Arrow keys move to the nearest navigable item in that
+direction, regardless of which module it belongs to. Enter runs the
+selected item — switches to a workspace, focuses a window,
+connects/disconnects wifi or bluetooth, or runs a launcher/power-menu
+entry — and exits tuicc, except for the launcher and connectivity
+(both stay open, so you keep working), or asks for confirmation first
+on destructive power-menu actions. Typing anywhere opens the launcher.
+There's no dedicated quit key yet — `Ctrl+C` (an ordinary terminal
+interrupt, not a tuicc keybind) is the only way out for now. Requires
+a running sway or i3 session; set `provider = "sway"` or `provider =
+"i3"` under `[wm]` in your config (see below).
+
+## Testing
+
+```bash
+nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney])' --run 'PYTHONPATH=src pytest tests/ -v'
+```
+
+No live WM connection needed — providers are tested against recorded
+JSON fixtures (`tests/fixtures/`), and everything else pure-function
+logic (layout math, config validation, keybind resolution, and so on)
+is tested directly. Modules' actual `draw()` functions and `main.py`'s
+event loop aren't covered (yet?) — both need a real curses screen to
+test meaningfully.
+
+## Configuration
+
+tuicc reads from `~/.config/tuicc/config.toml`, created automatically
+(copied from a packaged default) the first time you run it — so
+there's always a real, editable file, never a hidden in-code default.
+
+Layout presets work the same way, but per-preset-number:
+`~/.config/tuicc/presets/<N>.toml` is where the preset you're actually
+using lives, copied there from a built-in template
+(`src/tuicc/presets/<N>.toml`) the first time that number is
+requested, and never touched again after that unless you edit it
+yourself. `[layout] preset = N` in `config.toml` picks which number to
+use, and stays live-switchable — change the number any time, and
+tuicc loads (or seeds, if it's new to you) that preset's file instead.
+
+A preset is a list of boxes, each with a position and size. Both can
+be either a manual ratio (scales with terminal size) or derived from
+another box (a fixed size, or flush against another box's edge) — see
+the comment header in any `presets/*.toml` file for the full field
+reference, and the wiki's [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)
+page for more detail. Boxes never coordinate with each other beyond
+an explicit reference — what you configure is exactly what renders,
+always, by design.
+
+`[[power_menu.action]]` and `[[quick_actions.action]]` currently take
+identical fields (`label`, `command`, `confirm`) — not an accident
+left unfixed, but deliberate: they're kept in separate namespaces
+because they're expected to diverge (power_menu is a fixed
+system-action set; quick_actions is reserved for something more
+open-ended later), and coupling them just because they *happen* to
+look the same today would make that divergence harder, not easier.
+Power-menu entries can also set `confirm_text` (a custom confirmation
+question) and `shortcut` (a key like `"Ctrl+L"` — both binds it
+globally and shows it in the entry's label automatically).
+
+`[theme]` lives in `config.toml` like everything else here — nothing
+about color resolution is packaged or hidden separately. (And yeah,
+`config.toml` is a beefy boi by the time all the sections are in
+there — that's the tradeoff for zero hidden defaults.)
 
 ## Architecture
 
@@ -53,26 +121,32 @@ The core does three things, and only three things:
   and later others) into a generic model (`Window`, `Region`,
   `WMState`), so nothing else in the codebase needs to know which WM
   you're running. Providers also expose actions back to the WM
-  (switching workspace, focusing a window) through the same contract,
-  so `main.py` never hardcodes a WM-specific command.
-- **Layout engine** — converts a layout's ratios (0..1, independent of
-  terminal size) into absolute terminal cells for each module. This gives
-  you the freedom to run it fullscreen, as I do, or however you like.
-- **Input routing** — tab order, spatial (arrow-key) navigation, and
-  hotkeys, all operating on a generic `NavItem` list, independent of
-  which module an item belongs to. Navigation inside a module (e.g.
-  cycling windows in the preview) uses a predictable left-to-right
-  order rather than pure spatial search, which breaks down once
+  (switching workspace, focusing a window, moving a window to a
+  region) through the same contract, so `main.py` never hardcodes a
+  WM-specific command.
+- **Layout engine** — converts a layout (ratios, fixed sizes, or
+  references to other boxes) into absolute terminal cells for each
+  module, resolving box-to-box dependencies in the right order. This
+  gives you the freedom to run it fullscreen, as I do, or however you
+  like — the same preset renders correctly at any terminal size.
+- **Input routing** — tab order, spatial (arrow-key) navigation,
+  global keyboard shortcuts, and hotkeys, all operating on a generic
+  `NavItem` list, independent of which module an item belongs to.
+  Navigation inside a module (e.g. cycling windows in the preview)
+  uses a predictable left-to-right order rather than pure spatial
+  search, which breaks down (read: I couldn't get it right) once
   windows overlap (floating windows in particular).
 
-Modules — the sidebar, the preview, and future ones like quick actions
-or a launcher — live as standalone files under `modules/`, each owning
-both how it draws itself and where its own focusable items are. The
-core never guesses a module's internal layout, and never hardcodes a
-module's name. Modules can talk to each other only indirectly, through
-values `main.py` computes and passes to all of them — e.g. selecting a
-workspace in the sidebar tells the preview what to show, without either
-module knowing the other exists.
+Modules — the sidebar, the preview, the launcher, connectivity, the
+power menu, and future ones — live as standalone files under
+`modules/`, each owning both how it draws itself and where its own
+focusable items are. The core never guesses a module's internal
+layout, and never hardcodes a module's name — adding one means adding
+a line to `render.py`'s registries, not touching the render loop
+itself. Modules can talk to each other only indirectly, through values
+`main.py` computes and passes to all of them — e.g. selecting a
+workspace in the sidebar tells the preview what to show, without
+either module knowing the other exists.
 
 Colors are resolved from config into curses color pairs at startup
 (`theme.py` for the pure resolution logic, `theme_setup.py` for the
@@ -86,32 +160,51 @@ tiled windows draw first and floating windows draw on top, always, in
 a distinct accent color with a filled background.
 
 Config and presets are plain, transparent TOML — what you see is what
-you get, no hidden defaults baked into Python. If you delete your config,
-tuicc regenerates a fresh default one :D
+you get, no hidden defaults baked into Python. If you delete your
+config or a preset file, tuicc regenerates a fresh default one :D
 
 ## Project structure
 
 ```
 src/tuicc/
-├── model.py              # Window, Region, WMState — the generic WM model
-├── layout.py              # ModuleBox, Layout — module positions as ratios
-├── layout_engine.py       # ratios -> absolute terminal cells
-├── navigation.py          # NavItem, tab/spatial/hotkey navigation
-├── theme.py                 # resolves config colors (named/hex/RGB) to curses color numbers
-├── theme_setup.py           # one-time curses color pair setup at startup
-├── config.py               # loads + merges packaged defaults, presets, user config
-├── render.py                # module registry (draw + nav_items per module)
-├── render_utils.py          # shared curses drawing helpers
-├── defaults/config.toml     # packaged default config
-├── presets/                 # layout presets (plain TOML)
+├── model.py                  # Window, Region, WMState — the generic WM model
+├── layout.py                 # ModuleBox, Layout — module positions/sizes,
+│                              #   as ratios, fixed counts, or box references
+├── layout_engine.py          # resolves a Layout into absolute terminal cells
+├── navigation.py              # NavItem, tab/spatial/hotkey navigation
+├── keybinds.py                 # config key names -> curses key codes
+├── actions.py                   # region/window focus handlers shared across modules
+├── context.py                    # RenderContext — everything a module needs per frame
+├── theme.py                       # resolves config colors (named/hex/RGB) to curses color numbers
+├── theme_setup.py                  # one-time curses color pair setup at startup
+├── config.py                        # loads + merges packaged defaults, presets, user config
+├── render.py                         # module registry (draw + nav_items + action handlers)
+├── render_utils.py                    # shared curses drawing helpers
+├── defaults/config.toml                # packaged default config
+├── presets/                             # built-in layout presets (plain TOML) — copied to
+│                                        #   ~/.config/tuicc/presets/<N>.toml on first use
 ├── modules/
-│   ├── sidebar.py             # workspace list, reports nav items
-│   └── preview.py             # windows of the currently focused workspace
+│   ├── sidebar.py                # workspace list, reports nav items
+│   ├── preview.py                # windows of the currently focused workspace
+│   ├── launcher.py                # fuzzy app search + launch
+│   ├── connectivity.py             # wifi/bluetooth status + toggle
+│   ├── power_menu.py                # lock/logout/reboot/shutdown, user-defined
+│   ├── quick_actions.py              # generic action list — not in the default layout yet
+│   └── clock.py                       # not in the default layout yet
 └── providers/
-    ├── base.py               # Provider contract every WM provider implements
-    ├── registry.py            # provider name -> Provider class
-    ├── sway.py                # sway implementation
-    └── i3.py                  # i3 implementation
+    ├── base.py                # Provider contract every WM provider implements
+    ├── registry.py             # provider name -> Provider class
+    ├── sway.py                  # sway implementation
+    └── i3.py                     # i3 implementation
+
+src/tuicc/connectivity/
+├── base.py                # WifiBackend/BluetoothBackend contracts
+├── registry.py             # backend name -> backend class
+├── iwd.py                   # wifi via iwd, over D-Bus (not iwctl text parsing)
+├── bluez.py                  # bluetooth via bluetoothctl
+├── worker.py                   # background thread — connect/disconnect never blocks the render loop
+├── model.py                     # WifiNetwork/BluetoothDevice — the generic connectivity model
+└── util.py                       # shared helpers (e.g. stripping ANSI codes from CLI output)
 ```
 
 ## Writing your own WM provider
@@ -121,7 +214,7 @@ the `Provider` contract in `src/tuicc/providers/base.py`. If your WM
 can implement this contract, tuicc can run on it, no changes needed
 anywhere else in the codebase.
 
-A provider must implement three methods:
+A provider must implement four methods:
 
 ```python
 class Provider(ABC):
@@ -133,6 +226,10 @@ class Provider(ABC):
 
     def focus_window(self, window_id: str) -> None:
         """Switch the WM's focus to the given window."""
+
+    def move_window_to_region(self, window_id: str, region_id: str) -> None:
+        """Move the given window to the given region, without changing
+        which region is currently visible."""
 ```
 
 `WMState` (defined in `model.py`) is the generic shape every provider
@@ -146,7 +243,7 @@ windows that don't participate in a tiled layout.
 reference implementations — both are short and worth reading end to
 end before writing your own. Both use the `i3ipc` library to read the
 WM's window tree and translate it into `WMState`, and send IPC
-commands back to the WM for the two focus methods. They're
+commands back to the WM for the focus/move methods. They're
 deliberately kept close in structure so you can diff them to see
 exactly what changes between a Wayland/wlroots WM and an X11 one:
 i3 has no `app_id` (falls back to `window_class`), wraps floating
@@ -155,8 +252,8 @@ i3's `workspace.leaves()` includes floating windows too, so the i3
 provider has to de-duplicate them against `floating_nodes` explicitly.
 If you're targeting a wlroots-based WM (sway, or a sway fork like
 `scroll`), start from `sway.py`; if you're targeting anything else
-speaking i3's IPC protocol (i3 itself, or a fork like `scroll`, which
-speaks a superset of it), start from `i3.py`.
+speaking i3's IPC protocol (i3 itself, or another i3-compatible
+fork), start from `i3.py`.
 
 Once your provider class exists, register it in
 `src/tuicc/providers/registry.py`:
@@ -171,7 +268,11 @@ PROVIDERS = {
 
 Users select it with `provider = "yourwm"` under `[wm]` in their
 config. That's the whole integration surface — nothing in `main.py`,
-`render.py`, or any module needs to change.
+`render.py`, or any module needs to change, verified by grepping the
+whole codebase for stray sway/i3 references outside `providers/` and
+`tests/`. If you find that isn't actually true for something you're
+building, please open an issue — that separation is the core idea
+this whole project stands on.
 
 If your WM's window layout doesn't map cleanly onto sway's model
 (e.g. scrolling/infinite layouts), the `rect` normalization is the
@@ -180,19 +281,19 @@ part to think hardest about — see the `Window.rect` docstring in
 a draft PR if you get stuck; I'd genuinely like to see this work on
 more than just sway and i3.
 
-**Note:** I'm actively researching what a `scroll`/niri provider would
-need — `scroll` (a sway fork with a PaperWM-style scrolling layout)
-turns out to speak a superset of sway's IPC, plus a `fully_visible`
-flag per window that's a natural fit for a filmstrip-style preview
-(previous/current/next column) instead of trying to render an entire
-infinite strip. Nothing built yet, but the shape of the problem is
-clearer than it was.
+**Note:** what a `scroll`/niri provider would need is on my backlog,
+coming soon (I hope)! — `scroll` (a sway fork with a PaperWM-style
+scrolling layout) turns out to speak a superset of sway's IPC, plus a
+`fully_visible` flag per window that's a natural fit for a
+filmstrip-style preview (previous/current/next column) instead of
+trying to render an entire infinite strip. Nothing built yet, but the
+shape of the problem is clearer than it was.
 
 ## Why
 
 Oh lord, that's the big question.
 
-Because I don't rice, I use. I want a functioning, no-bullshit, no-bells-and-whistles space, and I hope to build that. If you vibe with that, you're in the right place. (Colors and styling will of course be customizable — I'm still trying to make it look appealing, don't worry.)
+Because I don't rice, I use. I rice a little, just a pinch of rice, but primarily I use. I want a functioning, no-bullshit, no-bells-and-whistles space, and I hope to build that. If you vibe with that, you're in the right place. (Colors and styling will of course be customizable — I'm still trying to make it look appealing, don't worry.)
 
 Existing tiling WM status bars and launchers tend to be single-purpose
 and WM-specific. tuicc aims for one keybind, one place, that adapts to
@@ -204,3 +305,13 @@ GPLv3 — see [LICENSE](LICENSE) for the full text. In short: you're free to
 use, modify, and distribute tuicc, including commercially, but if you
 distribute a modified version, it must stay open source under the same
 license. So that everybody gets a better tuicc :)
+
+## Professional tip for my elite readers who got all the way down here
+
+If you run it in (SHOUTOUT!) [cool-retro-term](https://github.com/Swordfish90/cool-retro-term),
+it looks sick af. Try it, really — just launch it with
+`TERM=xterm-256color python main.py`, or curses will complain about
+missing 256-color support, since cool-retro-term doesn't report
+itself as 256-color-capable by default.
+
+Have a blessed day <3
