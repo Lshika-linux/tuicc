@@ -1,4 +1,4 @@
-57435u# tuicc
+# tuicc
 
 A minimal, function-oriented TUI control center for tiling window managers.
 
