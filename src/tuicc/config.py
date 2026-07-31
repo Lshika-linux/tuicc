@@ -61,6 +61,14 @@ def load_toml(path: Path) -> dict:
     with open(path, "rb") as f:
         return tomllib.load(f)
 
+def _require_exactly_one(box_data, preset_number, *field_names):
+    present = [name for name in field_names if name in box_data]
+    if len(present) != 1:
+        raise KeyError(
+            f"box '{box_data.get('name', '?')}' in preset {preset_number} must set "
+            f"exactly one of {field_names}, not {'none' if not present else present}"
+        )
+
 
 def build_layout_from_preset(preset_number: int) -> Layout:
     preset_path = PRESETS_DIR / f"{preset_number}.toml"
@@ -68,25 +76,28 @@ def build_layout_from_preset(preset_number: int) -> Layout:
 
     boxes = []
     for box_data in data["box"]:
-        has_h = "h" in box_data
-        has_rows = "rows" in box_data
-        if has_h == has_rows:  # both set, or neither — both are ambiguous
-            raise KeyError(
-                f"box '{box_data.get('name', '?')}' in preset {preset_number} must set "
-                f"exactly one of 'h' (ratio) or 'rows' (absolute), not {'both' if has_h else 'neither'}"
-            )
+        _require_exactly_one(box_data, preset_number, "x", "right_of")
+        _require_exactly_one(box_data, preset_number, "y", "below", "above", "bottom")
+        _require_exactly_one(box_data, preset_number, "w", "cols")
+        _require_exactly_one(box_data, preset_number, "h", "rows", "fill_to")
+
         box = ModuleBox(
             name=box_data["name"],
-            x=box_data["x"],
-            y=box_data["y"],
-            w=box_data["w"],
+            x=box_data.get("x"),
+            right_of=box_data.get("right_of"),
+            y=box_data.get("y"),
+            below=box_data.get("below"),
+            above=box_data.get("above"),
+            bottom=box_data.get("bottom", False),
+            w=box_data.get("w"),
+            cols=box_data.get("cols"),
             h=box_data.get("h"),
             rows=box_data.get("rows"),
+            fill_to=box_data.get("fill_to"),
         )
         boxes.append(box)
 
     return Layout(boxes=boxes)
-
 
 def load_config() -> Config:
     ensure_user_config_exists()

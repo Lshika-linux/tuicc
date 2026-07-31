@@ -1,53 +1,77 @@
 # Layout preset — defines where each panel sits on screen.
 #
-# x, y, w = position and width, always as a fraction of the terminal (0.0–1.0).
-#   e.g. x = 0.26 means "starts 26% of the way across the screen".
+# Every box needs a name, and position/size, each pair mutually exclusive:
 #
-# Every box needs a height too, set with EXACTLY ONE of these two keys:
-#   h    = fraction of the terminal height (0.0–1.0), same idea as x/y/w.
-#          Scales automatically with terminal size — use this for most boxes.
-#   rows = a fixed number of terminal rows (e.g. 6), does NOT scale.
-#          Use this only for a box whose content has a fixed size
-#          (like power_menu's icon grid), so it never gets cut off on a
-#          small terminal or leaves empty space on a large one.
+#   x         = position as a fraction of terminal width (0.0–1.0)
+#   right_of  = name of another box — x becomes that box's actual right edge
 #
-# Boxes do not coordinate with each other — if you change one box's size,
-# neighboring boxes will NOT automatically resize or move to compensate.
-# You may need to adjust their x/y/w/h/rows by hand so edges line up again.
-
+#   y         = position as a fraction of terminal height (0.0–1.0)
+#   below     = name of another box — y becomes that box's actual bottom edge
+#   above     = name of another box — this box sits directly above it (this
+#               box's bottom edge lands exactly on that box's top edge)
+#   bottom    = true — this box sits flush against the screen's bottom edge
+#
+#   w         = width as a fraction of terminal width (0.0–1.0), scales
+#   cols      = a fixed number of columns, does NOT scale
+#
+#   h         = height as a fraction of terminal height (0.0–1.0), scales
+#   rows      = a fixed number of rows, does NOT scale
+#   fill_to   = name of another box — height reaches exactly to that box's
+#               top edge, i.e. "take whatever space is left"
+#
+# WHY BOTH below/above/bottom EXIST, AND WHY fill_to EXISTS:
+# A stack anchored from the top (box A at y=0, box B below=A, box C
+# below=B) only sums to exactly the terminal height if every box in it
+# has a FIXED size. The moment one box in the stack is ratio-sized while
+# its neighbors are fixed-row (like sidebar vs. connectivity/power_menu
+# below it), no single ratio can make the total exactly match terminal
+# height across different terminal sizes — try it on a tiled vs. a
+# fullscreen terminal and you'll see either a gap or an overflow.
+#
+# The fix: anchor the FIXED-size boxes from the BOTTOM instead (bottom=
+# true for the last one, above=<name> for the one before it), and let
+# the flexible/ratio box use fill_to to consume exactly what's left
+# above them. The column then sums to the terminal height exactly, for
+# any terminal height, with zero manual per-height tuning.
+#
+# Boxes still don't coordinate beyond an explicit reference (right_of/
+# below/above/fill_to) — if you change a box's size and nothing else
+# references it, its neighbors will NOT automatically resize or move to
+# compensate.
+#
 # This is by design. What you see is what you get. It should remain this way.
 
 [[box]]
 name = "sidebar"
 x = 0.0
 y = 0.0
-w = 0.23
-h = 0.571429
+w = 0.26
+fill_to = "connectivity"
 
 [[box]]
 name = "connectivity"
 x = 0.0
-y = 0.571429
-w = 0.23
-h = 0.285714
+above = "power_menu"
+w = 0.26
+rows = 9   # border(2) + 7 content rows — exact row count, not a ratio
 
 [[box]]
 name = "power_menu"
 x = 0.0
-y = 0.857143
-w = 0.23
-rows = 7   # border(2) + 1 grid row * CELL_HEIGHT(4) + uptime(1) — exact row count, not a ratio
+bottom = true
+w = 0.26
+rows = 6   # border(2) + 4 actions, no uptime line
 
 [[box]]
 name = "launcher"
-x = 0.23
+right_of = "sidebar"
 y = 0.0
-w = 0.77
+w = 0.74
 h = 0.09
 
 [[box]]
 name = "preview"
-x = 0.23
-y = 0.09
-w = 0.77
+right_of = "sidebar"
+below = "launcher"
+w = 0.74
 h = 0.91
