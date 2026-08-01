@@ -200,7 +200,9 @@ def main(stdscr):
                         "known_ids": known_ids,
                         "started_at": time.monotonic(),
                     })
-                typing_mode = False
+                    typing_mode = False
+                    selected_id = saved_selected_id
+                    active_module = saved_active_module
             elif key == cfg.keybinds["left"]:
                 search_selected_index = max(search_selected_index - 1, 0)
             elif key == cfg.keybinds["right"]:
