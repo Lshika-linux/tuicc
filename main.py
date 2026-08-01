@@ -36,6 +36,16 @@ from tuicc.theme_setup import setup_theme
 from tuicc.modules.launcher import resolve_selected, handle_typing_key
 
 
+def spawn_detached(cmd):
+    subprocess.Popen(
+        cmd, shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(False)
@@ -73,6 +83,22 @@ def main(stdscr):
     saved_active_module = None
     pending_moves = []
     MOVE_TIMEOUT_SECONDS = 8.0
+
+    def apply_selection(item):
+        nonlocal selected_id, focus_id, active_module
+        selected_id = item.id
+        active_module = module_of_item(item)
+        if item.target_kind == "region":
+            focus_id = item.focus_target
+
+    def enter_typing_mode(initial_query):
+        nonlocal saved_selected_id, saved_active_module, typing_mode, search_query, search_selected_index, active_module
+        saved_selected_id = selected_id
+        saved_active_module = active_module
+        typing_mode = True
+        search_query = initial_query
+        search_selected_index = 0
+        active_module = "launcher"
 
     while True:
         stdscr.timeout(50 if (pending_moves or connectivity.has_pending()) else 1000)
@@ -146,13 +172,7 @@ def main(stdscr):
 
         if pending_confirm is not None:
             if key == ord("y"):
-                subprocess.Popen(
-                    pending_confirm["command"], shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
+                spawn_detached(pending_confirm["command"])
                 break
             elif key == ord("n"):
                 pending_confirm = None
@@ -174,13 +194,7 @@ def main(stdscr):
                 cmd = resolve_selected(search_query, search_selected_index)
                 if cmd is not None:
                     known_ids = {w.id for r in state.regions for w in r.windows}
-                    subprocess.Popen(
-                        cmd, shell=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        stdin=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
+                    spawn_detached(cmd)
                     pending_moves.append({
                         "target_region": focus_id,
                         "known_ids": known_ids,
@@ -214,38 +228,20 @@ def main(stdscr):
                 active_module = next_name
                 first_item = first_item_in_module(ordered, active_module)
                 if first_item is not None:
-                    selected_id = first_item.id
-                    if first_item.target_kind == "region":
-                        focus_id = first_item.focus_target
+                    apply_selection(first_item)
         elif key == cfg.keybinds["tab"] and ordered:
             next_item = next_item_in_module(ordered, active_module, selected_id)
             if next_item is not None:
-                selected_id = next_item.id
-                if next_item.target_kind == "region":
-                    focus_id = next_item.focus_target
+                apply_selection(next_item)
         elif key in direction_keys and selected_item is not None:
             direction = direction_keys[key]
             next_item = resolve_direction_move(ordered, selected_item, direction, focus_id)
-
             if next_item is not None:
-                selected_id = next_item.id
-                active_module = module_of_item(next_item)
-                if next_item.target_kind == "region":
-                    focus_id = next_item.focus_target
+                apply_selection(next_item)
         elif cfg.vim_mode and key == cfg.keybinds["insert"]:
-            saved_selected_id = selected_id
-            saved_active_module = active_module
-            typing_mode = True
-            search_query = ""
-            search_selected_index = 0
-            active_module = "launcher"
+            enter_typing_mode("")
         elif not cfg.vim_mode and 32 <= key <= 126:
-            saved_selected_id = selected_id
-            saved_active_module = active_module
-            typing_mode = True
-            search_query = chr(key)
-            search_selected_index = 0
-            active_module = "launcher"
+            enter_typing_mode(chr(key))
 
 
 if __name__ == "__main__":
