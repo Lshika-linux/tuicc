@@ -150,6 +150,25 @@ def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | No
     return None
 
 
+def global_shortcut_item(global_shortcuts: dict, key: int) -> NavItem | None:
+    """The ad-hoc NavItem for a global shortcut keypress, or None if the
+    key isn't bound to one. Global shortcuts have no on-screen position
+    (rect is a zero placeholder) and no region to focus — they exist
+    only to carry a target_kind through to an ACTION_HANDLERS lookup,
+    the same dispatch path a selected on-screen item would use.
+    """
+    shortcut = global_shortcuts.get(key)
+    if shortcut is None:
+        return None
+
+    return NavItem(
+        id=shortcut["item_id"],
+        rect=(0, 0, 0, 0),
+        focus_target=None,
+        target_kind=shortcut["target_kind"],
+    )
+
+
 def resolve_direction_move(
     items: list[NavItem], current: NavItem, direction: str, focus_id: str | None
 ) -> NavItem | None:

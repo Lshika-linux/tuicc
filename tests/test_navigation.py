@@ -14,6 +14,7 @@ from tuicc.navigation import (
     module_of_item,
     first_item_in_module,
     resolve_direction_move,
+    global_shortcut_item,
 )
 
 
@@ -252,5 +253,36 @@ def test_resolve_direction_move_no_candidates_returns_none():
     lone = NavItem(id="preview:lone", rect=(0.5, 0.5, 0.1, 0.1), target_kind="window")
 
     result = resolve_direction_move([lone], lone, "right", focus_id=None)
+
+    assert result is None
+
+
+# ---------- global_shortcut_item ----------
+
+def test_global_shortcut_item_builds_navitem_for_bound_key():
+    global_shortcuts = {
+        ord("l"): {"item_id": "power_menu:lock", "target_kind": "power_action"},
+    }
+
+    result = global_shortcut_item(global_shortcuts, ord("l"))
+
+    assert result.id == "power_menu:lock"
+    assert result.target_kind == "power_action"
+    assert result.rect == (0, 0, 0, 0)
+    assert result.focus_target is None
+
+
+def test_global_shortcut_item_unbound_key_returns_none():
+    global_shortcuts = {
+        ord("l"): {"item_id": "power_menu:lock", "target_kind": "power_action"},
+    }
+
+    result = global_shortcut_item(global_shortcuts, ord("x"))
+
+    assert result is None
+
+
+def test_global_shortcut_item_empty_shortcuts_returns_none():
+    result = global_shortcut_item({}, ord("l"))
 
     assert result is None
