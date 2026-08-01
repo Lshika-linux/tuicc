@@ -94,3 +94,17 @@ def test_spawn_detached_returns_the_process_pid(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", _fake_popen([], pid=1234))
 
     assert spawn_detached("kitty") == 1234
+
+
+def test_spawn_detached_accepts_a_presplit_list_unchanged(monkeypatch):
+    # session.py's saved cmdline is already a list (from
+    # /proc/<pid>/cmdline) — must pass through as-is, not get
+    # joined-then-resplit, which would mangle an arg containing a space.
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+
+    spawn_detached(["kitty", "--title", "has a space"], shell_true=False)
+
+    cmd, kwargs = calls[0]
+    assert cmd == ["kitty", "--title", "has a space"]
+    assert kwargs["shell"] is False

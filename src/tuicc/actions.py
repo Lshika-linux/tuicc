@@ -16,26 +16,37 @@ if not None, becomes the new pending_confirm value.
 
 import shlex
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
 class ActionContext:
     provider: object
     connectivity: object
+    # Session entries (from session.py's load_session) waiting to be
+    # spawned — a handler appends to this, main.py's loop drains it
+    # over time (staggered, not all at once — see main.py's restore
+    # processing). Shared mutable resource a handler can act on,
+    # same shape as connectivity above.
+    restore_queue: list = field(default_factory=list)
 
 
 def spawn_detached(cmd, shell_true=False):
     """Run cmd as a detached background process that survives tuicc
     exiting right after this call.
 
-    shell_true=True runs cmd through the shell — needed for real shell
-    syntax (pipes, ;, &&, $VARS). Off by default: split into plain
-    argv and run directly, no shell involved, so no part of cmd is
-    ever interpreted as shell syntax. Shared by main.py (launcher and
-    confirm-dialog spawns) and quick_actions.py/power_menu.py's
-    immediate (non-confirm) actions, so there's exactly one place that
-    decides how a command string becomes a process.
+    cmd is normally a string — shell_true=True runs it through the
+    shell (needed for real shell syntax: pipes, ;, &&, $VARS); off by
+    default, it's split into plain argv and run directly, no shell
+    involved, so no part of cmd is ever interpreted as shell syntax.
+    cmd may also be a pre-split list (session.py's saved cmdline
+    already is one, from /proc/<pid>/cmdline) — passed straight
+    through rather than re-joined and re-split, which could mangle an
+    argument that legitimately contains a space. Shared by main.py
+    (launcher, confirm-dialog, and session-restore spawns) and
+    quick_actions.py/power_menu.py's immediate (non-confirm) actions,
+    so there's exactly one place that decides how a command becomes a
+    process.
 
     Returns the spawned process's pid — lets a caller match it against
     Window.pid later (see pending_moves.py), on providers that expose
@@ -43,7 +54,12 @@ def spawn_detached(cmd, shell_true=False):
     shell_true=True the pid belongs to the shell, not necessarily the
     GUI process it eventually execs.
     """
-    popen_cmd = cmd if shell_true else shlex.split(cmd)
+    if shell_true:
+        popen_cmd = cmd
+    elif isinstance(cmd, str):
+        popen_cmd = shlex.split(cmd)
+    else:
+        popen_cmd = cmd
     process = subprocess.Popen(
         popen_cmd, shell=shell_true,
         stdout=subprocess.DEVNULL,
