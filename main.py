@@ -153,7 +153,10 @@ def main(stdscr):
         if pending_confirm is not None:
             if key == cfg.keybinds["confirm_yes"]:
                 spawn_detached(pending_confirm["command"], pending_confirm["shell_true"])
-                break
+                exit_after = pending_confirm["exit_after_confirm"]
+                pending_confirm = None
+                if exit_after:
+                    break
             elif key == cfg.keybinds["confirm_no"]:
                 pending_confirm = None
             continue

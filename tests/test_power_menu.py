@@ -1,11 +1,11 @@
-"""Tests for power_menu.py — only the pure logic (_row_label, nav_items).
-draw() needs a real curses screen to exercise meaningfully, so it's left
-untested here, same as other modules' drawing code.
+"""Tests for power_menu.py — only the pure logic (_row_label, nav_items,
+handle). draw() needs a real curses screen to exercise meaningfully, so
+it's left untested here, same as other modules' drawing code.
 """
 
 from types import SimpleNamespace
 
-from tuicc.modules.power_menu import _row_label, nav_items
+from tuicc.modules.power_menu import _row_label, nav_items, handle
 
 
 def test_row_label_with_shortcut():
@@ -96,3 +96,23 @@ def test_nav_items_preview_text_adds_shell_true_warning_line():
         ("> a && b <", 0),
         ("!! SHELL=TRUE !!", 0),
     ]
+
+
+# ---------- handle ----------
+
+def test_handle_confirm_required_tags_pending_with_owning_module():
+    # Regression: draw() only shows a pending_confirm dict if it's
+    # tagged with its own module name — otherwise every visible
+    # confirm-capable module shows the same dialog at once (a real bug
+    # caught live, once sessions.py and power_menu.py were both on
+    # screen together for the first time).
+    cfg = SimpleNamespace(power_menu_actions=[
+        {"label": "Shutdown", "command": "systemctl poweroff", "confirm": True, "shell_true": False},
+    ])
+    item = SimpleNamespace(id="power_menu:0")
+
+    should_exit, pending = handle(ctx=None, item=item, cfg=cfg)
+
+    assert should_exit is False
+    assert pending["module"] == "power_menu"
+    assert pending["command"] == "systemctl poweroff"

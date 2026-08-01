@@ -22,7 +22,7 @@ def draw(stdscr, box, ctx, module_name):
     outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
     draw_box_outline(stdscr, y, x, h, w, outer_color, title="Quick Actions")
 
-    if ctx.pending_confirm is not None:
+    if ctx.pending_confirm is not None and ctx.pending_confirm.get("module") == module_name:
         label = ctx.pending_confirm["label"]
         question = f"Run {label}?"
         hint = f"{key_label(ctx.config.keybinds['confirm_yes'])}/{key_label(ctx.config.keybinds['confirm_no'])}"
@@ -83,6 +83,12 @@ def handle(ctx, item, cfg):
     action_index = int(item.id.split(":")[1])
     action = cfg.quick_actions[action_index]
     if action["confirm"]:
-        return False, action
+        # A copy, not the config dict itself — "module" tags which
+        # module's draw() should show this, config.quick_actions is
+        # shared, shouldn't be mutated by a single confirm.
+        # exit_after_confirm=True: today's actual quick_actions entries
+        # mirror power_menu's (lock/logout/reboot/shutdown) — revisit
+        # if a future non-exit-worthy quick action needs this False.
+        return False, {**action, "module": "quick_actions", "exit_after_confirm": True}
     spawn_detached(action["command"], action["shell_true"])
     return True, None

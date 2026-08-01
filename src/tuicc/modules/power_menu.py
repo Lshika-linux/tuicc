@@ -35,7 +35,7 @@ def draw(stdscr, box, ctx, module_name):
     outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
     draw_box_outline(stdscr, y, x, h, w, outer_color, title="Power Menu")
 
-    if ctx.pending_confirm is not None:
+    if ctx.pending_confirm is not None and ctx.pending_confirm.get("module") == module_name:
         confirm_text = ctx.pending_confirm.get("confirm_text")
         hint = f"{key_label(ctx.config.keybinds['confirm_yes'])}/{key_label(ctx.config.keybinds['confirm_no'])}"
         lines = []
@@ -93,6 +93,12 @@ def handle(ctx, item, cfg):
     action_index = int(item.id.split(":")[1])
     action = cfg.power_menu_actions[action_index]
     if action["confirm"]:
-        return False, action
+        # A copy, not the config dict itself — "module" tags which
+        # module's draw() should show this, config.power_menu_actions
+        # is shared, shouldn't be mutated by a single confirm.
+        # exit_after_confirm=True: these are all destructive/session-
+        # ending actions (shutdown/reboot/logout), tuicc has nothing
+        # left to do once one's confirmed.
+        return False, {**action, "module": "power_menu", "exit_after_confirm": True}
     spawn_detached(action["command"], action["shell_true"])
     return True, None
