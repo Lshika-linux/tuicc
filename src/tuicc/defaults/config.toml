@@ -50,6 +50,10 @@ down = "Down"
 tab = "Tab"
 switch_module = "Shift+Tab"
 confirm = "Enter"
+# Answering a Y/N confirmation dialog (e.g. before shutdown/reboot).
+# The on-screen hint always reflects whatever you bind here.
+confirm_yes = "y"
+confirm_no = "n"
 
 
 [[quick_actions.action]]

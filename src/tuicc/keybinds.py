@@ -39,6 +39,25 @@ SPECIAL_KEYS = {
 }
 
 
+_KEY_NAMES_BY_CODE = {code: name for name, code in SPECIAL_KEYS.items()}
+
+
+def key_label(code: int) -> str:
+    """Reverse of resolve_key: a short display string for a resolved
+    key code, so UI text can show what a user actually bound instead
+    of a hardcoded label (e.g. the Y/N confirm-dialog hint reflecting
+    the real confirm_yes/confirm_no keys). Best-effort: Ctrl+ combos
+    and anything outside SPECIAL_KEYS/printable ASCII have no way to
+    recover the original name from the code alone, so they fall back
+    to "?" rather than guessing.
+    """
+    if code in _KEY_NAMES_BY_CODE:
+        return _KEY_NAMES_BY_CODE[code]
+    if 32 <= code <= 126:
+        return chr(code).upper()
+    return "?"
+
+
 def resolve_key(name: str) -> int:
     if name in SPECIAL_KEYS:
         return SPECIAL_KEYS[name]

@@ -9,7 +9,8 @@ import curses
 import subprocess
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline
+from tuicc.render_utils import draw_box_outline, draw_confirm_dialog
+from tuicc.keybinds import key_label
 
 
 def draw(stdscr, box, ctx, module_name):
@@ -24,14 +25,12 @@ def draw(stdscr, box, ctx, module_name):
     if ctx.pending_confirm is not None:
         label = ctx.pending_confirm["label"]
         question = f"Run {label}?"
-        answer_hint = "Y/N"
-
-        row = y + 1 + h // 3
-        try:
-            stdscr.addstr(row, x + 2, question[:max(w - 4, 0)], theme.get("urgent", 0))
-            stdscr.addstr(row + 1, x + 2, answer_hint[:max(w - 4, 0)], theme.get("text", 0))
-        except curses.error:
-            pass
+        hint = f"{key_label(ctx.config.keybinds['confirm_yes'])}/{key_label(ctx.config.keybinds['confirm_no'])}"
+        lines = [
+            (question, theme.get("urgent", 0)),
+            (hint, theme.get("text", 0)),
+        ]
+        draw_confirm_dialog(stdscr, box, lines)
         return
 
     inner_w = max(w - 4, 0)

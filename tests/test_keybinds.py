@@ -4,7 +4,7 @@ import curses
 
 import pytest
 
-from tuicc.keybinds import resolve_key
+from tuicc.keybinds import resolve_key, key_label
 
 
 def test_special_key_left():
@@ -63,3 +63,27 @@ def test_unknown_name_raises():
 def test_empty_string_raises():
     with pytest.raises(ValueError):
         resolve_key("")
+
+
+# ---------- key_label ----------
+
+def test_key_label_special_key():
+    assert key_label(curses.KEY_LEFT) == "Left"
+
+
+def test_key_label_lowercase_character_is_uppercased():
+    assert key_label(ord("y")) == "Y"
+
+
+def test_key_label_already_uppercase_character():
+    assert key_label(ord("Y")) == "Y"
+
+
+def test_key_label_round_trips_with_resolve_key():
+    assert key_label(resolve_key("n")) == "N"
+
+
+def test_key_label_unrecoverable_code_falls_back_to_question_mark():
+    # Ctrl+A resolves to code 1 — there's no way back to "Ctrl+A" from
+    # just the integer, so this documents the honest fallback.
+    assert key_label(resolve_key("Ctrl+A")) == "?"

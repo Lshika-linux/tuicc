@@ -171,10 +171,10 @@ def main(stdscr):
             continue
 
         if pending_confirm is not None:
-            if key == ord("y"):
+            if key == cfg.keybinds["confirm_yes"]:
                 spawn_detached(pending_confirm["command"])
                 break
-            elif key == ord("n"):
+            elif key == cfg.keybinds["confirm_no"]:
                 pending_confirm = None
             continue
 

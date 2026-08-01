@@ -50,6 +50,29 @@ def centered_x(box_x, box_w, text):
     return box_x + padding // 2
 
 
+def draw_confirm_dialog(stdscr, box, lines):
+    """A block of (text, color_pair) lines, centered both horizontally
+    and vertically within box — the Y/N confirmation overlay a module
+    draws in place of its normal contents while ctx.pending_confirm is
+    set. Shared so every module's confirm dialog is positioned the
+    same way instead of each inventing its own.
+    """
+    x, y, w, h = box
+    inner_w = max(w - 2, 0)
+    start_row = y + max((h - len(lines)) // 2, 0)
+
+    try:
+        for i, (text, color) in enumerate(lines):
+            row = start_row + i
+            if row < y or row >= y + h - 1:
+                continue
+            clipped = text[:inner_w]
+            col = centered_x(x + 1, inner_w, clipped)
+            stdscr.addstr(row, col, clipped, color)
+    except curses.error:
+        pass
+
+
 def format_shortcut(key_name: str) -> str:
     """Turn a keybinds.py-style key spec into display text, e.g.
     "Ctrl+L" -> "[^L]". Shared so any module showing a keybind hint
