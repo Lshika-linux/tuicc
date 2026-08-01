@@ -190,6 +190,17 @@ def next_item_in_module(items: list[NavItem], module_name: str, selected_id: str
     return module_items[next_index]
 
 
+def resolve_selection(item: NavItem, focus_id: str | None) -> tuple[str, str, str | None]:
+    """The new (selected_id, active_module, focus_id) after selecting
+    item. active_module always matches wherever item actually lives;
+    focus_id only changes for region items, since anything else
+    (a window, a power-menu action...) doesn't mean "show a different
+    workspace" — it leaves whatever region was last shown untouched.
+    """
+    new_focus_id = item.focus_target if item.target_kind == "region" else focus_id
+    return item.id, module_of_item(item), new_focus_id
+
+
 def global_shortcut_item(global_shortcuts: dict, key: int) -> NavItem | None:
     """The ad-hoc NavItem for a global shortcut keypress, or None if the
     key isn't bound to one. Global shortcuts have no on-screen position

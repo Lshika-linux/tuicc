@@ -158,6 +158,16 @@ def handle_typing_key(key, cfg, search_query, search_selected_index):
     return search_query, search_selected_index, True
 
 
+def enter_typing_mode(selected_id, active_module, initial_query):
+    """New (saved_selected_id, saved_active_module, typing_mode,
+    search_query, search_selected_index, active_module) for entering
+    the launcher's typing mode — saves the pre-typing selection so
+    handle_typing_key's Escape/Backspace-to-empty exit can restore it
+    later.
+    """
+    return selected_id, active_module, True, initial_query, 0, "launcher"
+
+
 def _build_window(results, sel, avail_w):
     """Which result indices fit in avail_w, starting from 0 — unless
     the selected index doesn't fit in that window, in which case the

@@ -3,7 +3,7 @@ filter_apps are pure functions over strings/lists, no .desktop file
 scanning involved.
 """
 
-from tuicc.modules.launcher import _fuzzy_score, filter_apps, handle_typing_key
+from tuicc.modules.launcher import _fuzzy_score, filter_apps, handle_typing_key, enter_typing_mode
 
 
 class _FakeConfig:
@@ -154,3 +154,17 @@ def test_handle_typing_key_unhandled_key_leaves_state_unchanged():
     query, index, still_typing = handle_typing_key(999999, _cfg, "fire", 1)
 
     assert (query, index, still_typing) == ("fire", 1, True)
+
+
+# ---------- enter_typing_mode ----------
+
+def test_enter_typing_mode_saves_previous_selection():
+    result = enter_typing_mode("sidebar:1", "sidebar", "")
+
+    assert result == ("sidebar:1", "sidebar", True, "", 0, "launcher")
+
+
+def test_enter_typing_mode_seeds_query_with_typed_character():
+    result = enter_typing_mode("sidebar:1", "sidebar", "f")
+
+    assert result == ("sidebar:1", "sidebar", True, "f", 0, "launcher")

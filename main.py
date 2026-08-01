@@ -24,15 +24,15 @@ from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
     tab_order,
     resolve_direction_move,
+    resolve_selection,
     global_shortcut_item,
     next_module_name,
     next_item_in_module,
-    module_of_item,
     first_item_in_module,
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
 from tuicc.theme_setup import setup_theme
-from tuicc.modules.launcher import resolve_selected, handle_typing_key
+from tuicc.modules.launcher import resolve_selected, handle_typing_key, enter_typing_mode
 
 
 def main(stdscr):
@@ -72,22 +72,6 @@ def main(stdscr):
     saved_active_module = None
     pending_moves = []
     MOVE_TIMEOUT_SECONDS = 8.0
-
-    def apply_selection(item):
-        nonlocal selected_id, focus_id, active_module
-        selected_id = item.id
-        active_module = module_of_item(item)
-        if item.target_kind == "region":
-            focus_id = item.focus_target
-
-    def enter_typing_mode(initial_query):
-        nonlocal saved_selected_id, saved_active_module, typing_mode, search_query, search_selected_index, active_module
-        saved_selected_id = selected_id
-        saved_active_module = active_module
-        typing_mode = True
-        search_query = initial_query
-        search_selected_index = 0
-        active_module = "launcher"
 
     while True:
         stdscr.timeout(50 if (pending_moves or connectivity.has_pending()) else 1000)
@@ -219,20 +203,26 @@ def main(stdscr):
                 active_module = next_name
                 first_item = first_item_in_module(ordered, active_module)
                 if first_item is not None:
-                    apply_selection(first_item)
+                    selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
         elif key == cfg.keybinds["tab"] and ordered:
             next_item = next_item_in_module(ordered, active_module, selected_id)
             if next_item is not None:
-                apply_selection(next_item)
+                selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
         elif key in direction_keys and selected_item is not None:
             direction = direction_keys[key]
             next_item = resolve_direction_move(ordered, selected_item, direction, focus_id)
             if next_item is not None:
-                apply_selection(next_item)
+                selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
         elif cfg.vim_mode and key == cfg.keybinds["insert"]:
-            enter_typing_mode("")
+            (saved_selected_id, saved_active_module, typing_mode,
+             search_query, search_selected_index, active_module) = enter_typing_mode(
+                selected_id, active_module, ""
+            )
         elif not cfg.vim_mode and 32 <= key <= 126:
-            enter_typing_mode(chr(key))
+            (saved_selected_id, saved_active_module, typing_mode,
+             search_query, search_selected_index, active_module) = enter_typing_mode(
+                selected_id, active_module, chr(key)
+            )
 
 
 if __name__ == "__main__":

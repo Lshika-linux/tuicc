@@ -14,6 +14,7 @@ from tuicc.navigation import (
     module_of_item,
     first_item_in_module,
     resolve_direction_move,
+    resolve_selection,
     global_shortcut_item,
     next_module_name,
     next_item_in_module,
@@ -361,3 +362,25 @@ def test_next_item_in_module_no_items_returns_none():
     result = next_item_in_module([preview_item], "sidebar", "sidebar:1")
 
     assert result is None
+
+
+# ---------- resolve_selection ----------
+
+def test_resolve_selection_region_item_updates_focus_id():
+    item = NavItem(id="sidebar:2", rect=(0, 0, 1, 1), focus_target="2", target_kind="region")
+
+    selected_id, active_module, focus_id = resolve_selection(item, focus_id="1")
+
+    assert selected_id == "sidebar:2"
+    assert active_module == "sidebar"
+    assert focus_id == "2"
+
+
+def test_resolve_selection_non_region_item_keeps_focus_id_unchanged():
+    item = NavItem(id="preview:window-5", rect=(0, 0, 1, 1), target_kind="window")
+
+    selected_id, active_module, focus_id = resolve_selection(item, focus_id="1")
+
+    assert selected_id == "preview:window-5"
+    assert active_module == "preview"
+    assert focus_id == "1"
