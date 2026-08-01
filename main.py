@@ -1,7 +1,6 @@
 """Entry point: ties config, provider, layout engine and rendering together."""
 
 import curses
-import subprocess
 import sys
 import time
 import locale
@@ -17,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from tuicc.config import load_config
 from tuicc.context import RenderContext
-from tuicc.actions import ActionContext
+from tuicc.actions import ActionContext, spawn_detached
 from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
 from tuicc.connectivity.worker import ConnectivityWorker
@@ -34,16 +33,6 @@ from tuicc.navigation import (
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
 from tuicc.theme_setup import setup_theme
 from tuicc.modules.launcher import resolve_selected, handle_typing_key
-
-
-def spawn_detached(cmd):
-    subprocess.Popen(
-        cmd, shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
 
 
 def main(stdscr):
@@ -172,7 +161,7 @@ def main(stdscr):
 
         if pending_confirm is not None:
             if key == cfg.keybinds["confirm_yes"]:
-                spawn_detached(pending_confirm["command"])
+                spawn_detached(pending_confirm["command"], pending_confirm["shell_true"])
                 break
             elif key == cfg.keybinds["confirm_no"]:
                 pending_confirm = None
@@ -194,7 +183,8 @@ def main(stdscr):
                 cmd = resolve_selected(search_query, search_selected_index)
                 if cmd is not None:
                     known_ids = {w.id for r in state.regions for w in r.windows}
-                    spawn_detached(cmd)
+                    # .desktop Exec= is spec'd to never be shell-interpreted.
+                    spawn_detached(cmd, shell_true=False)
                     pending_moves.append({
                         "target_region": focus_id,
                         "known_ids": known_ids,

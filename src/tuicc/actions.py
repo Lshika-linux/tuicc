@@ -14,6 +14,8 @@ worker. should_exit=True means tuicc exits after this runs. pending,
 if not None, becomes the new pending_confirm value.
 """
 
+import shlex
+import subprocess
 from dataclasses import dataclass
 
 
@@ -21,6 +23,28 @@ from dataclasses import dataclass
 class ActionContext:
     provider: object
     connectivity: object
+
+
+def spawn_detached(cmd, shell_true=False):
+    """Run cmd as a detached background process that survives tuicc
+    exiting right after this call.
+
+    shell_true=True runs cmd through the shell — needed for real shell
+    syntax (pipes, ;, &&, $VARS). Off by default: split into plain
+    argv and run directly, no shell involved, so no part of cmd is
+    ever interpreted as shell syntax. Shared by main.py (launcher and
+    confirm-dialog spawns) and quick_actions.py/power_menu.py's
+    immediate (non-confirm) actions, so there's exactly one place that
+    decides how a command string becomes a process.
+    """
+    popen_cmd = cmd if shell_true else shlex.split(cmd)
+    subprocess.Popen(
+        popen_cmd, shell=shell_true,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def _handle_region(ctx, item, cfg):

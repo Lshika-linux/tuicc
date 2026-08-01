@@ -98,15 +98,18 @@ an explicit reference — what you configure is exactly what renders,
 always, by design.
 
 `[[power_menu.action]]` and `[[quick_actions.action]]` currently take
-identical fields (`label`, `command`, `confirm`) — not an accident
-left unfixed, but deliberate: they're kept in separate namespaces
-because they're expected to diverge (power_menu is a fixed
+identical fields (`label`, `command`, `confirm`, `shell_true`) — not
+an accident left unfixed, but deliberate: they're kept in separate
+namespaces because they're expected to diverge (power_menu is a fixed
 system-action set; quick_actions is reserved for something more
 open-ended later), and coupling them just because they *happen* to
 look the same today would make that divergence harder, not easier.
 Power-menu entries can also set `confirm_text` (a custom confirmation
 question) and `shortcut` (a key like `"Ctrl+L"` — both binds it
-globally and shows it in the entry's label automatically).
+globally and shows it in the entry's label automatically). `shell_true`
+(default `false`) runs `command` as plain arguments, no shell
+involved — set it to `true` only if the command needs real shell
+syntax (pipes, `;`, `&&`, `$VARS`).
 
 `[theme]` lives in `config.toml` like everything else here — nothing
 about color resolution is packaged or hidden separately. (And yeah,

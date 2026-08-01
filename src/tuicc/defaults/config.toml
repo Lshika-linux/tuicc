@@ -60,28 +60,35 @@ confirm_no = "n"
 # label is shown, icon is optional (leave "" for none), command runs
 # on Enter, confirm=true asks y/n before running (use for destructive
 # actions like shutdown).
+# shell_true = true only if command needs real shell syntax (pipes,
+# ;, &&, $VARS) — otherwise it runs as plain arguments, no shell
+# involved. Off by default: safer, and most commands don't need it.
 label = "== LOCK =="
 icon = ""
 command = "swaylock"
 confirm = false
+shell_true = false
 
 [[quick_actions.action]]
 label = "== LOGOUT =="
 icon = ""
 command = "swaymsg exit"
 confirm = true
+shell_true = false
 
 [[quick_actions.action]]
 label = "== REBOOT =="
 icon = ""
 command = "systemctl reboot"
 confirm = true
+shell_true = false
 
 [[quick_actions.action]]
 label = "== SHUTDOWN =="
 icon = ""
 command = "systemctl poweroff"
 confirm = true
+shell_true = false
 
 [clock]
 time_format = "%H:%M:%S"
@@ -101,11 +108,15 @@ wifi_backend = "iwd"
 bluetooth_backend = "bluez"
 
 [[power_menu.action]]
+# shell_true = true only if command needs real shell syntax (pipes,
+# ;, &&, $VARS) \u2014 otherwise it runs as plain arguments, no shell
+# involved. Off by default: safer, and most commands don't need it.
 label = "Lock"
 shortcut = "Ctrl+L"
 icon = "\uf023"
 command = "swaylock"
 confirm = false
+shell_true = false
 
 [[power_menu.action]]
 label = "Logout"
@@ -114,6 +125,7 @@ icon = "\uf08b"
 command = "swaymsg exit"
 confirm = true
 confirm_text = "Log out?"
+shell_true = false
 
 [[power_menu.action]]
 label = "Reboot"
@@ -122,6 +134,7 @@ icon = "\uf021"
 command = "systemctl reboot"
 confirm = true
 confirm_text = "Reboot now?"
+shell_true = false
 
 [[power_menu.action]]
 label = "Shutdown"
@@ -130,3 +143,4 @@ icon = "\U000f0425"
 command = "systemctl poweroff"
 confirm = true
 confirm_text = "Shut down now?"
+shell_true = false

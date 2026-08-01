@@ -6,11 +6,11 @@ items are — the core never guesses a module's internal layout.
 """
 
 import curses
-import subprocess
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, draw_confirm_dialog
 from tuicc.keybinds import key_label
+from tuicc.actions import spawn_detached
 
 
 def draw(stdscr, box, ctx, module_name):
@@ -79,11 +79,5 @@ def handle(ctx, item, cfg):
     action = cfg.quick_actions[action_index]
     if action["confirm"]:
         return False, action
-    subprocess.Popen(
-        action["command"], shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    spawn_detached(action["command"], action["shell_true"])
     return True, None

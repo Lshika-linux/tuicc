@@ -10,10 +10,11 @@ I'll aim to respond within a few days — this is a solo-maintained early-stage 
 
 tuicc is a local, single-user terminal tool. It has no network listener and doesn't run as a service — it's something you launch yourself in your own terminal session.
 
-The one thing worth being deliberate about: **`power_menu.action` and `quick_actions.action` entries in config run arbitrary shell commands** (`subprocess.Popen(..., shell=True)`). This is intentional and by design — the whole point is letting you bind your own commands — but it means:
+The one thing worth being deliberate about: **`power_menu.action` and `quick_actions.action` entries in config run commands from your config file** (via `subprocess.Popen`). By default these run as plain arguments, not through a shell — `shell=True` only happens if an action explicitly sets `shell_true = true`, an opt-in for commands that actually need real shell syntax (pipes, `;`, `&&`, `$VARS`). This is intentional and by design — the whole point is letting you bind your own commands — but it means:
 
-- **Don't run a `config.toml` or preset file you got from someone you don't trust.** Treat it the same way you'd treat a shell script — read it before running it, the same as you would for anything else that executes commands on your behalf.
+- **Don't run a `config.toml` or preset file you got from someone you don't trust.** Treat it the same way you'd treat a shell script — read it before running it, the same as you would for anything else that executes commands on your behalf. This applies doubly to any action with `shell_true = true`.
 - tuicc itself never generates or modifies these commands; it only ever runs exactly what's written in your own config file.
+- The app launcher (fuzzy-search from `.desktop` files) never uses a shell either, regardless of config — `.desktop` `Exec=` lines are spec'd to be tokenized, not shell-interpreted.
 
 Outside of that, the realistic surface is: parsing your own local config (TOML), talking to your own WM over its local IPC socket, and talking to `iwd`/`bluetoothctl` for connectivity — all local, all things you already trust by virtue of running them yourself.
 

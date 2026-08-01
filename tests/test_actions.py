@@ -2,9 +2,10 @@
 WM connection is needed.
 """
 
+import subprocess
 from types import SimpleNamespace
 
-from tuicc.actions import BASE_HANDLERS, ActionContext
+from tuicc.actions import BASE_HANDLERS, ActionContext, spawn_detached
 
 
 class _FakeProvider:
@@ -45,3 +46,38 @@ def test_window_handler_calls_focus_window():
 
 def test_base_handlers_has_exactly_region_and_window():
     assert set(BASE_HANDLERS.keys()) == {"region", "window"}
+
+
+# ---------- spawn_detached ----------
+
+def test_spawn_detached_shell_true_passes_raw_string(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: calls.append((cmd, kwargs)))
+
+    spawn_detached("echo hi && echo bye", shell_true=True)
+
+    cmd, kwargs = calls[0]
+    assert cmd == "echo hi && echo bye"
+    assert kwargs["shell"] is True
+
+
+def test_spawn_detached_shell_false_splits_into_argv(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: calls.append((cmd, kwargs)))
+
+    spawn_detached("firefox --private-window", shell_true=False)
+
+    cmd, kwargs = calls[0]
+    assert cmd == ["firefox", "--private-window"]
+    assert kwargs["shell"] is False
+
+
+def test_spawn_detached_defaults_to_shell_false(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: calls.append((cmd, kwargs)))
+
+    spawn_detached("kitty")
+
+    cmd, kwargs = calls[0]
+    assert cmd == ["kitty"]
+    assert kwargs["shell"] is False

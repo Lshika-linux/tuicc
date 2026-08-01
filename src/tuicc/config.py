@@ -165,6 +165,7 @@ def load_config() -> Config:
             "icon": action_data.get("icon", ""),
             "command": action_data["command"],
             "confirm": action_data.get("confirm", False),
+            "shell_true": action_data.get("shell_true", False),
         })
 
     power_menu_actions = []
@@ -176,6 +177,7 @@ def load_config() -> Config:
             "command": action_data["command"],
             "confirm": action_data.get("confirm", False),
             "confirm_text": action_data.get("confirm_text"),
+            "shell_true": action_data.get("shell_true", False),
         })
 
     # Global shortcuts: a key bound to an action's shortcut works from
