@@ -25,3 +25,4 @@ class RenderContext:
     wifi_networks: list = field(default_factory=list)
     bluetooth_devices: list = field(default_factory=list)
     connectivity: object = None
+    selected_item: object = None

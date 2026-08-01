@@ -26,13 +26,13 @@ def test_row_label_missing_shortcut_key_defaults_to_label_only():
 
 
 def _fake_ctx(actions):
-    return SimpleNamespace(config=SimpleNamespace(power_menu_actions=actions))
+    return SimpleNamespace(config=SimpleNamespace(power_menu_actions=actions), theme={})
 
 
 def test_nav_items_one_row_per_action():
     actions = [
-        {"label": "Lock", "command": "swaylock"},
-        {"label": "Logout", "command": "swaymsg exit"},
+        {"label": "Lock", "command": "swaylock", "shell_true": False},
+        {"label": "Logout", "command": "swaymsg exit", "shell_true": False},
     ]
     ctx = _fake_ctx(actions)
     box = (0, 0, 20, 10)  # x, y, w, h — plenty of room
@@ -50,9 +50,9 @@ def test_nav_items_stops_at_box_bottom_border():
     # A box only tall enough for 2 action rows (h=4: border, row, row, border)
     # should not report a 3rd action as a nav item even if configured.
     actions = [
-        {"label": "A", "command": "true"},
-        {"label": "B", "command": "true"},
-        {"label": "C", "command": "true"},
+        {"label": "A", "command": "true", "shell_true": False},
+        {"label": "B", "command": "true", "shell_true": False},
+        {"label": "C", "command": "true", "shell_true": False},
     ]
     ctx = _fake_ctx(actions)
     box = (0, 0, 20, 4)
@@ -63,7 +63,7 @@ def test_nav_items_stops_at_box_bottom_border():
 
 
 def test_nav_items_target_kind_is_power_action():
-    ctx = _fake_ctx([{"label": "Lock", "command": "swaylock"}])
+    ctx = _fake_ctx([{"label": "Lock", "command": "swaylock", "shell_true": False}])
     items = nav_items((0, 0, 20, 10), ctx, "power_menu")
     assert items[0].target_kind == "power_action"
     assert items[0].focus_target == "swaylock"
@@ -73,7 +73,7 @@ def test_nav_items_handles_more_than_four_actions():
     # power_menu is no longer hardcoded to 4 actions (removed the
     # grid's [:4] slice) — a 5th configured action should get a nav item
     # as long as the box is tall enough.
-    actions = [{"label": f"A{i}", "command": "true"} for i in range(5)]
+    actions = [{"label": f"A{i}", "command": "true", "shell_true": False} for i in range(5)]
     ctx = _fake_ctx(actions)
     box = (0, 0, 20, 10)
 
@@ -81,3 +81,18 @@ def test_nav_items_handles_more_than_four_actions():
 
     assert len(items) == 5
     assert items[4].id == "power_menu:4"
+
+
+def test_nav_items_preview_text_shows_plain_command_when_not_shell_true():
+    ctx = _fake_ctx([{"label": "Lock", "command": "swaylock", "shell_true": False}])
+    items = nav_items((0, 0, 20, 10), ctx, "power_menu")
+    assert items[0].preview_text == [("> swaylock <", 0)]
+
+
+def test_nav_items_preview_text_adds_shell_true_warning_line():
+    ctx = _fake_ctx([{"label": "Chain", "command": "a && b", "shell_true": True}])
+    items = nav_items((0, 0, 20, 10), ctx, "power_menu")
+    assert items[0].preview_text == [
+        ("> a && b <", 0),
+        ("!! SHELL=TRUE !!", 0),
+    ]

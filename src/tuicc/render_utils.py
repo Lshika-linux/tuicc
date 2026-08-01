@@ -50,12 +50,12 @@ def centered_x(box_x, box_w, text):
     return box_x + padding // 2
 
 
-def draw_confirm_dialog(stdscr, box, lines):
+def draw_centered_lines(stdscr, box, lines):
     """A block of (text, color_pair) lines, centered both horizontally
-    and vertically within box — the Y/N confirmation overlay a module
-    draws in place of its normal contents while ctx.pending_confirm is
-    set. Shared so every module's confirm dialog is positioned the
-    same way instead of each inventing its own.
+    and vertically within box. Used for anything a module wants to
+    show in place of its normal contents — a Y/N confirmation overlay,
+    a preview of what an item would do — centered the same way
+    everywhere instead of each caller inventing its own positioning.
     """
     x, y, w, h = box
     inner_w = max(w - 2, 0)

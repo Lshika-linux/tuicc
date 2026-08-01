@@ -150,6 +150,7 @@ def main(stdscr):
             if item.id == selected_id:
                 selected_item = item
                 break
+        ctx.selected_item = selected_item
 
         draw_all(stdscr, cfg.layout, boxes, ctx)
         stdscr.refresh()

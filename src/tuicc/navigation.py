@@ -27,6 +27,11 @@ class NavItem:
     hotkey: str | None = None
     focus_target: str | None = None
     target_kind: str = "region"
+    # (text, color_pair) lines a module wants shown elsewhere (e.g. in
+    # preview) while this item is selected — already-resolved color,
+    # same shape as render_utils.draw_centered_lines takes. A module
+    # that has nothing to preview just leaves this None.
+    preview_text: list[tuple[str, int]] | None = None
 
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:

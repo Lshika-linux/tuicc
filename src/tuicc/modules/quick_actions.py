@@ -8,7 +8,7 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_confirm_dialog
+from tuicc.render_utils import draw_box_outline, draw_centered_lines
 from tuicc.keybinds import key_label
 from tuicc.actions import spawn_detached
 
@@ -30,7 +30,7 @@ def draw(stdscr, box, ctx, module_name):
             (question, theme.get("urgent", 0)),
             (hint, theme.get("text", 0)),
         ]
-        draw_confirm_dialog(stdscr, box, lines)
+        draw_centered_lines(stdscr, box, lines)
         return
 
     inner_w = max(w - 4, 0)
@@ -56,17 +56,22 @@ def draw(stdscr, box, ctx, module_name):
 def nav_items(box, ctx, module_name) -> list[NavItem]:
     x, y, w, h = box
     actions = ctx.config.quick_actions
+    theme = ctx.theme or {}
 
     items = []
     for i, action in enumerate(actions):
         row = y + 1 + i
         if row >= y + h - 1:
             break
+        preview_text = [(f"> {action['command']} <", theme.get("accent", 0))]
+        if action["shell_true"]:
+            preview_text.append(("!! SHELL=TRUE !!", theme.get("urgent", 0)))
         items.append(NavItem(
             id=f"quick_actions:{i}",
             rect=(x + 1, row, w - 2, 1),
             focus_target=action["command"],
             target_kind="action",
+            preview_text=preview_text,
         ))
     return items
 

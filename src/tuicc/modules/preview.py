@@ -8,7 +8,7 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_filled_box
+from tuicc.render_utils import draw_box_outline, draw_filled_box, draw_centered_lines
 
 
 def draw(stdscr, box, ctx, module_name):
@@ -19,6 +19,10 @@ def draw(stdscr, box, ctx, module_name):
     outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
 
     draw_box_outline(stdscr, y, x, h, w, outer_color)
+
+    if ctx.selected_item is not None and ctx.selected_item.preview_text is not None:
+        draw_centered_lines(stdscr, box, ctx.selected_item.preview_text)
+        return
 
     target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
 
