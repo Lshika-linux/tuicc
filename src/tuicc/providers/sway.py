@@ -99,6 +99,9 @@ class SwayProvider(Provider):
     def move_window_to_region(self, window_id: str, region_id: str) -> None:
         self.conn.command(f"[con_id={window_id}] move container to workspace number {region_id}")
 
+    def close_window(self, window_id: str) -> None:
+        self.conn.command(f"[con_id={window_id}] kill")
+
     def mark_self(self) -> None:
             # KNOWN LIMITATION: this assumes tuicc's own window is the one
             # currently focused at call time. Launching several instances in
@@ -113,3 +116,19 @@ class SwayProvider(Provider):
    
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())
+
+    def set_floating_geometry(self, window_id: str, region_id: str, rect: tuple[float, float, float, float]) -> None:
+        workspace = next((w for w in self.conn.get_tree().workspaces() if str(w.num) == region_id), None)
+        if workspace is None:
+            return
+
+        rx, ry, rw, rh = rect
+        x = round(workspace.rect.x + rx * workspace.rect.width)
+        y = round(workspace.rect.y + ry * workspace.rect.height)
+        w = round(rw * workspace.rect.width)
+        h = round(rh * workspace.rect.height)
+
+        self.conn.command(
+            f"[con_id={window_id}] floating enable, "
+            f"resize set {w}px {h}px, move position {x}px {y}px"
+        )

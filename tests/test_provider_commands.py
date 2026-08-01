@@ -92,3 +92,21 @@ def test_i3_mark_self():
     provider.mark_self()
 
     assert conn.commands == [f"mark --add _tuicc_self_{os.getpid()}"]
+
+
+def test_sway_close_window():
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.close_window("42")
+
+    assert conn.commands == ["[con_id=42] kill"]
+
+
+def test_i3_close_window():
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.close_window("42")
+
+    assert conn.commands == ["[con_id=42] kill"]

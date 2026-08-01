@@ -33,6 +33,16 @@ class Provider(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def close_window(self, window_id: str) -> None:
+        """Close the given window. Required, not optional like
+        mark_self/resolve_pid/set_floating_geometry below — every WM
+        worth supporting can close a window; there's no meaningful
+        degraded case to fall back to the way there is for marks or
+        floating-window geometry.
+        """
+        raise NotImplementedError
+
     def mark_self(self) -> None:
         """
         We need to hide tuicc itself from the preview and sidebar..
@@ -78,3 +88,30 @@ class Provider(ABC):
         error.
         """
         return None
+
+    def set_floating_geometry(self, window_id: str, region_id: str, rect: tuple[float, float, float, float]) -> None:
+        """
+        Move window_id into floating mode and position/resize it to
+        rect (normalized 0..1, same space as Window.rect — relative to
+        region_id's own dimensions) — used by session restore to put a
+        saved floating window back at its relative position/size, not
+        just on the right workspace.
+
+        Deliberately NOT given region_id's absolute pixel dimensions —
+        those don't exist anywhere outside a provider's own raw WM
+        tree (get_state() never exposes them, on purpose, so the rest
+        of tuicc stays resolution-agnostic — see model.py's Region).
+        An implementation looks region_id's CURRENT absolute rect up
+        itself and converts against that, not whatever it was when the
+        session was saved — a different (or reconfigured) monitor
+        still gets a sane result instead of an off-screen window.
+
+        NOT abstract, default no-op. Who needs to implement this: sway
+        and i3 both do (same floating enable / resize set / move
+        position command syntax). A provider for a WM with no
+        floating-window concept, or no equivalent commands, should
+        leave the no-op default — the restored window then just lands
+        wherever the WM naturally places a new window, a known
+        degraded case, not a crash.
+        """
+        pass
