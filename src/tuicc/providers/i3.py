@@ -3,9 +3,36 @@
 import os
 
 from i3ipc import Connection
+from Xlib import display, X
 
 from tuicc.model import Window, Region, WMState
 from tuicc.providers.base import Provider
+
+
+_NET_WM_PID = "_NET_WM_PID"
+
+
+def _x11_pid_for_window(xid: int) -> int | None:
+    """PID via the standard _NET_WM_PID EWMH property, read directly
+    from the X server. i3's own IPC tree has no pid field (see
+    _leaf_to_window's comment below) — this is the fallback Provider.
+    resolve_pid() uses instead, since i3 runs on X11 and well-behaved
+    X11 clients set this hint themselves. Best-effort: broad exception
+    handling is deliberate here, matching resolve_pid()'s contract
+    (None means "couldn't find out", never an error) — X11 failure
+    modes (no DISPLAY, window already closed, client didn't set the
+    hint) are numerous and not this function's job to distinguish.
+    """
+    try:
+        d = display.Display()
+        atom = d.intern_atom(_NET_WM_PID)
+        window = d.create_resource_object("window", xid)
+        prop = window.get_full_property(atom, X.AnyPropertyType)
+    except Exception:
+        return None
+    if prop is None or not prop.value:
+        return None
+    return int(prop.value[0])
 
 
 # The mark mark_self() applies to tuicc's own window, so parse_tree() can
@@ -53,7 +80,9 @@ def _leaf_to_window(leaf, ws_rect, floating):
         floating=floating,
         # i3's GET_TREE has no "pid" property (unlike sway's) — verified
         # against i3's own IPC docs. Window.pid stays at its None default;
-        # matching code that wants pid must already tolerate that.
+        # code that needs a pid on i3 goes through I3Provider.resolve_pid()
+        # instead (X11 lookup, on demand — not cheap enough for every
+        # window on every frame, see that method's docstring).
     )
 
 
@@ -134,3 +163,9 @@ class I3Provider(Provider):
 
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())
+
+    def resolve_pid(self, window_id: str) -> int | None:
+        leaf = self.conn.get_tree().find_by_id(int(window_id))
+        if leaf is None or leaf.window is None:
+            return None
+        return _x11_pid_for_window(leaf.window)
