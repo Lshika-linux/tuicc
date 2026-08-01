@@ -75,8 +75,13 @@ def main(stdscr):
     claimed_window_ids = set()
     MOVE_TIMEOUT_SECONDS = 8.0
 
+    last_restore_launch = 0.0
+    RESTORE_STAGGER_SECONDS = 0.3
+
     while True:
-        stdscr.timeout(50 if (pending_moves or connectivity.has_pending()) else 1000)
+        stdscr.timeout(
+            50 if (pending_moves or action_ctx.restore_queue or connectivity.has_pending()) else 1000
+        )
         stdscr.erase()
 
         term_height, term_width = stdscr.getmaxyx()
@@ -85,6 +90,28 @@ def main(stdscr):
 
         if focus_id is None:
             focus_id = state.focused_region_id
+
+        if action_ctx.restore_queue:
+            now = time.monotonic()
+            if now - last_restore_launch >= RESTORE_STAGGER_SECONDS:
+                session_entry = action_ctx.restore_queue.pop(0)
+                known_ids = {w.id for r in state.regions for w in r.windows}
+                pid = spawn_detached(session_entry["cmdline"], shell_true=False)
+                pending_entry = {
+                    "target_region": session_entry["target_region"],
+                    "known_ids": known_ids,
+                    "pid": pid,
+                    "app_id": session_entry["app_id"],
+                    "started_at": now,
+                    "floating": session_entry.get("floating", False),
+                }
+                if pending_entry["floating"]:
+                    pending_entry["rect"] = (
+                        session_entry["x"], session_entry["y"],
+                        session_entry["w"], session_entry["h"],
+                    )
+                pending_moves.append(pending_entry)
+                last_restore_launch = now
 
         if pending_moves:
             now = time.monotonic()
@@ -95,6 +122,8 @@ def main(stdscr):
                 if match is not None:
                     claimed_window_ids.add(match.id)
                     provider.move_window_to_region(match.id, entry["target_region"])
+                    if entry.get("floating"):
+                        provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
                 elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
                     still_pending.append(entry)
             pending_moves = still_pending
@@ -152,7 +181,16 @@ def main(stdscr):
 
         if pending_confirm is not None:
             if key == cfg.keybinds["confirm_yes"]:
-                spawn_detached(pending_confirm["command"], pending_confirm["shell_true"])
+                if "restore_entries" in pending_confirm:
+                    if "kill_regions" in pending_confirm:
+                        kill_regions = set(pending_confirm["kill_regions"])
+                        for region in provider.get_state().regions:
+                            if region.id in kill_regions:
+                                for window in region.windows:
+                                    provider.close_window(window.id)
+                    action_ctx.restore_queue.extend(pending_confirm["restore_entries"])
+                else:
+                    spawn_detached(pending_confirm["command"], pending_confirm["shell_true"])
                 exit_after = pending_confirm["exit_after_confirm"]
                 pending_confirm = None
                 if exit_after:
