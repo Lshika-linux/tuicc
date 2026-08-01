@@ -53,9 +53,10 @@ class ConnectivityWorker:
             self._action_queue.append(("wifi_connect", ssid))
             self._pending.add(("wifi", ssid))
 
-    def request_wifi_disconnect(self):
+    def request_wifi_disconnect(self, ssid):
         with self._lock:
-            self._action_queue.append(("wifi_disconnect", None))
+            self._action_queue.append(("wifi_disconnect", ssid))
+            self._pending.add(("wifi", ssid))
 
     def request_bluetooth_connect(self, device_id):
         with self._lock:
@@ -92,7 +93,7 @@ class ConnectivityWorker:
                     pass
                 finally:
                     with self._lock:
-                        if kind == "wifi_connect":
+                        if kind in ("wifi_connect", "wifi_disconnect"):
                             self._pending.discard(("wifi", arg))
                         elif kind in ("bt_connect", "bt_disconnect"):
                             self._pending.discard(("bt", arg))

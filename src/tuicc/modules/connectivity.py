@@ -216,7 +216,18 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 
 
 def handle_wifi(ctx, item, cfg):
-    ctx.connectivity.request_wifi_connect(item.focus_target)
+    """Enter toggles: connect if not connected, disconnect if it is —
+    same reasoning as handle_bluetooth below (this used to always call
+    connect(), so selecting an already-connected network and pressing
+    confirm silently re-issued a redundant connect instead of
+    disconnecting).
+    """
+    networks = ctx.connectivity.get_wifi_networks()
+    network = next((n for n in networks if n.ssid == item.focus_target), None)
+    if network is not None and network.connected:
+        ctx.connectivity.request_wifi_disconnect(item.focus_target)
+    else:
+        ctx.connectivity.request_wifi_connect(item.focus_target)
     return False, None
 
 
