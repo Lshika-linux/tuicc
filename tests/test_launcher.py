@@ -3,7 +3,15 @@ filter_apps are pure functions over strings/lists, no .desktop file
 scanning involved.
 """
 
-from tuicc.modules.launcher import _fuzzy_score, filter_apps
+from tuicc.modules.launcher import _fuzzy_score, filter_apps, handle_typing_key
+
+
+class _FakeConfig:
+    """Just enough of Config to exercise handle_typing_key's key lookups."""
+    keybinds = {"left": 1001, "right": 1002}
+
+
+_cfg = _FakeConfig()
 
 
 # ---------- _fuzzy_score ----------
@@ -96,3 +104,53 @@ def test_filter_apps_preserves_command_alongside_name():
     result = filter_apps("fire", apps)
 
     assert result == [("Firefox", "firefox --private-window")]
+
+
+# ---------- handle_typing_key ----------
+
+def test_handle_typing_key_escape_clears_and_exits():
+    query, index, still_typing = handle_typing_key(27, _cfg, "firefo", 2)
+
+    assert (query, index, still_typing) == ("", 0, False)
+
+
+def test_handle_typing_key_backspace_removes_last_char():
+    query, index, still_typing = handle_typing_key(127, _cfg, "firefox", 3)
+
+    assert (query, index, still_typing) == ("firefo", 0, True)
+
+
+def test_handle_typing_key_backspace_on_empty_query_exits():
+    query, index, still_typing = handle_typing_key(127, _cfg, "", 0)
+
+    assert (query, index, still_typing) == ("", 0, False)
+
+
+def test_handle_typing_key_left_moves_selection_down():
+    query, index, still_typing = handle_typing_key(_cfg.keybinds["left"], _cfg, "fire", 2)
+
+    assert (query, index, still_typing) == ("fire", 1, True)
+
+
+def test_handle_typing_key_left_does_not_go_below_zero():
+    query, index, still_typing = handle_typing_key(_cfg.keybinds["left"], _cfg, "fire", 0)
+
+    assert (query, index, still_typing) == ("fire", 0, True)
+
+
+def test_handle_typing_key_right_moves_selection_up():
+    query, index, still_typing = handle_typing_key(_cfg.keybinds["right"], _cfg, "fire", 1)
+
+    assert (query, index, still_typing) == ("fire", 2, True)
+
+
+def test_handle_typing_key_printable_char_appends_and_resets_index():
+    query, index, still_typing = handle_typing_key(ord("x"), _cfg, "fire", 3)
+
+    assert (query, index, still_typing) == ("firex", 0, True)
+
+
+def test_handle_typing_key_unhandled_key_leaves_state_unchanged():
+    query, index, still_typing = handle_typing_key(999999, _cfg, "fire", 1)
+
+    assert (query, index, still_typing) == ("fire", 1, True)

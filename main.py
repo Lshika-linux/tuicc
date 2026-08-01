@@ -33,7 +33,7 @@ from tuicc.navigation import (
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
 from tuicc.theme_setup import setup_theme
-from tuicc.modules.launcher import resolve_selected
+from tuicc.modules.launcher import resolve_selected, handle_typing_key
 
 
 def main(stdscr):
@@ -170,21 +170,7 @@ def main(stdscr):
             continue
 
         if typing_mode:
-            if key == 27:  # Escape
-                typing_mode = False
-                search_query = ""
-                search_selected_index = 0
-                selected_id = saved_selected_id
-                active_module = saved_active_module
-            elif key in (curses.KEY_BACKSPACE, 127, 8):
-                if search_query:
-                    search_query = search_query[:-1]
-                    search_selected_index = 0
-                else:
-                    typing_mode = False
-                    selected_id = saved_selected_id
-                    active_module = saved_active_module
-            elif key == cfg.keybinds["confirm"]:
+            if key == cfg.keybinds["confirm"]:
                 cmd = resolve_selected(search_query, search_selected_index)
                 if cmd is not None:
                     known_ids = {w.id for r in state.regions for w in r.windows}
@@ -203,13 +189,13 @@ def main(stdscr):
                     typing_mode = False
                     selected_id = saved_selected_id
                     active_module = saved_active_module
-            elif key == cfg.keybinds["left"]:
-                search_selected_index = max(search_selected_index - 1, 0)
-            elif key == cfg.keybinds["right"]:
-                search_selected_index += 1
-            elif 32 <= key <= 126:
-                search_query += chr(key)
-                search_selected_index = 0
+            else:
+                search_query, search_selected_index, typing_mode = handle_typing_key(
+                    key, cfg, search_query, search_selected_index
+                )
+                if not typing_mode:
+                    selected_id = saved_selected_id
+                    active_module = saved_active_module
             continue
 
         if key == cfg.keybinds["confirm"] and selected_item is not None:

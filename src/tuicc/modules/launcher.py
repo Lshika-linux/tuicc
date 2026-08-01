@@ -125,6 +125,39 @@ def resolve_selected(query, selected_index):
     return cmd
 
 
+def handle_typing_key(key, cfg, search_query, search_selected_index):
+    """Pure state transition for the launcher's typing-mode editing keys
+    (Escape, Backspace, Left/Right, printable characters). Does NOT
+    handle the confirm key — resolving and launching a command needs
+    main.py's loop state (known window ids, target region, a
+    timestamp) that this module deliberately doesn't have, same
+    reasoning as resolve_selected().
+
+    Returns (new_search_query, new_search_selected_index, still_typing).
+    still_typing=False means the caller should exit typing mode and
+    restore its own saved selection/active module, same as it does
+    for a successful confirm.
+    """
+    if key == 27:  # Escape
+        return "", 0, False
+
+    if key in (curses.KEY_BACKSPACE, 127, 8):
+        if search_query:
+            return search_query[:-1], 0, True
+        return search_query, search_selected_index, False
+
+    if key == cfg.keybinds["left"]:
+        return search_query, max(search_selected_index - 1, 0), True
+
+    if key == cfg.keybinds["right"]:
+        return search_query, search_selected_index + 1, True
+
+    if 32 <= key <= 126:
+        return search_query + chr(key), 0, True
+
+    return search_query, search_selected_index, True
+
+
 def _build_window(results, sel, avail_w):
     """Which result indices fit in avail_w, starting from 0 — unless
     the selected index doesn't fit in that window, in which case the
