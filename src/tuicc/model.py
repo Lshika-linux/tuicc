@@ -18,6 +18,12 @@ class Window:
     focused: bool
     rect: tuple[float, float, float, float]  # x, y, w, h — normalized 0..1 within the region
     floating: bool = False
+    # Process id owning this window, when the provider's WM exposes one —
+    # sway's IPC tree includes it directly; i3's does not (confirmed
+    # against both providers' IPC docs). None on any provider that can't
+    # supply it, same optionality as mark_self() for providers without an
+    # equivalent concept — code depending on pid must handle None.
+    pid: int | None = None
 
 @dataclass
 class Region:

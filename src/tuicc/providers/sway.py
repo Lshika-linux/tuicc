@@ -39,6 +39,7 @@ def _leaf_to_window(leaf, ws_rect, floating):
         focused=leaf.focused,
         rect=(x, y, w, h),
         floating=floating,
+        pid=leaf.pid,
     )
 
 

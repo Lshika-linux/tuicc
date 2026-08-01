@@ -33,6 +33,7 @@ from tuicc.navigation import (
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS
 from tuicc.theme_setup import setup_theme
 from tuicc.modules.launcher import resolve_selected, handle_typing_key, enter_typing_mode
+from tuicc.pending_moves import resolve_pending_move
 
 
 def main(stdscr):
@@ -71,6 +72,7 @@ def main(stdscr):
     saved_selected_id = None
     saved_active_module = None
     pending_moves = []
+    claimed_window_ids = set()
     MOVE_TIMEOUT_SECONDS = 8.0
 
     while True:
@@ -85,15 +87,19 @@ def main(stdscr):
             focus_id = state.focused_region_id
 
         if pending_moves:
-            front = pending_moves[0]
-            current_ids = {w.id for r in state.regions for w in r.windows}
-            new_ids = current_ids - front["known_ids"]
-            if new_ids:
-                new_id = next(iter(new_ids))
-                provider.move_window_to_region(new_id, front["target_region"])
-                pending_moves.pop(0)
-            elif time.monotonic() - front["started_at"] > MOVE_TIMEOUT_SECONDS:
-                pending_moves.pop(0)
+            now = time.monotonic()
+            current_windows = [w for r in state.regions for w in r.windows]
+            still_pending = []
+            for entry in pending_moves:
+                match = resolve_pending_move(entry, current_windows, claimed_window_ids)
+                if match is not None:
+                    claimed_window_ids.add(match.id)
+                    provider.move_window_to_region(match.id, entry["target_region"])
+                elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
+                    still_pending.append(entry)
+            pending_moves = still_pending
+            if not pending_moves:
+                claimed_window_ids.clear()
 
         ctx = RenderContext(
             state=state,
@@ -169,10 +175,15 @@ def main(stdscr):
                 if cmd is not None:
                     known_ids = {w.id for r in state.regions for w in r.windows}
                     # .desktop Exec= is spec'd to never be shell-interpreted.
-                    spawn_detached(cmd, shell_true=False)
+                    pid = spawn_detached(cmd, shell_true=False)
                     pending_moves.append({
                         "target_region": focus_id,
                         "known_ids": known_ids,
+                        "pid": pid,
+                        # No pre-known app_id for a plain launcher spawn —
+                        # unlike a saved-session restore, there's nothing
+                        # to compare a resulting window's app_id against.
+                        "app_id": None,
                         "started_at": time.monotonic(),
                     })
                     typing_mode = False

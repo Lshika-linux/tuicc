@@ -36,15 +36,22 @@ def spawn_detached(cmd, shell_true=False):
     confirm-dialog spawns) and quick_actions.py/power_menu.py's
     immediate (non-confirm) actions, so there's exactly one place that
     decides how a command string becomes a process.
+
+    Returns the spawned process's pid — lets a caller match it against
+    Window.pid later (see pending_moves.py), on providers that expose
+    one. The pid is only ever exact for the shell_true=False path: with
+    shell_true=True the pid belongs to the shell, not necessarily the
+    GUI process it eventually execs.
     """
     popen_cmd = cmd if shell_true else shlex.split(cmd)
-    subprocess.Popen(
+    process = subprocess.Popen(
         popen_cmd, shell=shell_true,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
+    return process.pid
 
 
 def _handle_region(ctx, item, cfg):

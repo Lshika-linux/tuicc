@@ -51,6 +51,9 @@ def _leaf_to_window(leaf, ws_rect, floating):
         focused=leaf.focused,
         rect=(x, y, w, h),
         floating=floating,
+        # i3's GET_TREE has no "pid" property (unlike sway's) — verified
+        # against i3's own IPC docs. Window.pid stays at its None default;
+        # matching code that wants pid must already tolerate that.
     )
 
 

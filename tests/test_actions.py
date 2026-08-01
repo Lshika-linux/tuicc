@@ -50,9 +50,16 @@ def test_base_handlers_has_exactly_region_and_window():
 
 # ---------- spawn_detached ----------
 
+def _fake_popen(calls, pid=4242):
+    def popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(pid=pid)
+    return popen
+
+
 def test_spawn_detached_shell_true_passes_raw_string(monkeypatch):
     calls = []
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: calls.append((cmd, kwargs)))
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
 
     spawn_detached("echo hi && echo bye", shell_true=True)
 
@@ -63,7 +70,7 @@ def test_spawn_detached_shell_true_passes_raw_string(monkeypatch):
 
 def test_spawn_detached_shell_false_splits_into_argv(monkeypatch):
     calls = []
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: calls.append((cmd, kwargs)))
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
 
     spawn_detached("firefox --private-window", shell_true=False)
 
@@ -74,10 +81,16 @@ def test_spawn_detached_shell_false_splits_into_argv(monkeypatch):
 
 def test_spawn_detached_defaults_to_shell_false(monkeypatch):
     calls = []
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: calls.append((cmd, kwargs)))
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
 
     spawn_detached("kitty")
 
     cmd, kwargs = calls[0]
     assert cmd == ["kitty"]
     assert kwargs["shell"] is False
+
+
+def test_spawn_detached_returns_the_process_pid(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen([], pid=1234))
+
+    assert spawn_detached("kitty") == 1234
