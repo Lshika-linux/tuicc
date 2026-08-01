@@ -25,9 +25,7 @@ from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
     NavItem,
     tab_order,
-    nearest_in_direction,
-    sibling_in_same_group,
-    region_item_for_focus,
+    resolve_direction_move,
     module_of_item,
     first_item_in_module,
 )
@@ -253,16 +251,7 @@ def main(stdscr):
                     focus_id = module_items[next_index].focus_target
         elif key in direction_keys and selected_item is not None:
             direction = direction_keys[key]
-
-            next_item = None
-            if selected_item.target_kind == "window" and direction in ("left", "right"):
-                next_item = sibling_in_same_group(ordered, selected_item, direction)
-
-            if next_item is None and selected_item.target_kind == "window" and direction == "left":
-                next_item = region_item_for_focus(ordered, focus_id)
-
-            if next_item is None:
-                next_item = nearest_in_direction(ordered, selected_item, direction)
+            next_item = resolve_direction_move(ordered, selected_item, direction, focus_id)
 
             if next_item is not None:
                 selected_id = next_item.id

@@ -148,3 +148,28 @@ def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | No
         if module_of_item(item) == module_name:
             return item
     return None
+
+
+def resolve_direction_move(
+    items: list[NavItem], current: NavItem, direction: str, focus_id: str | None
+) -> NavItem | None:
+    """Priority order for arrow-key movement out of a window item:
+    same-group sibling first (predictable left-right order, since
+    overlapping floating windows break spatial search), then — only
+    when moving left with no sibling — the sidebar's item for the
+    currently-focused region (deterministic instead of landing on
+    whichever region happens to be spatially nearest), then general
+    spatial search as the final fallback. Non-window items skip
+    straight to spatial search.
+    """
+    next_item = None
+    if current.target_kind == "window" and direction in ("left", "right"):
+        next_item = sibling_in_same_group(items, current, direction)
+
+    if next_item is None and current.target_kind == "window" and direction == "left":
+        next_item = region_item_for_focus(items, focus_id)
+
+    if next_item is None:
+        next_item = nearest_in_direction(items, current, direction)
+
+    return next_item

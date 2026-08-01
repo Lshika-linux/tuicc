@@ -13,6 +13,7 @@ from tuicc.navigation import (
     region_item_for_focus,
     module_of_item,
     first_item_in_module,
+    resolve_direction_move,
 )
 
 
@@ -191,5 +192,65 @@ def test_first_item_in_module_no_match_returns_none():
     preview_item = NavItem(id="preview:1", rect=(0, 0, 1, 1))
 
     result = first_item_in_module([preview_item], "quick_actions")
+
+    assert result is None
+
+
+# ---------- resolve_direction_move ----------
+
+def test_resolve_direction_move_prefers_sibling_over_spatial():
+    left = NavItem(id="preview:left", rect=(0.0, 0.0, 0.1, 0.1), target_kind="window")
+    mid = NavItem(id="preview:mid", rect=(0.3, 0.0, 0.1, 0.1), target_kind="window")
+    right = NavItem(id="preview:right", rect=(0.6, 0.0, 0.1, 0.1), target_kind="window")
+
+    result = resolve_direction_move([left, mid, right], mid, "right", focus_id=None)
+
+    assert result.id == "preview:right"
+
+
+def test_resolve_direction_move_left_boundary_falls_back_to_region():
+    leftmost = NavItem(id="preview:leftmost", rect=(0.3, 0.0, 0.1, 0.1), target_kind="window")
+    region = NavItem(id="sidebar:1", rect=(0, 0, 0.1, 0.1), focus_target="1", target_kind="region")
+
+    result = resolve_direction_move([leftmost, region], leftmost, "left", focus_id="1")
+
+    assert result.id == "sidebar:1"
+
+
+def test_resolve_direction_move_left_boundary_no_region_match_falls_back_to_spatial():
+    leftmost = NavItem(id="preview:leftmost", rect=(0.3, 0.0, 0.1, 0.1), target_kind="window")
+    far_left_region = NavItem(id="sidebar:1", rect=(0.0, 0.0, 0.1, 0.1), focus_target="1", target_kind="region")
+
+    result = resolve_direction_move([leftmost, far_left_region], leftmost, "left", focus_id="99")
+
+    assert result.id == "sidebar:1"
+
+
+def test_resolve_direction_move_non_window_skips_straight_to_spatial():
+    region = NavItem(id="sidebar:1", rect=(0.0, 0.0, 0.1, 0.1), target_kind="region")
+    other_region = NavItem(id="sidebar:2", rect=(0.0, 0.2, 0.1, 0.1), target_kind="region")
+
+    result = resolve_direction_move([region, other_region], region, "down", focus_id=None)
+
+    assert result.id == "sidebar:2"
+
+
+def test_resolve_direction_move_up_down_skips_sibling_search():
+    """sibling_in_same_group only understands left/right — up/down for a
+    window item must go straight to spatial search, not silently match
+    a same-group item via the sibling path.
+    """
+    top = NavItem(id="preview:top", rect=(0.0, 0.0, 0.1, 0.1), target_kind="window")
+    bottom = NavItem(id="preview:bottom", rect=(0.0, 0.3, 0.1, 0.1), target_kind="window")
+
+    result = resolve_direction_move([top, bottom], top, "down", focus_id=None)
+
+    assert result.id == "preview:bottom"
+
+
+def test_resolve_direction_move_no_candidates_returns_none():
+    lone = NavItem(id="preview:lone", rect=(0.5, 0.5, 0.1, 0.1), target_kind="window")
+
+    result = resolve_direction_move([lone], lone, "right", focus_id=None)
 
     assert result is None
