@@ -150,6 +150,41 @@ def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | No
     return None
 
 
+def next_module_name(module_names: list[str], active_module: str | None) -> str | None:
+    """Cycle to the next module name (switch_module key), wrapping
+    around. If active_module isn't in module_names (e.g. nothing
+    selected yet), starts from the first one. None only if
+    module_names itself is empty.
+    """
+    if not module_names:
+        return None
+
+    current_index = 0
+    if active_module in module_names:
+        current_index = module_names.index(active_module)
+    next_index = (current_index + 1) % len(module_names)
+    return module_names[next_index]
+
+
+def next_item_in_module(items: list[NavItem], module_name: str, selected_id: str | None) -> NavItem | None:
+    """Cycle to the next item within a single module (Tab key), wrapping
+    around. If selected_id isn't among that module's items (e.g. focus
+    just switched modules), starts from the first one. None only if
+    the module has no items.
+    """
+    module_items = [item for item in items if module_of_item(item) == module_name]
+    if not module_items:
+        return None
+
+    current_index = 0
+    for i, item in enumerate(module_items):
+        if item.id == selected_id:
+            current_index = i
+            break
+    next_index = (current_index + 1) % len(module_items)
+    return module_items[next_index]
+
+
 def global_shortcut_item(global_shortcuts: dict, key: int) -> NavItem | None:
     """The ad-hoc NavItem for a global shortcut keypress, or None if the
     key isn't bound to one. Global shortcuts have no on-screen position

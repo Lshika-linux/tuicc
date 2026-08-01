@@ -15,6 +15,8 @@ from tuicc.navigation import (
     first_item_in_module,
     resolve_direction_move,
     global_shortcut_item,
+    next_module_name,
+    next_item_in_module,
 )
 
 
@@ -284,5 +286,78 @@ def test_global_shortcut_item_unbound_key_returns_none():
 
 def test_global_shortcut_item_empty_shortcuts_returns_none():
     result = global_shortcut_item({}, ord("l"))
+
+    assert result is None
+
+
+# ---------- next_module_name ----------
+
+def test_next_module_name_cycles_forward():
+    result = next_module_name(["sidebar", "preview", "launcher"], "sidebar")
+
+    assert result == "preview"
+
+
+def test_next_module_name_wraps_around():
+    result = next_module_name(["sidebar", "preview", "launcher"], "launcher")
+
+    assert result == "sidebar"
+
+
+def test_next_module_name_unknown_active_starts_from_first():
+    result = next_module_name(["sidebar", "preview"], "some_unregistered_module")
+
+    assert result == "preview"
+
+
+def test_next_module_name_empty_list_returns_none():
+    result = next_module_name([], "sidebar")
+
+    assert result is None
+
+
+# ---------- next_item_in_module ----------
+
+def test_next_item_in_module_cycles_forward():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="sidebar:2", rect=(0, 0, 1, 1))
+    c = NavItem(id="sidebar:3", rect=(0, 0, 1, 1))
+
+    result = next_item_in_module([a, b, c], "sidebar", "sidebar:1")
+
+    assert result.id == "sidebar:2"
+
+
+def test_next_item_in_module_wraps_around():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="sidebar:2", rect=(0, 0, 1, 1))
+
+    result = next_item_in_module([a, b], "sidebar", "sidebar:2")
+
+    assert result.id == "sidebar:1"
+
+
+def test_next_item_in_module_ignores_other_modules():
+    sidebar_item = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    preview_item = NavItem(id="preview:1", rect=(0, 0, 1, 1))
+
+    result = next_item_in_module([sidebar_item, preview_item], "sidebar", "sidebar:1")
+
+    assert result.id == "sidebar:1"
+
+
+def test_next_item_in_module_unknown_selected_starts_from_first():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="sidebar:2", rect=(0, 0, 1, 1))
+
+    result = next_item_in_module([a, b], "sidebar", selected_id=None)
+
+    assert result.id == "sidebar:2"
+
+
+def test_next_item_in_module_no_items_returns_none():
+    preview_item = NavItem(id="preview:1", rect=(0, 0, 1, 1))
+
+    result = next_item_in_module([preview_item], "sidebar", "sidebar:1")
 
     assert result is None

@@ -26,6 +26,8 @@ from tuicc.navigation import (
     tab_order,
     resolve_direction_move,
     global_shortcut_item,
+    next_module_name,
+    next_item_in_module,
     module_of_item,
     first_item_in_module,
 )
@@ -219,30 +221,20 @@ def main(stdscr):
 
         elif key == cfg.keybinds["switch_module"]:
             module_names = [box.name for box in cfg.layout.boxes]
-            if module_names:
-                current_index = 0
-                if active_module in module_names:
-                    current_index = module_names.index(active_module)
-                next_index = (current_index + 1) % len(module_names)
-                active_module = module_names[next_index]
-
+            next_name = next_module_name(module_names, active_module)
+            if next_name is not None:
+                active_module = next_name
                 first_item = first_item_in_module(ordered, active_module)
                 if first_item is not None:
                     selected_id = first_item.id
                     if first_item.target_kind == "region":
                         focus_id = first_item.focus_target
         elif key == cfg.keybinds["tab"] and ordered:
-            module_items = [item for item in ordered if module_of_item(item) == active_module]
-            if module_items:
-                current_index = 0
-                for i, item in enumerate(module_items):
-                    if item.id == selected_id:
-                        current_index = i
-                        break
-                next_index = (current_index + 1) % len(module_items)
-                selected_id = module_items[next_index].id
-                if module_items[next_index].target_kind == "region":
-                    focus_id = module_items[next_index].focus_target
+            next_item = next_item_in_module(ordered, active_module, selected_id)
+            if next_item is not None:
+                selected_id = next_item.id
+                if next_item.target_kind == "region":
+                    focus_id = next_item.focus_target
         elif key in direction_keys and selected_item is not None:
             direction = direction_keys[key]
             next_item = resolve_direction_move(ordered, selected_item, direction, focus_id)
