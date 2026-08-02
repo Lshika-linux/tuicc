@@ -54,6 +54,19 @@ confirm = "Enter"
 # The on-screen hint always reflects whatever you bind here.
 confirm_yes = "y"
 confirm_no = "n"
+# F1: pick a module not currently on screen and spawn it (centered,
+# ready to move). F2: enters resize mode on the active module — arrows
+# resize (w/h) or move (x/y), toggled by move_toggle; Del removes the
+# box (asks y/n first); confirm keeps changes in memory; Escape
+# discards them (or removes a just-spawned box entirely). F3: writes
+# the whole in-memory layout as a new preset AND switches to it. F4:
+# cycles through every preset that exists, switching to each live.
+spawn_box = "F1"
+resize = "F2"
+save_layout = "F3"
+cycle_preset = "F4"
+move_toggle = "m"
+delete_box = "Delete"
 
 
 [[quick_actions.action]]

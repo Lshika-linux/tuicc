@@ -1,77 +1,66 @@
 # Layout preset — defines where each panel sits on screen.
 #
-# Every box needs a name, and position/size, each pair mutually exclusive:
+# Every box needs a name and x/y/w/h, each a ratio (0.0-1.0) of the
+# terminal's width (x, w) or height (y, h):
 #
-#   x         = position as a fraction of terminal width (0.0–1.0)
-#   right_of  = name of another box — x becomes that box's actual right edge
+#   x, y = top-left corner position
+#   w, h = size
 #
-#   y         = position as a fraction of terminal height (0.0–1.0)
-#   below     = name of another box — y becomes that box's actual bottom edge
-#   above     = name of another box — this box sits directly above it (this
-#               box's bottom edge lands exactly on that box's top edge)
-#   bottom    = true — this box sits flush against the screen's bottom edge
+# Boxes are completely independent — nothing here coordinates with
+# anything else. Resizing or repositioning one box never moves or
+# resizes another; what you configure is exactly what renders, always.
 #
-#   w         = width as a fraction of terminal width (0.0–1.0), scales
-#   cols      = a fixed number of columns, does NOT scale
-#
-#   h         = height as a fraction of terminal height (0.0–1.0), scales
-#   rows      = a fixed number of rows, does NOT scale
-#   fill_to   = name of another box — height reaches exactly to that box's
-#               top edge, i.e. "take whatever space is left"
-#
-# WHY BOTH below/above/bottom EXIST, AND WHY fill_to EXISTS:
-# A stack anchored from the top (box A at y=0, box B below=A, box C
-# below=B) only sums to exactly the terminal height if every box in it
-# has a FIXED size. The moment one box in the stack is ratio-sized while
-# its neighbors are fixed-row (like sidebar vs. connectivity/power_menu
-# below it), no single ratio can make the total exactly match terminal
-# height across different terminal sizes — try it on a tiled vs. a
-# fullscreen terminal and you'll see either a gap or an overflow.
-#
-# The fix: anchor the FIXED-size boxes from the BOTTOM instead (bottom=
-# true for the last one, above=<name> for the one before it), and let
-# the flexible/ratio box use fill_to to consume exactly what's left
-# above them. The column then sums to the terminal height exactly, for
-# any terminal height, with zero manual per-height tuning.
-#
-# Boxes still don't coordinate beyond an explicit reference (right_of/
-# below/above/fill_to) — if you change a box's size and nothing else
-# references it, its neighbors will NOT automatically resize or move to
-# compensate.
-#
-# This is by design. What you see is what you get. It should remain this way.
+# If a box looks wrong on a terminal size very different from the one
+# you set it up on, that's expected, not a bug — use tuicc's own
+# interactive resize mode (F2 on the module you want to adjust, arrows
+# to resize/move, F3 to save as a new preset) rather than
+# hand-computing ratios here.
 
 [[box]]
 name = "sidebar"
 x = 0.0
 y = 0.0
-w = 0.26
-fill_to = "connectivity"
+w = 0.18229166666666666
+h = 0.7058823529411766
 
 [[box]]
 name = "connectivity"
 x = 0.0
-above = "power_menu"
-w = 0.26
-rows = 9   # border(2) + 7 content rows — exact row count, not a ratio
+y = 0.7058823529411765
+w = 0.18229166666666666
+h = 0.17647058823529413
 
 [[box]]
 name = "power_menu"
 x = 0.0
-bottom = true
-w = 0.26
-rows = 6   # border(2) + 4 actions, no uptime line
+y = 0.8823529411764706
+w = 0.18229166666666666
+h = 0.11764705882352941
 
 [[box]]
 name = "launcher"
-right_of = "sidebar"
+x = 0.18229166666666666
 y = 0.0
-w = 0.74
-h = 0.09
+w = 0.5520833333333331
+h = 0.0784313725490196
+
+[[box]]
+name = "sessions"
+x = 0.7343749999999998
+y = 0.0
+w = 0.18229166666666657
+h = 0.0784313725490196
 
 [[box]]
 name = "preview"
-right_of = "sidebar"
-below = "launcher"
-w = 0.74
-h = 0.91
+x = 0.18229166666666666
+y = 0.0784313725490196
+w = 0.8125
+h = 0.9215686274509803
+
+[[box]]
+name = "clock"
+x = 0.9166666666666674
+y = 1.249000902703301e-16
+w = 0.08333333333333333
+h = 0.08235294117647064

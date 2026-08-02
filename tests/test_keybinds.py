@@ -19,6 +19,18 @@ def test_shift_tab_uses_btab():
     assert resolve_key("Shift+Tab") == curses.KEY_BTAB
 
 
+def test_delete_uses_key_dc():
+    assert resolve_key("Delete") == curses.KEY_DC
+
+
+def test_f_key_uses_key_f0_offset():
+    assert resolve_key("F2") == curses.KEY_F0 + 2
+
+
+def test_f_keys_are_distinct():
+    assert resolve_key("F1") != resolve_key("F2") != resolve_key("F3")
+
+
 def test_single_character_uses_ord():
     assert resolve_key("h") == ord("h")
 

@@ -29,12 +29,14 @@ Beyond layout, this also resolves [theme] colors (via theme.py) and
 values — config.py is where raw TOML becomes the objects/numbers
 the rest of tuicc actually consumes.
 """
+import re
 import shutil
 import tomllib
+import tomli_w
 from dataclasses import dataclass
 from pathlib import Path
 
-from tuicc.layout import Layout, ModuleBox
+from tuicc.layout import Layout, ModuleBox, boxes_to_toml_data
 from tuicc.theme import resolve_color
 from tuicc.keybinds import resolve_key
 
@@ -48,6 +50,7 @@ USER_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "presets"
 @dataclass
 class Config:
     layout: Layout
+    preset_number: int
     tab_order: str
     provider_name: str
     total_workspaces: int
@@ -99,43 +102,114 @@ def load_toml(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def _require_exactly_one(box_data, preset_number, *field_names):
-    present = [name for name in field_names if name in box_data]
-    if len(present) != 1:
-        raise KeyError(
-            f"box '{box_data.get('name', '?')}' in preset {preset_number} must set "
-            f"exactly one of {field_names}, not {'none' if not present else present}"
-        )
-
-
 def build_layout_from_preset(preset_number: int) -> Layout:
     preset_path = ensure_preset_exists(preset_number)
     data = load_toml(preset_path)
 
     boxes = []
     for box_data in data["box"]:
-        _require_exactly_one(box_data, preset_number, "x", "right_of")
-        _require_exactly_one(box_data, preset_number, "y", "below", "above", "bottom")
-        _require_exactly_one(box_data, preset_number, "w", "cols")
-        _require_exactly_one(box_data, preset_number, "h", "rows", "fill_to")
-
         box = ModuleBox(
             name=box_data["name"],
-            x=box_data.get("x"),
-            right_of=box_data.get("right_of"),
-            y=box_data.get("y"),
-            below=box_data.get("below"),
-            above=box_data.get("above"),
-            bottom=box_data.get("bottom", False),
-            w=box_data.get("w"),
-            cols=box_data.get("cols"),
-            h=box_data.get("h"),
-            rows=box_data.get("rows"),
-            fill_to=box_data.get("fill_to"),
+            x=box_data["x"],
+            y=box_data["y"],
+            w=box_data["w"],
+            h=box_data["h"],
         )
         boxes.append(box)
 
     return Layout(boxes=boxes)
+
+
+def next_free_preset_number() -> int:
+    """The lowest preset number nothing currently uses — checked against
+    BOTH packaged and user preset dirs, so a resize-mode save never picks
+    a number that a not-yet-materialized packaged preset would later
+    claim (ensure_preset_exists() copies packaged -> user lazily, on
+    first use of that number).
+    """
+    existing = []
+    for preset_dir in (USER_PRESETS_DIR, PACKAGED_PRESETS_DIR):
+        if preset_dir.exists():
+            for path in preset_dir.glob("*.toml"):
+                try:
+                    existing.append(int(path.stem))
+                except ValueError:
+                    continue
+    return max(existing, default=0) + 1
+
+
+def save_new_preset(layout: Layout) -> int:
+    """Writes layout as a brand-new numbered preset file under
+    USER_PRESETS_DIR, atomically (same reasoning as session.py's
+    save_session). Never overwrites an existing preset — resize mode
+    always creates a new number rather than regenerating one in place,
+    since tomli_w's round-trip would silently strip any hand-written
+    comments (like preset 1.toml's) a regenerated file can't get back.
+
+    Returns the preset number used. This never touches config.toml
+    itself, same "never risk corrupting hand-written config" principle
+    documented above for USER_PRESETS_DIR vs a single shared layout
+    file — set_active_preset() below is the (surgical, comment-safe)
+    companion that actually switches config.toml's [layout] preset
+    over to a number this wrote.
+    """
+    preset_number = next_free_preset_number()
+    data = boxes_to_toml_data(layout.boxes)
+
+    USER_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    path = USER_PRESETS_DIR / f"{preset_number}.toml"
+    tmp_path = path.with_name(path.name + ".tmp")
+    with open(tmp_path, "wb") as f:
+        tomli_w.dump(data, f)
+    tmp_path.replace(path)
+
+    return preset_number
+
+
+def available_preset_numbers() -> list[int]:
+    """Every preset number that actually exists somewhere — packaged or
+    user — sorted. Used by resize mode's preset-cycling (F4) to know
+    what "next" means; a number present in both dirs only counts once.
+    """
+    numbers = set()
+    for preset_dir in (USER_PRESETS_DIR, PACKAGED_PRESETS_DIR):
+        if preset_dir.exists():
+            for path in preset_dir.glob("*.toml"):
+                try:
+                    numbers.add(int(path.stem))
+                except ValueError:
+                    continue
+    return sorted(numbers)
+
+
+def set_active_preset(preset_number: int) -> None:
+    """Switches config.toml's [layout] preset over to preset_number —
+    by patching ONLY that one line, not a tomllib-parse-then-tomli_w-
+    dump round-trip, which would silently strip every comment in a
+    file the user hand-edits (see this module's docstring on why
+    presets themselves are separate per-number files in the first
+    place — this is the one place that same constraint has to be
+    worked around instead of just avoided). Every other line, including
+    comments and their exact formatting, survives byte-for-byte.
+
+    Atomic write (tmp + replace), same pattern as save_new_preset/
+    session.py's save_session.
+    """
+    lines = USER_CONFIG_PATH.read_text().splitlines(keepends=True)
+
+    in_layout_section = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_layout_section = (stripped == "[layout]")
+            continue
+        if in_layout_section and re.match(r"^preset\s*=\s*\d+", stripped):
+            lines[i] = f"preset = {preset_number}\n"
+            break
+
+    tmp_path = USER_CONFIG_PATH.with_name(USER_CONFIG_PATH.name + ".tmp")
+    tmp_path.write_text("".join(lines))
+    tmp_path.replace(USER_CONFIG_PATH)
 
 
 def load_config() -> Config:
@@ -213,6 +287,7 @@ def load_config() -> Config:
 
     return Config(
         layout=layout,
+        preset_number=preset_number,
         tab_order=tab_order_mode,
         provider_name=provider_name,
         total_workspaces=total_workspaces,

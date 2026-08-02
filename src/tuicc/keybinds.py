@@ -36,6 +36,12 @@ SPECIAL_KEYS = {
     "Enter": 10,
     "Escape": 27,
     "Space": ord(" "),
+    "Delete": curses.KEY_DC,
+    # F-keys: their own namespace, separate from both Ctrl+ (reserved
+    # for power_menu-style global system actions) and plain characters
+    # (reserved for the launcher's "start typing from anywhere"
+    # fallback) — the right category for a mode toggle like resize.
+    **{f"F{n}": curses.KEY_F0 + n for n in range(1, 13)},
 }
 
 

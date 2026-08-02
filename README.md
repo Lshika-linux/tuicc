@@ -88,14 +88,18 @@ yourself. `[layout] preset = N` in `config.toml` picks which number to
 use, and stays live-switchable — change the number any time, and
 tuicc loads (or seeds, if it's new to you) that preset's file instead.
 
-A preset is a list of boxes, each with a position and size. Both can
-be either a manual ratio (scales with terminal size) or derived from
-another box (a fixed size, or flush against another box's edge) — see
-the comment header in any `presets/*.toml` file for the full field
-reference, and the wiki's [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)
-page for more detail. Boxes never coordinate with each other beyond
-an explicit reference — what you configure is exactly what renders,
-always, by design.
+A preset is a list of boxes, each a plain x/y/w/h ratio (0.0-1.0) of
+the terminal's width/height — see the comment header in any
+`presets/*.toml` file for the full field reference, and the wiki's
+[Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)
+page for more detail (may be out of date pending an update — the
+old right_of/below/above/fill_to/cols/rows system was removed).
+Boxes never coordinate with each other — resizing or repositioning
+one never moves or resizes another; what you configure is exactly
+what renders, always, by design. If a box looks wrong on a very
+different terminal size than the one you set it up on, fix it with
+tuicc's own interactive resize mode (press `r` on the module you
+want to adjust) rather than hand-computing ratios.
 
 `[[power_menu.action]]` and `[[quick_actions.action]]` currently take
 identical fields (`label`, `command`, `confirm`, `shell_true`) — not
@@ -127,11 +131,12 @@ The core does three things, and only three things:
   (switching workspace, focusing a window, moving a window to a
   region) through the same contract, so `main.py` never hardcodes a
   WM-specific command.
-- **Layout engine** — converts a layout (ratios, fixed sizes, or
-  references to other boxes) into absolute terminal cells for each
-  module, resolving box-to-box dependencies in the right order. This
-  gives you the freedom to run it fullscreen, as I do, or however you
-  like — the same preset renders correctly at any terminal size.
+- **Layout engine** — converts a layout (plain x/y/w/h ratios) into
+  absolute terminal cells for each module. This gives you the freedom
+  to run it fullscreen, as I do, or however you like; if a preset
+  looks off on a very different terminal size, interactive resize
+  mode fixes it in a few keypresses rather than needing a ratio that
+  works everywhere out of the box.
 - **Input routing** — tab order, spatial (arrow-key) navigation,
   global keyboard shortcuts, and hotkeys, all operating on a generic
   `NavItem` list, independent of which module an item belongs to.
