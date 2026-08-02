@@ -10,12 +10,23 @@ nav-item logic, and must never hardcode a module's name in an if/else.
 not editing draw_all() or collect_nav_items(). !!!
 """
 
-from tuicc.modules import sidebar, preview, quick_actions, clock, launcher, connectivity, power_menu, sessions
+from tuicc.modules import (
+    sidebar,
+    sidebar_compact,
+    preview,
+    quick_actions,
+    clock,
+    launcher,
+    connectivity,
+    power_menu,
+    sessions,
+)
 from tuicc.actions import BASE_HANDLERS
 
 
 MODULES = {
     "sidebar": sidebar.draw,
+    "sidebar_compact": sidebar_compact.draw,
     "preview": preview.draw,
     "quick_actions": quick_actions.draw,
     "clock": clock.draw,
@@ -27,6 +38,7 @@ MODULES = {
 
 NAV_PROVIDERS = {
     "sidebar": sidebar.nav_items,
+    "sidebar_compact": sidebar_compact.nav_items,
     "preview": preview.nav_items,
     "quick_actions": quick_actions.nav_items,
     "clock": clock.nav_items,

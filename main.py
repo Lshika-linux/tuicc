@@ -159,9 +159,6 @@ def main(stdscr):
         boxes = compute_boxes(cfg.layout, term_width, term_height)
         state = provider.get_state()
 
-        if focus_id is None:
-            focus_id = state.focused_region_id
-
         if action_ctx.restore_queue:
             now = time.monotonic()
             if now - last_restore_launch >= RESTORE_STAGGER_SECONDS:
@@ -320,7 +317,12 @@ def main(stdscr):
                     # .desktop Exec= is spec'd to never be shell-interpreted.
                     pid = spawn_detached(cmd, shell_true=False)
                     pending_moves.append({
-                        "target_region": focus_id,
+                        # focus_id is only ever set by explicitly selecting
+                        # a sidebar region item — without one selected (or
+                        # without a sidebar in the layout at all), fall
+                        # back to whatever's actually focused right now,
+                        # same live-follow pattern preview.py's draw() uses.
+                        "target_region": focus_id if focus_id is not None else state.focused_region_id,
                         "known_ids": known_ids,
                         "pid": pid,
                         # No pre-known app_id for a plain launcher spawn —

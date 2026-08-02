@@ -8,6 +8,7 @@ import pytest
 import tuicc.config as config_module
 from tuicc.config import (
     ensure_preset_exists,
+    ensure_all_packaged_presets_exist,
     next_free_preset_number,
     save_new_preset,
     build_layout_from_preset,
@@ -221,3 +222,46 @@ def test_set_active_preset_rewrites_only_the_preset_line(tmp_path, monkeypatch):
     assert "# a hand-written comment that must survive\n" in result
     assert "preset = 99\n" in result  # untouched — outside [layout]
     assert "accent = \"blue\"\n" in result
+
+
+# ---------- ensure_all_packaged_presets_exist ----------
+
+def test_ensure_all_packaged_presets_exist_copies_every_packaged_number(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("# preset one\n")
+    (packaged_dir / "2.toml").write_text("# preset two\n")
+
+    user_dir = tmp_path / "user"
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    ensure_all_packaged_presets_exist()
+
+    assert (user_dir / "1.toml").read_text() == "# preset one\n"
+    assert (user_dir / "2.toml").read_text() == "# preset two\n"
+
+
+def test_ensure_all_packaged_presets_exist_never_overwrites_a_user_file(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("# packaged version\n")
+
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text("# user's own edited version\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    ensure_all_packaged_presets_exist()
+
+    assert (user_dir / "1.toml").read_text() == "# user's own edited version\n"
+
+
+def test_ensure_all_packaged_presets_exist_handles_missing_packaged_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", tmp_path / "does-not-exist")
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    ensure_all_packaged_presets_exist()  # must not raise

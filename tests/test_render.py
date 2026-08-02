@@ -15,7 +15,7 @@ def test_every_module_has_both_draw_and_nav_items():
 
 def test_expected_modules_are_registered():
     expected = {
-        "sidebar", "preview", "quick_actions", "clock", "launcher",
+        "sidebar", "sidebar_compact", "preview", "quick_actions", "clock", "launcher",
         "connectivity", "power_menu", "sessions",
     }
     assert set(MODULES.keys()) == expected

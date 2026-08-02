@@ -1,0 +1,29 @@
+# Layout preset — minimal, preview-focused: a compact workspace picker,
+# launcher across the top, preview filling the rest. No full sidebar
+# (no window listing) and none of the power_menu/connectivity/sessions
+# panels preset 1 has — for anyone who mostly just wants to look at
+# their windows and jump between workspaces without much else on screen.
+#
+# See preset 1.toml's header for the full x/y/w/h field reference —
+# same rules apply here, just fewer boxes.
+
+[[box]]
+name = "sidebar_compact"
+x = 0.0
+y = 0.0
+w = 0.08
+h = 1.0
+
+[[box]]
+name = "launcher"
+x = 0.08
+y = 0.0
+w = 0.92
+h = 0.09
+
+[[box]]
+name = "preview"
+x = 0.08
+y = 0.09
+w = 0.92
+h = 0.91

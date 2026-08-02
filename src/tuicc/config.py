@@ -97,6 +97,27 @@ def ensure_preset_exists(preset_number: int) -> Path:
     return user_path
 
 
+def ensure_all_packaged_presets_exist() -> None:
+    """Materializes EVERY packaged preset into USER_PRESETS_DIR up
+    front, not just whichever one [layout] preset currently points at.
+    Without this, a preset only gets copied over the first time it's
+    actually loaded — fine for load_config()'s own single number, but
+    cycle_preset (F4) and anyone browsing ~/.config/tuicc/presets/ by
+    hand should see every packaged option as a real, editable file from
+    the start, not only after switching to it once. Reuses
+    ensure_preset_exists()'s own guarantee: never touches a preset
+    number that already has a user file.
+    """
+    if not PACKAGED_PRESETS_DIR.exists():
+        return
+    for path in PACKAGED_PRESETS_DIR.glob("*.toml"):
+        try:
+            preset_number = int(path.stem)
+        except ValueError:
+            continue
+        ensure_preset_exists(preset_number)
+
+
 def load_toml(path: Path) -> dict:
     with open(path, "rb") as f:
         return tomllib.load(f)
@@ -214,6 +235,7 @@ def set_active_preset(preset_number: int) -> None:
 
 def load_config() -> Config:
     ensure_user_config_exists()
+    ensure_all_packaged_presets_exist()
 
     user_data = load_toml(USER_CONFIG_PATH)
 
