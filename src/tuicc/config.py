@@ -203,34 +203,99 @@ def available_preset_numbers() -> list[int]:
     return sorted(numbers)
 
 
-def set_active_preset(preset_number: int) -> None:
-    """Switches config.toml's [layout] preset over to preset_number —
-    by patching ONLY that one line, not a tomllib-parse-then-tomli_w-
-    dump round-trip, which would silently strip every comment in a
-    file the user hand-edits (see this module's docstring on why
-    presets themselves are separate per-number files in the first
-    place — this is the one place that same constraint has to be
-    worked around instead of just avoided). Every other line, including
-    comments and their exact formatting, survives byte-for-byte.
+def _patch_config_line(section: str, key: str, replacement_line: str) -> None:
+    """Rewrites ONLY the first `key = ...` line found inside `[section]`
+    in USER_CONFIG_PATH, leaving every other line — including comments
+    and their exact formatting — byte-for-byte untouched. Not a
+    tomllib-parse-then-tomli_w-dump round-trip, which would silently
+    strip every comment in a file the user hand-edits (see this
+    module's docstring on why presets are separate per-number files in
+    the first place — this is where that same constraint has to be
+    worked around instead of just avoided). Shared by set_active_preset
+    and set_theme_color, the two places in the codebase that patch
+    config.toml directly rather than regenerating it.
 
     Atomic write (tmp + replace), same pattern as save_new_preset/
     session.py's save_session.
     """
     lines = USER_CONFIG_PATH.read_text().splitlines(keepends=True)
 
-    in_layout_section = False
+    in_section = False
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("["):
-            in_layout_section = (stripped == "[layout]")
+            in_section = (stripped == f"[{section}]")
             continue
-        if in_layout_section and re.match(r"^preset\s*=\s*\d+", stripped):
-            lines[i] = f"preset = {preset_number}\n"
+        if in_section and re.match(rf"^{re.escape(key)}\s*=", stripped):
+            lines[i] = replacement_line
             break
 
     tmp_path = USER_CONFIG_PATH.with_name(USER_CONFIG_PATH.name + ".tmp")
     tmp_path.write_text("".join(lines))
     tmp_path.replace(USER_CONFIG_PATH)
+
+
+def set_active_preset(preset_number: int) -> None:
+    """Switches config.toml's [layout] preset over to preset_number."""
+    _patch_config_line("layout", "preset", f"preset = {preset_number}\n")
+
+
+def set_theme_color(role: str, value: str) -> None:
+    """Switches config.toml's [theme] role over to value (a named
+    color, a hex string, or "inherit" — the formats the help menu's
+    live color editor accepts; an [R, G, B] list isn't practical to
+    type into a single-line field and isn't supported here, only by
+    hand-editing config.toml directly).
+    """
+    _patch_config_line("theme", role, f'{role} = "{value}"\n')
+
+
+def get_raw_theme_values() -> dict:
+    """Every [theme] role's CURRENT raw value straight from
+    config.toml, all at once — strings ("cyan", "#7dd3fc", "inherit")
+    or [R, G, B] lists, exactly as written, not Config.theme's already-
+    resolved curses color numbers. Used by the help menu's color editor
+    to show what every role actually is right now, and to prefill the
+    one being edited. {} if config.toml or its [theme] section is
+    missing (e.g. an out-of-date config.toml predating a role a newer
+    default added) — a role simply won't show a current value, not a
+    crash.
+    """
+    try:
+        return load_toml(USER_CONFIG_PATH)["theme"]
+    except (FileNotFoundError, KeyError):
+        return {}
+
+
+def get_raw_navigation_keys() -> dict:
+    """Every [navigation.keys] binding's raw string value from
+    config.toml (e.g. "F1", "Ctrl+L", "Left"), used by the help menu's
+    keybinds reference. Deliberately not built from Config.keybinds'
+    already-resolved codes via keybinds.key_label() — that can't
+    recover a Ctrl+<letter> name from its resolved code at all (see
+    keybinds.py's own docstring on this), so it would show "?" for
+    exactly the shortcuts most worth listing. Reading the original
+    string straight from the file sidesteps that class of bug entirely
+    instead of working around it after the fact. {} if config.toml or
+    this section is missing.
+    """
+    try:
+        return load_toml(USER_CONFIG_PATH)["navigation"]["keys"]
+    except (FileNotFoundError, KeyError):
+        return {}
+
+
+def get_raw_power_menu_actions() -> list[dict]:
+    """The [[power_menu.action]] entries straight from config.toml,
+    each with its own "label"/"shortcut" exactly as written — same
+    reasoning as get_raw_navigation_keys, for the same reason (a
+    shortcut is typically "Ctrl+<letter>"). [] if config.toml or this
+    section is missing.
+    """
+    try:
+        return load_toml(USER_CONFIG_PATH)["power_menu"]["action"]
+    except (FileNotFoundError, KeyError):
+        return []
 
 
 def load_config() -> Config:

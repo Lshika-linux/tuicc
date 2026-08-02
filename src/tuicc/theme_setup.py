@@ -11,7 +11,22 @@ import curses
 def setup_theme(theme_config: dict) -> dict:
     curses.start_color()
     curses.use_default_colors()
+    return reassign_theme_pairs(theme_config)
 
+
+def reassign_theme_pairs(theme_config: dict) -> dict:
+    """The pair-assignment loop, split out of setup_theme() so it can be
+    called again at runtime (e.g. the help menu's live color editor)
+    without re-running curses.start_color()/use_default_colors(), which
+    are meant to run once. Re-running curses.init_pair() for an
+    already-allocated pair number redefines it in place — every cell
+    already drawn with that pair updates on the next refresh, no
+    restart needed. Pair numbers are assigned by iterating
+    theme_config in order, so as long as the same dict (same role set,
+    same order) is passed back in, roles keep the exact pair numbers
+    they already had — this is what makes editing ONE role's value not
+    require reassigning any of the others.
+    """
     pairs = {}
     pair_number = 1
 

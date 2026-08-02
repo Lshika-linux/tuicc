@@ -73,6 +73,47 @@ def draw_centered_lines(stdscr, box, lines):
         pass
 
 
+def draw_text_panel(stdscr, box, lines, border_color, title=None):
+    """A bordered panel of left-aligned text lines. Unlike
+    draw_centered_lines (built for a short confirm dialog, each line
+    individually centered), this is for paragraph-shaped content: a
+    consistent left margin, one line per row, no per-line centering.
+
+    lines is a list of (text, color_pair) pairs — the caller decides
+    each line's color (e.g. to highlight the currently-selected row in
+    a list), this function only lays them out. Takes an explicit box
+    like every other primitive here (draw_box_outline, draw_filled_box,
+    draw_centered_lines) — a caller wanting "most of the screen, with a
+    margin" computes that box itself, so this can also be used for a
+    sub-region (e.g. one pane of a two-pane page).
+    """
+    x, y, w, h = box
+
+    draw_box_outline(stdscr, y, x, h, w, border_color, title=title)
+
+    inner_w = max(w - 4, 0)
+    try:
+        for i, (text, color) in enumerate(lines):
+            row = y + 1 + i
+            if row >= y + h - 1:
+                break
+            stdscr.addstr(row, x + 2, text[:inner_w], color)
+    except curses.error:
+        pass
+
+
+def draw_status_line(stdscr, term_width, text, color_pair):
+    """A single line at the top-left of the screen — main.py's shared
+    mechanism for a transient hint or toast (a resize-mode hint, a
+    spawn-picker choice list, a "saved as preset N" message). Clipped
+    to term_width so it fits rather than raising curses.error.
+    """
+    try:
+        stdscr.addstr(0, 0, text[:term_width], color_pair)
+    except curses.error:
+        pass
+
+
 def format_shortcut(key_name: str) -> str:
     """Turn a keybinds.py-style key spec into display text, e.g.
     "Ctrl+L" -> "[^L]". Shared so any module showing a keybind hint

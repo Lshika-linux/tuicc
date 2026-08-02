@@ -6,7 +6,18 @@ boxes are independent ratios with no cross-box coordination (see its
 docstring), so changing one box never moves or resizes another either
 way — what you see after a resize/move is exactly what you get, same
 as everywhere else in this layout system.
+
+ResizeState/SpawnPickerState and the functions below them are the
+session-level layer on top of that per-box math — what main.py's loop
+used to hold as six/two loose local variables and inline key-handling.
+Same "pure function over an explicit value" style as the rest of this
+codebase (resolve_selection, next_module_name in navigation.py), not a
+class-with-methods rewrite: a dataclass is just the state, every
+function here takes one and mutates it, main.py still owns *when* to
+call them.
 """
+
+from dataclasses import dataclass, field
 
 from tuicc.layout import ModuleBox
 
@@ -66,3 +77,121 @@ def cancel_resize(box: ModuleBox, snapshot: dict) -> None:
     box.y = snapshot["y"]
     box.w = snapshot["w"]
     box.h = snapshot["h"]
+
+
+@dataclass
+class ResizeState:
+    active: bool = False
+    box: ModuleBox | None = None
+    snapshot: dict | None = None
+    dimension: str = "size"
+    is_new_box: bool = False
+    confirm_delete: bool = False
+
+
+def start(state: ResizeState, box: ModuleBox, is_new: bool = False) -> None:
+    """Begins a resize-mode session on box. is_new marks a box the
+    spawn picker just created (no "before" state to revert to — see
+    escape() below) and starts it in move dimension, so a freshly
+    spawned box is immediately positionable rather than resizable.
+    """
+    state.box = box
+    state.snapshot = enter_resize(box)
+    state.dimension = "move" if is_new else "size"
+    state.is_new_box = is_new
+    state.confirm_delete = False
+    state.active = True
+
+
+def commit(state: ResizeState) -> None:
+    """Ends the session, keeping the box's current state (no revert) —
+    same effect as pressing Enter. Shared "wrap up before doing
+    something else" step so F1/F3/F4/F6 can interrupt an in-progress
+    resize (main.py calls this before acting on any of them) instead
+    of being swallowed by the resize hijack.
+    """
+    state.active = False
+    state.box = None
+    state.snapshot = None
+    state.dimension = "size"
+    state.is_new_box = False
+    state.confirm_delete = False
+
+
+def escape(state: ResizeState, layout_boxes: list) -> None:
+    """Ends the session, discarding the change — reverts the box via
+    cancel_resize, or, if is_new_box, removes it from layout_boxes
+    entirely (there's no "before" a just-spawned box existed).
+    """
+    if state.is_new_box:
+        layout_boxes.remove(state.box)
+    else:
+        cancel_resize(state.box, state.snapshot)
+    commit(state)
+
+
+def apply_direction(state: ResizeState, direction: str,
+                     term_width: int, term_height: int,
+                     x_cells: int, y_cells: int, w_cells: int, h_cells: int) -> None:
+    """A direction key while the session is active — resize_step or
+    move_step depending on state.dimension, matching the current
+    box's cell rect (x/y/w/h all needed since resize needs x/y as the
+    clamp origin and move needs w/h as the box's own size).
+    """
+    grow = direction in ("right", "down")
+    if state.dimension == "size":
+        dim = "w" if direction in ("left", "right") else "h"
+        resize_step(state.box, dim, grow, term_width, term_height, x_cells, y_cells)
+    else:
+        dim = "x" if direction in ("left", "right") else "y"
+        move_step(state.box, dim, grow, term_width, term_height, w_cells, h_cells)
+
+
+def toggle_dimension(state: ResizeState) -> None:
+    state.dimension = "move" if state.dimension == "size" else "size"
+
+
+def hint_text(state: ResizeState, active_module: str) -> str:
+    if state.confirm_delete:
+        return f"Delete {active_module}? y/n"
+    action = "resize" if state.dimension == "size" else "move"
+    return (
+        f"[{state.dimension.upper()}] {active_module} — ←→↑↓ {action}  "
+        f"M switch  Del delete  Enter done  Esc cancel  |  "
+        f"F1 help  F3 save preset  F4 cycle preset  F6 spawn"
+    )
+
+
+@dataclass
+class SpawnPickerState:
+    active: bool = False
+    choices: list = field(default_factory=list)
+
+
+def open_picker(state: SpawnPickerState, available_names) -> None:
+    """available_names is computed by the caller (main.py, from
+    render.MODULES vs the current layout) — keeps this module from
+    needing to import render.py. A no-op if nothing's available.
+    """
+    available = sorted(available_names)
+    if available:
+        state.choices = available[:9]
+        state.active = True
+
+
+def choose(state: SpawnPickerState, key: int) -> str | None:
+    """The chosen module name for a digit keypress, or None if the key
+    wasn't a valid choice — either way the picker closes (matches the
+    existing behavior: any key exits it, not just a valid digit).
+    """
+    choice = None
+    if ord("1") <= key < ord("1") + len(state.choices):
+        choice = state.choices[key - ord("1")]
+    state.active = False
+    state.choices = []
+    return choice
+
+
+def spawn_hint_text(state: SpawnPickerState) -> str:
+    choices = "  ".join(f"{i+1} {name}" for i, name in enumerate(state.choices))
+    return f"SPAWN — {choices}  Esc cancel"

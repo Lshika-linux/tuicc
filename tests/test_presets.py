@@ -14,6 +14,10 @@ from tuicc.config import (
     build_layout_from_preset,
     available_preset_numbers,
     set_active_preset,
+    set_theme_color,
+    get_raw_theme_values,
+    get_raw_navigation_keys,
+    get_raw_power_menu_actions,
 )
 from tuicc.layout import Layout, ModuleBox
 
@@ -265,3 +269,122 @@ def test_ensure_all_packaged_presets_exist_handles_missing_packaged_dir(tmp_path
     monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
 
     ensure_all_packaged_presets_exist()  # must not raise
+
+
+# ---------- set_theme_color ----------
+
+def test_set_theme_color_rewrites_only_the_target_role(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[layout]\n"
+        "preset = 1\n"  # a same-named key outside [theme] — must NOT change
+        "\n"
+        "[theme]\n"
+        "# a hand-written comment that must survive\n"
+        "accent = \"cyan\"\n"
+        "border = \"white\"\n"
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_theme_color("accent", "magenta")
+
+    result = config_path.read_text()
+    assert 'accent = "magenta"\n' in result
+    assert 'border = "white"\n' in result  # untouched — different key
+    assert "preset = 1\n" in result  # untouched — different section
+    assert "# a hand-written comment that must survive\n" in result
+
+
+def test_set_theme_color_does_not_match_a_role_name_prefix(tmp_path, monkeypatch):
+    # "border" and "border_selected" are real sibling roles — editing
+    # one must not accidentally match the other via a bare prefix.
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[theme]\n"
+        "border = \"white\"\n"
+        "border_selected = \"cyan\"\n"
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_theme_color("border", "red")
+
+    result = config_path.read_text()
+    assert 'border = "red"\n' in result
+    assert 'border_selected = "cyan"\n' in result
+
+
+# ---------- get_raw_theme_values ----------
+
+def test_get_raw_theme_values_returns_every_role(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[theme]\naccent = "cyan"\nborder = [128, 128, 128]\n')
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    values = get_raw_theme_values()
+
+    assert values["accent"] == "cyan"
+    assert values["border"] == [128, 128, 128]
+
+
+def test_get_raw_theme_values_missing_theme_section_returns_empty_dict(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[layout]\npreset = 1\n")
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    assert get_raw_theme_values() == {}
+
+
+def test_get_raw_theme_values_missing_file_returns_empty_dict(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", tmp_path / "does-not-exist.toml")
+
+    assert get_raw_theme_values() == {}
+
+
+# ---------- get_raw_navigation_keys ----------
+
+def test_get_raw_navigation_keys_returns_the_raw_strings(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[navigation.keys]\n"
+        'left = "Left"\n'
+        'confirm_yes = "Ctrl+Y"\n'
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    keys = get_raw_navigation_keys()
+
+    assert keys["left"] == "Left"
+    assert keys["confirm_yes"] == "Ctrl+Y"
+
+
+def test_get_raw_navigation_keys_missing_section_returns_empty_dict(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[layout]\npreset = 1\n")
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    assert get_raw_navigation_keys() == {}
+
+
+# ---------- get_raw_power_menu_actions ----------
+
+def test_get_raw_power_menu_actions_returns_the_raw_entries(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[[power_menu.action]]\n"
+        'label = "Lock"\n'
+        'shortcut = "Ctrl+L"\n'
+        'command = "swaylock"\n'
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    actions = get_raw_power_menu_actions()
+
+    assert actions == [{"label": "Lock", "shortcut": "Ctrl+L", "command": "swaylock"}]
+
+
+def test_get_raw_power_menu_actions_missing_section_returns_empty_list(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[layout]\npreset = 1\n")
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    assert get_raw_power_menu_actions() == []

@@ -19,6 +19,10 @@ from tuicc.config import (
     save_new_preset,
     available_preset_numbers,
     set_active_preset,
+    set_theme_color,
+    get_raw_theme_values,
+    get_raw_navigation_keys,
+    get_raw_power_menu_actions,
     build_layout_from_preset,
 )
 from tuicc.context import RenderContext
@@ -38,10 +42,11 @@ from tuicc.navigation import (
     first_item_in_module,
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
-from tuicc.theme_setup import setup_theme
+from tuicc.render_utils import draw_status_line
+from tuicc.theme_setup import setup_theme, reassign_theme_pairs
 from tuicc.modules.launcher import resolve_selected, handle_typing_key, enter_typing_mode
 from tuicc.pending_moves import resolve_pending_move
-from tuicc.resize_mode import enter_resize, resize_step, move_step, cancel_resize
+from tuicc import resize_mode, help_mode
 
 
 def main(stdscr):
@@ -86,46 +91,29 @@ def main(stdscr):
     last_restore_launch = 0.0
     RESTORE_STAGGER_SECONDS = 0.3
 
-    resize_mode = False
-    resize_box = None
-    resize_snapshot = None
-    resize_dimension = "size"
-    resize_is_new_box = False
-    resize_confirm_delete = False
+    # Session state for the three input-hijacking modes this file
+    # coordinates but doesn't itself contain the logic for — see
+    # resize_mode.py/help_mode.py. This file owns *when* to call their
+    # functions (which key means what, in what order), not the state
+    # transitions or math themselves.
+    resize = resize_mode.ResizeState()
+    spawn_picker = resize_mode.SpawnPickerState()
+    help_state = help_mode.HelpState()
+
+    # A generic transient toast — used by save/cycle-preset as much as
+    # by resize, genuinely main-loop-level, not owned by either module.
     resize_message = None
     resize_message_until = 0.0
 
-    spawn_picker_mode = False
-    spawn_picker_choices = []
-
-    def commit_resize():
-        # Ends whatever resize-mode session is active, keeping the
-        # box's current state (no revert) — same effect as pressing
-        # Enter, used as a shared "wrap up before doing something else"
-        # step so F1/F2/F3/F4 can interrupt an in-progress resize
-        # instead of being swallowed by its hijack block.
-        nonlocal resize_mode, resize_box, resize_snapshot, resize_dimension, resize_is_new_box, resize_confirm_delete
-        resize_mode = False
-        resize_box = None
-        resize_snapshot = None
-        resize_dimension = "size"
-        resize_is_new_box = False
-        resize_confirm_delete = False
-
     def do_spawn_picker():
-        nonlocal spawn_picker_mode, spawn_picker_choices
-        available = sorted(set(MODULES.keys()) - {b.name for b in cfg.layout.boxes})
-        if available:
-            spawn_picker_choices = available[:9]
-            spawn_picker_mode = True
+        available = set(MODULES.keys()) - {b.name for b in cfg.layout.boxes}
+        resize_mode.open_picker(spawn_picker, available)
 
     def do_enter_resize():
-        nonlocal resize_box, resize_snapshot, resize_mode
         if active_module is not None:
-            resize_box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
-            if resize_box is not None:
-                resize_snapshot = enter_resize(resize_box)
-                resize_mode = True
+            box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
+            if box is not None:
+                resize_mode.start(resize, box)
 
     def do_save_layout():
         nonlocal resize_message, resize_message_until
@@ -147,6 +135,9 @@ def main(stdscr):
             active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
             resize_message = f"preset {next_number}"
             resize_message_until = time.monotonic() + 3.0
+
+    def do_enter_help():
+        help_mode.enter(help_state)
 
     while True:
         stdscr.timeout(
@@ -239,37 +230,23 @@ def main(stdscr):
                 break
         ctx.selected_item = selected_item
 
-        draw_all(stdscr, cfg.layout, boxes, ctx)
+        if help_state.active:
+            help_mode.draw(
+                stdscr, term_width, term_height, theme_pairs, help_state,
+                get_raw_navigation_keys(), get_raw_power_menu_actions(), get_raw_theme_values(),
+            )
+        else:
+            draw_all(stdscr, cfg.layout, boxes, ctx)
 
-        if spawn_picker_mode:
-            choices = "  ".join(f"{i+1} {name}" for i, name in enumerate(spawn_picker_choices))
-            hint = f"SPAWN — {choices}  Esc cancel"
-            try:
-                stdscr.addstr(0, 0, hint[:term_width], theme_pairs.get("urgent", 0))
-            except curses.error:
-                pass
-        elif resize_mode:
-            if resize_confirm_delete:
-                hint = f"Delete {active_module}? y/n"
-            else:
-                action = "resize" if resize_dimension == "size" else "move"
-                hint = (
-                    f"[{resize_dimension.upper()}] {active_module} — ←→↑↓ {action}  "
-                    f"M switch  Del delete  Enter done  Esc cancel  |  "
-                    f"F1 spawn  F3 save preset  F4 cycle preset"
-                )
-            try:
-                stdscr.addstr(0, 0, hint[:term_width], theme_pairs.get("urgent", 0))
-            except curses.error:
-                pass
-        elif resize_message is not None:
-            if time.monotonic() < resize_message_until:
-                try:
-                    stdscr.addstr(0, 0, resize_message[:term_width], theme_pairs.get("accent", 0))
-                except curses.error:
-                    pass
-            else:
-                resize_message = None
+            if spawn_picker.active:
+                draw_status_line(stdscr, term_width, resize_mode.spawn_hint_text(spawn_picker), theme_pairs.get("urgent", 0))
+            elif resize.active:
+                draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, active_module), theme_pairs.get("urgent", 0))
+            elif resize_message is not None:
+                if time.monotonic() < resize_message_until:
+                    draw_status_line(stdscr, term_width, resize_message, theme_pairs.get("accent", 0))
+                else:
+                    resize_message = None
 
         stdscr.refresh()
 
@@ -309,6 +286,39 @@ def main(stdscr):
                     break
             continue
 
+        if help_state.active:
+            if help_state.page is None:
+                help_mode.select_page(help_state, key)
+                if help_state.page is None and key == 27:  # Escape
+                    help_state.active = False
+                continue
+
+            if help_state.page == "colors":
+                if help_state.color_editing:
+                    if key == cfg.keybinds["confirm"]:
+                        result = help_mode.apply_color_edit(help_state)
+                        if result is not None:
+                            role, color, typed_value = result
+                            cfg.theme[role] = color
+                            theme_pairs = reassign_theme_pairs(cfg.theme)
+                            set_theme_color(role, typed_value)
+                    else:
+                        help_mode.type_color_key(help_state, key)
+                    continue
+                if key == cfg.keybinds["up"]:
+                    help_mode.move_color_index(help_state, -1)
+                elif key == cfg.keybinds["down"]:
+                    help_mode.move_color_index(help_state, 1)
+                elif key == cfg.keybinds["confirm"]:
+                    help_mode.start_color_edit(help_state, get_raw_theme_values())
+                elif key == 27:  # Escape
+                    help_state.page = None
+                continue
+
+            if key == 27:  # Escape
+                help_state.page = None
+            continue
+
         if typing_mode:
             if key == cfg.keybinds["confirm"]:
                 cmd = resolve_selected(search_query, search_selected_index)
@@ -343,68 +353,54 @@ def main(stdscr):
                     active_module = saved_active_module
             continue
 
-        if spawn_picker_mode:
-            if ord("1") <= key < ord("1") + len(spawn_picker_choices):
-                choice = spawn_picker_choices[key - ord("1")]
+        if spawn_picker.active:
+            choice = resize_mode.choose(spawn_picker, key)
+            if choice is not None:
                 new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
                 cfg.layout.boxes.append(new_box)
-                resize_box = new_box
-                resize_snapshot = enter_resize(new_box)
-                resize_dimension = "move"
-                resize_is_new_box = True
-                resize_mode = True
-            spawn_picker_mode = False
-            spawn_picker_choices = []
+                resize_mode.start(resize, new_box, is_new=True)
             continue
 
-        if resize_mode:
-            if resize_confirm_delete:
+        if resize.active:
+            if resize.confirm_delete:
                 if key == cfg.keybinds["confirm_yes"]:
-                    cfg.layout.boxes.remove(resize_box)
-                    commit_resize()
+                    cfg.layout.boxes.remove(resize.box)
+                    resize_mode.commit(resize)
                 elif key == cfg.keybinds["confirm_no"]:
-                    resize_confirm_delete = False
+                    resize.confirm_delete = False
                 continue
             if key in direction_keys:
                 x_cells, y_cells, w_cells, h_cells = boxes[active_module]
-                direction = direction_keys[key]
-                grow = direction in ("right", "down")
-                if resize_dimension == "size":
-                    dimension = "w" if direction in ("left", "right") else "h"
-                    resize_step(resize_box, dimension, grow, term_width, term_height, x_cells, y_cells)
-                else:
-                    dimension = "x" if direction in ("left", "right") else "y"
-                    move_step(resize_box, dimension, grow, term_width, term_height, w_cells, h_cells)
+                resize_mode.apply_direction(
+                    resize, direction_keys[key], term_width, term_height, x_cells, y_cells, w_cells, h_cells
+                )
             elif key == cfg.keybinds["move_toggle"]:
-                resize_dimension = "move" if resize_dimension == "size" else "size"
+                resize_mode.toggle_dimension(resize)
             elif key == cfg.keybinds["delete_box"]:
-                resize_confirm_delete = True
+                resize.confirm_delete = True
             elif key == cfg.keybinds["confirm"]:
                 # Keeps the change in cfg.layout (in memory only) and
                 # returns to normal navigation — resize as many other
                 # modules as you like before writing anything to disk
                 # via save_layout.
-                commit_resize()
+                resize_mode.commit(resize)
             elif key == 27:  # Escape
-                if resize_is_new_box:
-                    # Nothing to revert to — it didn't exist before this
-                    # resize-mode session, so cancelling removes it.
-                    cfg.layout.boxes.remove(resize_box)
-                else:
-                    cancel_resize(resize_box, resize_snapshot)
-                commit_resize()
+                resize_mode.escape(resize, cfg.layout.boxes)
             elif key == cfg.keybinds["spawn_box"]:
-                commit_resize()
+                resize_mode.commit(resize)
                 do_spawn_picker()
             elif key == cfg.keybinds["resize"]:
-                commit_resize()
+                resize_mode.commit(resize)
                 do_enter_resize()
             elif key == cfg.keybinds["save_layout"]:
-                commit_resize()
+                resize_mode.commit(resize)
                 do_save_layout()
             elif key == cfg.keybinds["cycle_preset"]:
-                commit_resize()
+                resize_mode.commit(resize)
                 do_cycle_preset()
+            elif key == cfg.keybinds["help"]:
+                resize_mode.commit(resize)
+                do_enter_help()
             continue
 
         if key == cfg.keybinds["confirm"] and selected_item is not None:
@@ -441,6 +437,8 @@ def main(stdscr):
             do_save_layout()
         elif key == cfg.keybinds["cycle_preset"]:
             do_cycle_preset()
+        elif key == cfg.keybinds["help"]:
+            do_enter_help()
         elif cfg.vim_mode and key == cfg.keybinds["insert"]:
             (saved_selected_id, saved_active_module, typing_mode,
              search_query, search_selected_index, active_module) = enter_typing_mode(
