@@ -98,8 +98,9 @@ Boxes never coordinate with each other — resizing or repositioning
 one never moves or resizes another; what you configure is exactly
 what renders, always, by design. If a box looks wrong on a very
 different terminal size than the one you set it up on, fix it with
-tuicc's own interactive resize mode (press `r` on the module you
-want to adjust) rather than hand-computing ratios.
+tuicc's own interactive resize mode (`F2` on the module you want to
+adjust; `F1` opens a help menu covering this and the rest of the
+keybinds from inside tuicc itself) rather than hand-computing ratios.
 
 `[[power_menu.action]]` and `[[quick_actions.action]]` currently take
 identical fields (`label`, `command`, `confirm`, `shell_true`) — not
@@ -188,17 +189,21 @@ src/tuicc/
 ├── config.py                        # loads + merges packaged defaults, presets, user config
 ├── render.py                         # module registry (draw + nav_items + action handlers)
 ├── render_utils.py                    # shared curses drawing helpers
-├── defaults/config.toml                # packaged default config
-├── presets/                             # built-in layout presets (plain TOML) — copied to
-│                                        #   ~/.config/tuicc/presets/<N>.toml on first use
+├── resize_mode.py                      # interactive resize/move — ResizeState, SpawnPickerState
+├── help_mode.py                        # F1 help menu — FAQ/keybinds, resize reference, color editor
+├── defaults/config.toml                  # packaged default config
+├── presets/                               # built-in layout presets (plain TOML) — copied to
+│                                          #   ~/.config/tuicc/presets/<N>.toml on first use
 ├── modules/
 │   ├── sidebar.py                # workspace list, reports nav items
-│   ├── preview.py                # windows of the currently focused workspace
-│   ├── launcher.py                # fuzzy app search + launch
-│   ├── connectivity.py             # wifi/bluetooth status + toggle
-│   ├── power_menu.py                # lock/logout/reboot/shutdown, user-defined
-│   ├── quick_actions.py              # generic action list — not in the default layout yet
-│   └── clock.py                       # not in the default layout yet
+│   ├── sidebar_compact.py        # compact workspace picker, no window listing
+│   ├── preview.py                 # windows of the currently focused workspace
+│   ├── launcher.py                 # fuzzy app search + launch
+│   ├── connectivity.py              # wifi/bluetooth status + toggle
+│   ├── power_menu.py                 # lock/logout/reboot/shutdown, user-defined
+│   ├── sessions.py                    # save/load/delete a named set of window positions
+│   ├── quick_actions.py                # generic action list — not in the default layout yet
+│   └── clock.py                         # not in the default layout yet
 └── providers/
     ├── base.py                # Provider contract every WM provider implements
     ├── registry.py             # provider name -> Provider class
