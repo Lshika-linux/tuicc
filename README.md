@@ -46,9 +46,14 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Shift+Tab cycles through modules; Tab cycles through items within the
-active module. Arrow keys move to the nearest navigable item in that
-direction, regardless of which module it belongs to. Enter runs the
+Tab/Shift+Tab move to the next/previous item, rolling into the
+next/previous module once you run past either end of the current one
+(Down/Up are plain duplicates of Tab/Shift+Tab). Left/Right jump
+straight to the next/previous module's first item instead of stepping
+through the rest of the current one. With `vim_mode = true`, h/j/k/l
+duplicate left/down/up/right the same way (off by default — otherwise
+those 4 letters would stop reaching the launcher's "type anywhere" search
+for everyone, not just vim users). Enter runs the
 selected item — switches to a workspace, focuses a window,
 connects/disconnects wifi or bluetooth, runs a launcher/power-menu
 entry, or (for destructive power actions) asks for confirmation first
@@ -218,13 +223,15 @@ The core does three things, and only three things:
   looks off on a very different terminal size, interactive resize
   mode fixes it in a few keypresses rather than needing a ratio that
   works everywhere out of the box.
-- **Input routing** — tab order, spatial (arrow-key) navigation,
-  global keyboard shortcuts, and hotkeys, all operating on a generic
-  `NavItem` list, independent of which module an item belongs to.
-  Navigation inside a module (e.g. cycling windows in the preview)
-  uses a predictable left-to-right order rather than pure spatial
-  search, which breaks down (read: I couldn't get it right) once
-  windows overlap (floating windows in particular).
+- **Input routing** — tab order, global keyboard shortcuts, and
+  hotkeys, all operating on a generic `NavItem` list, independent of
+  which module an item belongs to. Movement is Tab-order cycling only
+  (next/previous item, rolling into the next/previous module at either
+  end) — an earlier version also had spatial arrow-key search across
+  the whole layout, dropped for being unpredictable in practice and for
+  needing real special-casing to work around overlapping floating
+  windows in the preview. Tab-order cycling never does geometric
+  search, so on-screen overlap isn't a problem it has to work around.
 
 Modules — the sidebar, the preview, the launcher, connectivity, the
 power menu, and future ones — live as standalone files under
@@ -260,7 +267,7 @@ src/tuicc/
 ├── layout.py                 # ModuleBox, Layout — module positions/sizes,
 │                              #   as ratios, fixed counts, or box references
 ├── layout_engine.py          # resolves a Layout into absolute terminal cells
-├── navigation.py              # NavItem, tab/spatial/hotkey navigation
+├── navigation.py              # NavItem, tab-order/hotkey navigation
 ├── keybinds.py                 # config key names -> curses key codes
 ├── actions.py                   # region/window focus handlers shared across modules
 ├── context.py                    # RenderContext — everything a module needs per frame

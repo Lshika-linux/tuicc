@@ -27,7 +27,7 @@ right = "Right"
 up = "Up"
 down = "Down"
 tab = "Tab"
-switch_module = "Shift+Tab"
+previous = "Shift+Tab"
 confirm = "Enter"
 
 [wm]

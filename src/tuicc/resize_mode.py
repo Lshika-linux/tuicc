@@ -83,9 +83,10 @@ def cancel_resize(box: ModuleBox, snapshot: dict) -> None:
 @dataclass
 class ResizeState:
     """active=True, editing=False: browsing — the session is open, no
-    box is being resized/moved right now; normal navigation (arrows,
-    Tab, switch_module) picks which module active_module refers to,
-    same as outside the session entirely. active=True, editing=True:
+    box is being resized/moved right now; normal navigation (Tab/
+    Shift+Tab and their duplicate keys) picks which module
+    active_module refers to, same as outside the session entirely.
+    active=True, editing=True:
     a specific box (box/snapshot/dimension/is_new_box populated) is
     being resized/moved, same behavior this whole module always had.
     """
@@ -234,7 +235,7 @@ def hint_text(state: ResizeState, active_module: str) -> str:
     if not state.editing:
         return (
             f"EDIT MODE — {active_module}  Enter edit this module  Del delete it  |  "
-            f"switch_module/Tab/arrows pick another  |  F1 help  F3 save+exit  "
+            f"Tab/Shift+Tab/arrows pick another  |  F1 help  F3 save+exit  "
             f"F4 cycle preset  F6 spawn  Esc exit"
         )
     action = "resize" if state.dimension == "size" else "move"

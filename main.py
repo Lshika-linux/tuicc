@@ -34,12 +34,14 @@ from tuicc.layout import ModuleBox
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
     tab_order,
-    resolve_direction_move,
     resolve_selection,
     global_shortcut_item,
     next_module_name,
+    prev_module_name,
     next_item_in_module,
+    prev_item_in_module,
     first_item_in_module,
+    last_item_in_module,
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
 from tuicc.render_utils import draw_status_line
@@ -67,12 +69,36 @@ def main(stdscr):
 
     action_ctx = ActionContext(provider=provider, connectivity=connectivity)
 
+    # Only used by resize mode's box-editing tier for resize/move math —
+    # normal navigation (below) no longer does spatial movement, so it
+    # doesn't consume this dict at all anymore.
     direction_keys = {
         cfg.keybinds["left"]: "left",
         cfg.keybinds["right"]: "right",
         cfg.keybinds["up"]: "up",
         cfg.keybinds["down"]: "down",
     }
+    if cfg.vim_mode:
+        direction_keys[cfg.keybinds["vim_left"]] = "left"
+        direction_keys[cfg.keybinds["vim_right"]] = "right"
+        direction_keys[cfg.keybinds["vim_up"]] = "up"
+        direction_keys[cfg.keybinds["vim_down"]] = "down"
+
+    # Navigation key-sets: next/prev item (Tab/Shift+Tab + Down/Up as
+    # duplicates, rolling into the next/previous module at either end
+    # — see navigation.py's next_item_in_module/prev_item_in_module)
+    # vs. an explicit jump straight to the next/previous module's first
+    # item (Left/Right). vim hjkl duplicate all four, but only when
+    # vim_mode is on — see the [navigation.keys] comment on why.
+    next_item_keys = {cfg.keybinds["tab"], cfg.keybinds["down"]}
+    prev_item_keys = {cfg.keybinds["previous"], cfg.keybinds["up"]}
+    module_next_keys = {cfg.keybinds["right"]}
+    module_prev_keys = {cfg.keybinds["left"]}
+    if cfg.vim_mode:
+        next_item_keys.add(cfg.keybinds["vim_down"])
+        prev_item_keys.add(cfg.keybinds["vim_up"])
+        module_next_keys.add(cfg.keybinds["vim_right"])
+        module_prev_keys.add(cfg.keybinds["vim_left"])
 
     selected_id = None
     focus_id = None
@@ -462,7 +488,7 @@ def main(stdscr):
             # Browsing level: the edit session is open but no module is being
             # resized/moved right now — everything except confirm/delete_box/
             # Escape falls through to the normal dispatch chain below, so
-            # switch_module/Tab/arrow navigation and F1/F3/F4/F6 all keep
+            # Tab/Shift+Tab/arrow navigation and F1/F3/F4/F6 all keep
             # working exactly as outside the session.
             if resize.active and not resize.editing:
                 if resize.confirm_delete:
@@ -532,6 +558,8 @@ def main(stdscr):
                     do_enter_help()
                 continue
 
+            module_names = [box.name for box in cfg.layout.boxes]
+
             if key == cfg.keybinds["confirm"] and selected_item is not None:
                 handler = ACTION_HANDLERS.get(selected_item.target_kind)
                 if handler is not None:
@@ -541,23 +569,34 @@ def main(stdscr):
                     if should_dismiss:
                         provider.dismiss_self()
 
-            elif key == cfg.keybinds["switch_module"]:
-                module_names = [box.name for box in cfg.layout.boxes]
+            elif key in next_item_keys and ordered:
+                next_item = next_item_in_module(ordered, active_module, selected_id)
+                if next_item is None:
+                    next_module = next_module_name(module_names, active_module)
+                    next_item = first_item_in_module(ordered, next_module) if next_module else None
+                if next_item is not None:
+                    selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
+            elif key in prev_item_keys and ordered:
+                prev_item = prev_item_in_module(ordered, active_module, selected_id)
+                if prev_item is None:
+                    prev_module = prev_module_name(module_names, active_module)
+                    prev_item = last_item_in_module(ordered, prev_module) if prev_module else None
+                if prev_item is not None:
+                    selected_id, active_module, focus_id = resolve_selection(prev_item, focus_id)
+            elif key in module_next_keys:
                 next_name = next_module_name(module_names, active_module)
                 if next_name is not None:
                     active_module = next_name
                     first_item = first_item_in_module(ordered, active_module)
                     if first_item is not None:
                         selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
-            elif key == cfg.keybinds["tab"] and ordered:
-                next_item = next_item_in_module(ordered, active_module, selected_id)
-                if next_item is not None:
-                    selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
-            elif key in direction_keys and selected_item is not None:
-                direction = direction_keys[key]
-                next_item = resolve_direction_move(ordered, selected_item, direction, focus_id)
-                if next_item is not None:
-                    selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
+            elif key in module_prev_keys:
+                prev_name = prev_module_name(module_names, active_module)
+                if prev_name is not None:
+                    active_module = prev_name
+                    first_item = first_item_in_module(ordered, active_module)
+                    if first_item is not None:
+                        selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
             elif key == cfg.keybinds["spawn_box"]:
                 do_spawn_picker()
             elif key == cfg.keybinds["resize"] and active_module is not None:

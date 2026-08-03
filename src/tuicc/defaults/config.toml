@@ -59,12 +59,22 @@ urgent = "red"
 [navigation.keys]
 # Named keys: Left, Right, Up, Down, Tab, Shift+Tab, Enter, Escape,
 # Space. Or any single character, e.g. "h", "j", "k", "l".
+#
+# Tab/Shift+Tab (+ Down/Up as duplicates) move to the next/previous
+# item, rolling into the next/previous module once you run past either
+# end of the current one. Left/Right (+ Down/Up's siblings) jump
+# straight to the next/previous module's first item instead of
+# stepping through the rest of the current one. vim_left/vim_right/
+# vim_up/vim_down below duplicate left/right/up/down again, but only
+# take effect when vim_mode = true (see below) — left as plain
+# characters otherwise, they'd steal 4 letters from "type anywhere to
+# search apps" for everyone, not just vim users.
 left = "Left"
 right = "Right"
 up = "Up"
 down = "Down"
 tab = "Tab"
-switch_module = "Shift+Tab"
+previous = "Shift+Tab"
 confirm = "Enter"
 # Answering a Y/N confirmation dialog (e.g. before shutdown/reboot).
 # The on-screen hint always reflects whatever you bind here.
@@ -74,9 +84,15 @@ confirm_no = "n"
 # that mode specifically so h/j/k/l etc. don't collide with it) —
 # press this to start typing into the launcher instead.
 insert = "i"
+# Also only used when vim_mode = true — see the note above the
+# left/right/up/down keys.
+vim_left = "h"
+vim_right = "l"
+vim_up = "k"
+vim_down = "j"
 # F1: opens the help menu (what tuicc is, a resize-mode reference, a
 # keybinds reference, and a live color editor). F2: opens a persistent
-# edit session — arrows/Tab/switch_module pick a module, confirm
+# edit session — arrows/Tab/Shift+Tab pick a module, confirm
 # enters resizing/moving it (arrows resize w/h or move x/y, toggled by
 # move_toggle; confirm keeps the change and returns to picking another
 # module; Escape reverts it); Del removes a module (asks y/n first,

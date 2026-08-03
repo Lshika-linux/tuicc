@@ -16,10 +16,9 @@ letting them vary independently.
 Items are target_kind="region" (NavItem's default) — the exact same
 kind sidebar.py's items are, so selecting one flows through the
 existing generic region-selection machinery (resolve_selection sets
-focus_id, region_item_for_focus's arrow-key fallback, preview's
-live-follow-until-explicit-pick behavior) with no new plumbing:
-whichever module happens to produce a region item works interchangeably
-with any other, by construction.
+focus_id, preview's live-follow-until-explicit-pick behavior) with no
+new plumbing: whichever module happens to produce a region item works
+interchangeably with any other, by construction.
 
 ---
 IMPORTANT: Each module owns both how it draws itself and where its own

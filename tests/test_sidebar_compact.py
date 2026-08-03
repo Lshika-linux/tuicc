@@ -32,7 +32,7 @@ def test_nav_items_are_region_kind_by_default():
 
     # No explicit target_kind set — same "region" default sidebar.py's
     # items get, so selecting one flows through the exact same
-    # resolve_selection/region_item_for_focus machinery.
+    # resolve_selection machinery.
     assert items[0].target_kind == "region"
 
 

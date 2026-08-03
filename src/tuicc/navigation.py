@@ -6,15 +6,31 @@ knows nothing about which module an item belongs to, or what happens
 when an item is selected — it only works with positions (rect) and
 optional hotkeys.
 
-Three ways to move between items, all operating on the same NavItem list:
-  - tab order   (Tab / Shift+Tab): a fixed sequence, order configurable
-  - spatial     (arrow keys): nearest item in a direction
+Two ways to move between items, all operating on the same NavItem list:
+  - tab order   (Tab / Shift+Tab, and duplicate keys — arrows, vim
+                 hjkl): a fixed sequence, order configurable, next/prev
+                 item within a module, rolling into the next/previous
+                 module at either end (main.py composes this from
+                 next_item_in_module/prev_item_in_module +
+                 next_module_name/prev_module_name)
   - hotkey      (Ctrl+key): direct jump via a registered key
+
+There used to be a third way, spatial (arrow-key) nearest-neighbor
+search across the whole layout regardless of module boundaries — removed
+for being unpredictable in practice (nearest-on-screen isn't always
+nearest-in-context) and for needing real special-casing to work around
+overlapping floating windows in the preview. Tab-order cycling doesn't
+have that problem to begin with: it never does geometric search, so
+on-screen overlap is irrelevant to it.
 
 Wraparound (e.g. last item -> first item on Tab) is intentionally not
 handled here — it depends on which item is "current", which is state
 this module doesn't own. That belongs to whatever code drives the main
-loop and tracks the current selection.
+loop and tracks the current selection. Rolling into an adjacent module
+at either end works the same way, one level up: next_item_in_module/
+prev_item_in_module return None exactly when there's nowhere further to
+go *within* the module, which is the caller's (main.py's) signal to
+advance next_module_name/prev_module_name instead.
 """
 
 from dataclasses import dataclass
@@ -45,51 +61,6 @@ def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem
     return sorted(items, key=key)
 
 
-def _overlap_amount(a_start, a_end, b_start, b_end):
-    return max(0, min(a_end, b_end) - max(a_start, b_start))
-
-
-def nearest_in_direction(items: list[NavItem], current: NavItem, direction: str) -> NavItem | None:
-    cx0, cy0, cw, ch = current.rect
-    cx1, cy1 = cx0 + cw, cy0 + ch
-
-    candidates = []
-    for item in items:
-        if item is current:
-            continue
-
-        ix0, iy0, iw, ih = item.rect
-        ix1, iy1 = ix0 + iw, iy0 + ih
-
-        if direction == "right" and ix0 >= cx1:
-            candidates.append(item)
-        elif direction == "left" and ix1 <= cx0:
-            candidates.append(item)
-        elif direction == "down" and iy0 >= cy1:
-            candidates.append(item)
-        elif direction == "up" and iy1 <= cy0:
-            candidates.append(item)
-
-    if not candidates:
-        return None
-
-    def score(item):
-        ix0, iy0, iw, ih = item.rect
-        ix1, iy1 = ix0 + iw, iy0 + ih
-
-        if direction in ("left", "right"):
-            overlap = _overlap_amount(cy0, cy1, iy0, iy1)
-            gap = ix0 - cx1 if direction == "right" else cx0 - ix1
-        else:
-            overlap = _overlap_amount(cx0, cx1, ix0, ix1)
-            gap = iy0 - cy1 if direction == "down" else cy0 - iy1
-
-        has_overlap = overlap > 0
-        return (not has_overlap, gap)
-
-    return min(candidates, key=score)
-
-
 def hotkey_map(items: list[NavItem]) -> dict[str, NavItem]:
     result = {}
     for item in items:
@@ -99,46 +70,6 @@ def hotkey_map(items: list[NavItem]) -> dict[str, NavItem]:
             result[item.hotkey] = item
 
     return result
-def sibling_in_same_group(items: list[NavItem], current: NavItem, direction: str) -> NavItem | None:
-    """Linear left-to-right neighbor within the same target_kind — the
-    predictable fallback for items that overlap (e.g. floating windows
-    in the preview), where spatial search breaks down.
-    """
-    same_kind = [item for item in items if item.target_kind == current.target_kind]
-    same_kind_sorted = sorted(same_kind, key=lambda item: item.rect[0])
-
-    current_index = None
-    for i, item in enumerate(same_kind_sorted):
-        if item.id == current.id:
-            current_index = i
-            break
-
-    if current_index is None:
-        return None
-
-    if direction == "right":
-        next_index = current_index + 1
-    elif direction == "left":
-        next_index = current_index - 1
-    else:
-        return None
-
-    if 0 <= next_index < len(same_kind_sorted):
-        return same_kind_sorted[next_index]
-
-    return None
-
-
-def region_item_for_focus(items: list[NavItem], focus_id: str | None) -> NavItem | None:
-    """The sidebar's NavItem for the workspace currently being viewed —
-    used as the deterministic fallback when moving left out of the
-    leftmost preview window, instead of letting spatial search land on
-    an arbitrary nearby region.
-    """
-    for item in items:
-        if item.target_kind == "region" and item.focus_target == focus_id:
-            return item
-    return None
 
 
 def module_of_item(item: NavItem) -> str:
@@ -155,10 +86,24 @@ def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | No
     return None
 
 
+def last_item_in_module(items: list[NavItem], module_name: str) -> NavItem | None:
+    """Mirror of first_item_in_module — used to land on a module's LAST
+    item when rolling into it backward (Shift+Tab past the first item
+    of the module you were on), so backing up feels continuous instead
+    of snapping to the front.
+    """
+    result = None
+    for item in items:
+        if module_of_item(item) == module_name:
+            result = item
+    return result
+
+
 def next_module_name(module_names: list[str], active_module: str | None) -> str | None:
-    """Cycle to the next module name (switch_module key), wrapping
-    around. If active_module isn't in module_names (e.g. nothing
-    selected yet), starts from the first one. None only if
+    """Cycle to the next module name (the module-switch keys — Right/l
+    when vim_mode is on — and Tab's roll-into-next-module case),
+    wrapping around. If active_module isn't in module_names (e.g.
+    nothing selected yet), starts from the first one. None only if
     module_names itself is empty.
     """
     if not module_names:
@@ -171,11 +116,27 @@ def next_module_name(module_names: list[str], active_module: str | None) -> str 
     return module_names[next_index]
 
 
+def prev_module_name(module_names: list[str], active_module: str | None) -> str | None:
+    """Mirror of next_module_name, cycling backward."""
+    if not module_names:
+        return None
+
+    current_index = 0
+    if active_module in module_names:
+        current_index = module_names.index(active_module)
+    prev_index = (current_index - 1) % len(module_names)
+    return module_names[prev_index]
+
+
 def next_item_in_module(items: list[NavItem], module_name: str, selected_id: str | None) -> NavItem | None:
-    """Cycle to the next item within a single module (Tab key), wrapping
-    around. If selected_id isn't among that module's items (e.g. focus
-    just switched modules), starts from the first one. None only if
-    the module has no items.
+    """Next item within a single module (Tab key and duplicates), no
+    wrap — None when already on the module's last item. That None is
+    the caller's (main.py's) signal to roll into the next module
+    instead of cycling back to this module's own first item; module
+    boundaries are main.py's concern, not this function's. If
+    selected_id isn't among that module's items (e.g. focus just
+    switched modules), starts from the first one — same fallback this
+    had before, unrelated to the no-wrap change.
     """
     module_items = [item for item in items if module_of_item(item) == module_name]
     if not module_items:
@@ -186,8 +147,29 @@ def next_item_in_module(items: list[NavItem], module_name: str, selected_id: str
         if item.id == selected_id:
             current_index = i
             break
-    next_index = (current_index + 1) % len(module_items)
+    next_index = current_index + 1
+    if next_index >= len(module_items):
+        return None
     return module_items[next_index]
+
+
+def prev_item_in_module(items: list[NavItem], module_name: str, selected_id: str | None) -> NavItem | None:
+    """Mirror of next_item_in_module (Shift+Tab key and duplicates), no
+    wrap — None when already on the module's first item.
+    """
+    module_items = [item for item in items if module_of_item(item) == module_name]
+    if not module_items:
+        return None
+
+    current_index = 0
+    for i, item in enumerate(module_items):
+        if item.id == selected_id:
+            current_index = i
+            break
+    prev_index = current_index - 1
+    if prev_index < 0:
+        return None
+    return module_items[prev_index]
 
 
 def resolve_selection(item: NavItem, focus_id: str | None) -> tuple[str, str, str | None]:
@@ -218,28 +200,3 @@ def global_shortcut_item(global_shortcuts: dict, key: int) -> NavItem | None:
         focus_target=None,
         target_kind=shortcut["target_kind"],
     )
-
-
-def resolve_direction_move(
-    items: list[NavItem], current: NavItem, direction: str, focus_id: str | None
-) -> NavItem | None:
-    """Priority order for arrow-key movement out of a window item:
-    same-group sibling first (predictable left-right order, since
-    overlapping floating windows break spatial search), then — only
-    when moving left with no sibling — the sidebar's item for the
-    currently-focused region (deterministic instead of landing on
-    whichever region happens to be spatially nearest), then general
-    spatial search as the final fallback. Non-window items skip
-    straight to spatial search.
-    """
-    next_item = None
-    if current.target_kind == "window" and direction in ("left", "right"):
-        next_item = sibling_in_same_group(items, current, direction)
-
-    if next_item is None and current.target_kind == "window" and direction == "left":
-        next_item = region_item_for_focus(items, focus_id)
-
-    if next_item is None:
-        next_item = nearest_in_direction(items, current, direction)
-
-    return next_item
