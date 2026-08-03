@@ -99,6 +99,40 @@ class Provider(ABC):
         """
         pass
 
+    def focus_self(self) -> None:
+        """
+        Reclaim keyboard focus for tuicc's own window — called by
+        main.py's pending_moves loop right after it moves a freshly
+        spawned (launcher) or restored (sessions) window into its
+        target region.
+
+        NOT implementing this for a WM whose default behavior steals
+        focus on window-map makes tuicc's launcher (and session
+        restore) NEAR UNUSABLE there: tuicc is a floating window that
+        stays visually on top of whatever workspace it's summoned
+        into, but most WMs focus a newly-mapped window regardless of
+        stacking order — so the moment you spawn something from the
+        launcher, your next keystrokes silently go to the new window
+        sitting hidden underneath tuicc, even though tuicc still LOOKS
+        focused on screen. Without this call, that happens on literally
+        the first spawn — the launcher's whole "spawn without losing
+        your place" promise (see README) breaks immediately, it isn't
+        an edge case.
+
+        NOT abstract, default no-op: only meaningful for a WM that can
+        both (a) focus a specific window on demand and (b) actually
+        exhibits the focus-stealing behavior above in the first place
+        — same optionality as mark_self()/dismiss_self() above, but
+        unlike those, the degraded case here is severe enough to call
+        out explicitly rather than being a minor cosmetic gap.
+
+        Who needs to implement this: sway and i3 both do, by focusing
+        the same mark mark_self() already applies to this instance's
+        own window — same mark, same reasoning as dismiss_self() for
+        why matching by mark (not by some other lookup) is safe here.
+        """
+        pass
+
     def resolve_pid(self, window_id: str) -> int | None:
         """
         Best-effort process id for the window's owning process, for

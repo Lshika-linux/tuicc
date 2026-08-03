@@ -124,6 +124,9 @@ class SwayProvider(Provider):
     def dismiss_self(self) -> None:
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")
 
+    def focus_self(self) -> None:
+        self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] focus")
+
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())
 
