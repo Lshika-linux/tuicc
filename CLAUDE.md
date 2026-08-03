@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+For the project's longer-term roadmap and design philosophy — the seven-refactor plan (R1–R7), the four-category feature test, no-silent-failure, the lifecycle model — see `VISION.md`.
+
 ## Commands
 
 ```bash
