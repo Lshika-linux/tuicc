@@ -3,6 +3,7 @@ filter_apps are pure functions over strings/lists, no .desktop file
 scanning involved.
 """
 
+import tuicc.modules.launcher as launcher
 from tuicc.modules.launcher import _fuzzy_score, filter_apps, handle_typing_key, enter_typing_mode
 
 
@@ -64,7 +65,7 @@ def test_fuzzy_score_earlier_match_scores_lower():
 # ---------- filter_apps ----------
 
 def test_filter_apps_empty_query_returns_all_unfiltered():
-    apps = [("Firefox", "firefox"), ("kitty", "kitty")]
+    apps = [("Firefox", "firefox", "firefox"), ("kitty", "kitty", "kitty")]
 
     result = filter_apps("", apps)
 
@@ -72,15 +73,19 @@ def test_filter_apps_empty_query_returns_all_unfiltered():
 
 
 def test_filter_apps_filters_non_matches():
-    apps = [("Firefox", "firefox"), ("kitty", "kitty"), ("LibreWolf", "librewolf")]
+    apps = [
+        ("Firefox", "firefox", "firefox"),
+        ("kitty", "kitty", "kitty"),
+        ("LibreWolf", "librewolf", "librewolf"),
+    ]
 
     result = filter_apps("fire", apps)
 
-    assert [name for name, _cmd in result] == ["Firefox"]
+    assert [name for name, _cmd, _app_id in result] == ["Firefox"]
 
 
 def test_filter_apps_ranks_better_matches_first():
-    apps = [("LibreWolf", "librewolf"), ("Wofi", "wofi")]
+    apps = [("LibreWolf", "librewolf", "librewolf"), ("Wofi", "wofi", "wofi")]
 
     # "wo" matches both: a tight prefix match in "Wofi" (score 1) vs.
     # a wider, later span in "LibreWolf" (the W...o at positions 5-6,
@@ -91,19 +96,50 @@ def test_filter_apps_ranks_better_matches_first():
 
 
 def test_filter_apps_no_matches_returns_empty_list():
-    apps = [("Firefox", "firefox"), ("kitty", "kitty")]
+    apps = [("Firefox", "firefox", "firefox"), ("kitty", "kitty", "kitty")]
 
     result = filter_apps("zzz", apps)
 
     assert result == []
 
 
-def test_filter_apps_preserves_command_alongside_name():
-    apps = [("Firefox", "firefox --private-window")]
+def test_filter_apps_preserves_command_and_app_id_alongside_name():
+    apps = [("Firefox", "firefox --private-window", "firefox")]
 
     result = filter_apps("fire", apps)
 
-    assert result == [("Firefox", "firefox --private-window")]
+    assert result == [("Firefox", "firefox --private-window", "firefox")]
+
+
+# ---------- scan_desktop_apps: app_id extraction ----------
+
+def _write_desktop_file(d, filename, *, name, exec_cmd, wm_class=None, no_display=False):
+    lines = [f"Name={name}", f"Exec={exec_cmd}"]
+    if wm_class is not None:
+        lines.append(f"StartupWMClass={wm_class}")
+    if no_display:
+        lines.append("NoDisplay=true")
+    (d / filename).write_text("\n".join(lines) + "\n")
+
+
+def test_scan_desktop_apps_uses_startup_wm_class_when_present(tmp_path, monkeypatch):
+    _write_desktop_file(tmp_path, "firefox.desktop", name="Firefox", exec_cmd="firefox %u", wm_class="firefox")
+    monkeypatch.setattr(launcher, "DESKTOP_DIRS", [str(tmp_path)])
+    launcher._apps_cache = None
+
+    apps = launcher.scan_desktop_apps()
+
+    assert apps == [("Firefox", "firefox", "firefox")]
+
+
+def test_scan_desktop_apps_falls_back_to_filename_without_wm_class(tmp_path, monkeypatch):
+    _write_desktop_file(tmp_path, "obsidian.desktop", name="Obsidian", exec_cmd="obsidian %u")
+    monkeypatch.setattr(launcher, "DESKTOP_DIRS", [str(tmp_path)])
+    launcher._apps_cache = None
+
+    apps = launcher.scan_desktop_apps()
+
+    assert apps == [("Obsidian", "obsidian", "obsidian")]
 
 
 # ---------- handle_typing_key ----------

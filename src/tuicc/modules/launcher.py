@@ -29,10 +29,24 @@ _apps_cache = None
 
 def scan_desktop_apps():
     """Scan DESKTOP_DIRS for .desktop files, return a sorted list of
-    (name, exec_command) tuples. %-prefixed Exec= tokens (%f, %u, %U,
-    %i...) are dropped rather than interpreted, since tuicc launches
-    apps with no file/URL argument to pass them. Entries with
-    NoDisplay=true, or missing Name/Exec, are skipped.
+    (name, exec_command, app_id_hint) tuples. %-prefixed Exec= tokens
+    (%f, %u, %U, %i...) are dropped rather than interpreted, since
+    tuicc launches apps with no file/URL argument to pass them.
+    Entries with NoDisplay=true, or missing Name/Exec, are skipped.
+
+    app_id_hint is StartupWMClass= when the .desktop file sets it —
+    the freedesktop desktop-entry-spec's own documented way to say
+    "this is the app_id/WM_CLASS my windows will have" — falling back
+    to the file's own basename (minus .desktop) when it doesn't, which
+    the same spec documents as the conventional default and matches
+    most apps' actual app_id in practice. Used by main.py's launcher-
+    spawn handling as a fallback match signal (pending_moves.py's
+    app_id tier) for apps whose spawned process's pid never matches
+    any window's pid — most commonly a single-instance app (Firefox,
+    Obsidian, many Electron apps) that just asks an already-running
+    instance to open a new window and exits immediately itself, so the
+    window it opens belongs to a completely different, pre-existing
+    pid than the one tuicc's spawn returned.
     """
     apps = []
     seen = set()
@@ -50,6 +64,7 @@ def scan_desktop_apps():
             name = None
             exec_cmd = None
             no_display = False
+            wm_class = None
             try:
                 with open(os.path.join(d, fname), errors="ignore") as f:
                     for line in f:
@@ -60,11 +75,14 @@ def scan_desktop_apps():
                             exec_cmd = line[5:]
                         elif line.startswith("NoDisplay=true"):
                             no_display = True
+                        elif line.startswith("StartupWMClass=") and wm_class is None:
+                            wm_class = line[len("StartupWMClass="):]
             except OSError:
                 continue
             if name and exec_cmd and not no_display:
                 clean = " ".join(p for p in exec_cmd.split() if not p.startswith("%"))
-                apps.append((name, clean))
+                app_id_hint = wm_class or fname[:-len(".desktop")]
+                apps.append((name, clean, app_id_hint))
     apps.sort(key=lambda a: a[0].lower())
     return apps
 
@@ -102,27 +120,29 @@ def filter_apps(query, apps):
     if not query:
         return apps
     scored = []
-    for name, cmd in apps:
+    for name, cmd, app_id in apps:
         score = _fuzzy_score(query, name)
         if score is not None:
-            scored.append((score, name, cmd))
+            scored.append((score, name, cmd, app_id))
     scored.sort(key=lambda t: (t[0], t[1].lower()))
-    return [(name, cmd) for _score, name, cmd in scored]
+    return [(name, cmd, app_id) for _score, name, cmd, app_id in scored]
 
 
 def resolve_selected(query, selected_index):
-    """The exec command for the currently selected search result, or
-    None if there are no results. Spawning it and getting it onto the
-    right workspace is main.py's job — it needs to snapshot window ids
-    before launching, which is loop-level state this module doesn't
-    have.
+    """The (exec_command, app_id_hint) for the currently selected search
+    result, or None if there are no results. Spawning it and getting it
+    onto the right workspace is main.py's job — it needs to snapshot
+    window ids before launching, which is loop-level state this module
+    deliberately doesn't have. app_id_hint (see scan_desktop_apps) lets
+    main.py's pending_moves matching fall back to an app_id match if
+    the spawned process's own pid never shows up on any window.
     """
     results = filter_apps(query, _get_apps())
     if not results:
         return None
     index = min(selected_index, len(results) - 1)
-    _name, cmd = results[index]
-    return cmd
+    _name, cmd, app_id = results[index]
+    return cmd, app_id
 
 
 def handle_typing_key(key, cfg, search_query, search_selected_index):
@@ -234,7 +254,7 @@ def draw(stdscr, box, ctx, module_name):
 
     cx = x + 2
     for i in shown:
-        name, _cmd = results[i]
+        name, _cmd, _app_id = results[i]
         letter = (name.strip()[:1] or "?").upper()
         label = name[:14]
         is_sel = (i == sel)
