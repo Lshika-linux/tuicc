@@ -59,15 +59,18 @@ confirm_no = "n"
 # press this to start typing into the launcher instead.
 insert = "i"
 # F1: opens the help menu (what tuicc is, a resize-mode reference, a
-# keybinds reference, and a live color editor). F2: enters resize mode
-# on the active module — arrows resize (w/h) or move (x/y), toggled by
-# move_toggle; Del removes the box (asks y/n first); confirm keeps
-# changes in memory; Escape discards them (or removes a just-spawned
-# box entirely). F3: writes the whole in-memory layout as a new preset
-# AND switches to it. F4: cycles through every preset that exists,
-# switching to each live. F6: pick a module not currently on screen
-# and spawn it (centered, ready to move) — also works mid-resize, same
-# as F1/F3/F4, by committing the in-progress change first.
+# keybinds reference, and a live color editor). F2: opens a persistent
+# edit session — arrows/Tab/switch_module pick a module, confirm
+# enters resizing/moving it (arrows resize w/h or move x/y, toggled by
+# move_toggle; confirm keeps the change and returns to picking another
+# module; Escape reverts it); Del removes a module (asks y/n first,
+# works whether or not one is being edited); Escape while picking a
+# module leaves the whole session. F3: overwrites the active preset
+# file in place with the current layout and leaves the session. F4:
+# cycles through every preset that exists, switching to each live, and
+# leaves the session. F6: pick a module not currently on screen and
+# spawn it (centered, ready to move) — works standalone or from inside
+# the session, dropping straight into moving the new module.
 help = "F1"
 resize = "F2"
 save_layout = "F3"

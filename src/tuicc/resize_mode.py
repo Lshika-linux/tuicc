@@ -20,6 +20,7 @@ call them.
 from dataclasses import dataclass, field
 
 from tuicc.layout import ModuleBox
+from tuicc.render_utils import draw_box_outline
 
 STEP_CELLS = 1
 MIN_CELLS = 3
@@ -81,7 +82,15 @@ def cancel_resize(box: ModuleBox, snapshot: dict) -> None:
 
 @dataclass
 class ResizeState:
+    """active=True, editing=False: browsing — the session is open, no
+    box is being resized/moved right now; normal navigation (arrows,
+    Tab, switch_module) picks which module active_module refers to,
+    same as outside the session entirely. active=True, editing=True:
+    a specific box (box/snapshot/dimension/is_new_box populated) is
+    being resized/moved, same behavior this whole module always had.
+    """
     active: bool = False
+    editing: bool = False
     box: ModuleBox | None = None
     snapshot: dict | None = None
     dimension: str = "size"
@@ -89,28 +98,13 @@ class ResizeState:
     confirm_delete: bool = False
 
 
-def start(state: ResizeState, box: ModuleBox, is_new: bool = False) -> None:
-    """Begins a resize-mode session on box. is_new marks a box the
-    spawn picker just created (no "before" state to revert to — see
-    escape() below) and starts it in move dimension, so a freshly
-    spawned box is immediately positionable rather than resizable.
+def enter_edit_mode(state: ResizeState) -> None:
+    """F2 from normal navigation — opens the session at the browsing
+    level. Doesn't touch any box; confirm (via enter_box_editing)
+    drills into whichever one is active_module at the time.
     """
-    state.box = box
-    state.snapshot = enter_resize(box)
-    state.dimension = "move" if is_new else "size"
-    state.is_new_box = is_new
-    state.confirm_delete = False
     state.active = True
-
-
-def commit(state: ResizeState) -> None:
-    """Ends the session, keeping the box's current state (no revert) —
-    same effect as pressing Enter. Shared "wrap up before doing
-    something else" step so F1/F3/F4/F6 can interrupt an in-progress
-    resize (main.py calls this before acting on any of them) instead
-    of being swallowed by the resize hijack.
-    """
-    state.active = False
+    state.editing = False
     state.box = None
     state.snapshot = None
     state.dimension = "size"
@@ -118,16 +112,99 @@ def commit(state: ResizeState) -> None:
     state.confirm_delete = False
 
 
-def escape(state: ResizeState, layout_boxes: list) -> None:
-    """Ends the session, discarding the change — reverts the box via
-    cancel_resize, or, if is_new_box, removes it from layout_boxes
-    entirely (there's no "before" a just-spawned box existed).
+def exit_edit_mode(state: ResizeState) -> None:
+    """The only function that fully leaves the session — Escape or F3
+    at the browsing level. (Escape/confirm at the editing level return
+    to browsing instead — see commit_box_editing/escape_box_editing.)
+    """
+    state.active = False
+    state.editing = False
+    state.box = None
+    state.snapshot = None
+    state.dimension = "size"
+    state.is_new_box = False
+    state.confirm_delete = False
+
+
+def enter_box_editing(state: ResizeState, box: ModuleBox, is_new: bool = False) -> None:
+    """Drills into resizing/moving box — from browsing (confirm on the
+    active module), or standalone (spawn_box/resize both still work
+    directly from full normal navigation with no F2 first, same as
+    before this module had a browsing level at all — hence force-
+    setting active=True here rather than assuming it's already True).
+    is_new marks a box the spawn picker just created (no "before"
+    state to revert to — see escape_box_editing below) and starts it
+    in move dimension, so a freshly spawned box is immediately
+    positionable rather than resizable.
+    """
+    state.active = True
+    state.editing = True
+    state.box = box
+    state.snapshot = enter_resize(box)
+    state.dimension = "move" if is_new else "size"
+    state.is_new_box = is_new
+    state.confirm_delete = False
+
+
+def commit_box_editing(state: ResizeState) -> None:
+    """Ends the current box's edit, keeping its state (no revert) —
+    same effect as pressing Enter — and returns to browsing, not out
+    of the session (active stays True). Also used as the shared "wrap
+    up before doing something else" step so F1/F3/F4/F6 can interrupt
+    an in-progress edit instead of being swallowed by it — F3/F4 go on
+    to call exit_edit_mode themselves afterward, since saving/cycling
+    ends the whole session, not just the current box's edit.
+    """
+    state.editing = False
+    state.box = None
+    state.snapshot = None
+    state.dimension = "size"
+    state.is_new_box = False
+    state.confirm_delete = False
+
+
+def escape_box_editing(state: ResizeState, layout_boxes: list) -> None:
+    """Discards the current box's edit — reverts via cancel_resize, or,
+    if is_new_box, removes it from layout_boxes entirely (there's no
+    "before" a just-spawned box existed) — then returns to browsing,
+    same as commit_box_editing.
     """
     if state.is_new_box:
         layout_boxes.remove(state.box)
     else:
         cancel_resize(state.box, state.snapshot)
-    commit(state)
+    commit_box_editing(state)
+
+
+def request_delete(state: ResizeState, box: ModuleBox) -> None:
+    """Starts a y/n delete confirmation for box — works from either
+    level: at the editing level box is already state.box; at the
+    browsing level the caller looks it up by active_module first.
+    """
+    state.box = box
+    state.confirm_delete = True
+
+
+def confirm_delete_yes(state: ResizeState, layout_boxes: list) -> None:
+    """Removes state.box and returns to browsing — whether the delete
+    was requested from browsing or from mid-edit, either way there's
+    no longer a box to keep editing.
+    """
+    layout_boxes.remove(state.box)
+    state.editing = False
+    state.box = None
+    state.snapshot = None
+    state.dimension = "size"
+    state.is_new_box = False
+    state.confirm_delete = False
+
+
+def confirm_delete_no(state: ResizeState) -> None:
+    """Cancels the pending delete, resuming whichever level asked for
+    it (editing's box/snapshot are untouched if that's where this
+    came from).
+    """
+    state.confirm_delete = False
 
 
 def apply_direction(state: ResizeState, direction: str,
@@ -154,12 +231,32 @@ def toggle_dimension(state: ResizeState) -> None:
 def hint_text(state: ResizeState, active_module: str) -> str:
     if state.confirm_delete:
         return f"Delete {active_module}? y/n"
+    if not state.editing:
+        return (
+            f"EDIT MODE — {active_module}  Enter edit this module  Del delete it  |  "
+            f"switch_module/Tab/arrows pick another  |  F1 help  F3 save+exit  "
+            f"F4 cycle preset  F6 spawn  Esc exit"
+        )
     action = "resize" if state.dimension == "size" else "move"
     return (
         f"[{state.dimension.upper()}] {active_module} — ←→↑↓ {action}  "
-        f"M switch  Del delete  Enter done  Esc cancel  |  "
-        f"F1 help  F3 save preset  F4 cycle preset  F6 spawn"
+        f"M switch  Del delete  Enter done (back to browsing)  Esc cancel  |  "
+        f"F1 help  F3 save+exit  F4 cycle preset  F6 spawn"
     )
+
+
+def draw_editing_highlight(stdscr, box, theme_pairs) -> None:
+    """Redraws the box currently being edited with an urgent-colored
+    outline, on top of whatever draw_all() already painted it with
+    (its module's own border_selected logic, unchanged) — a post-frame
+    overlay, same pattern render_utils.draw_status_line already is,
+    not a RenderContext field or a per-module draw() change. Only
+    meaningful while editing (a specific box, not just browsing).
+    draw_box_outline already guards its own curses.error, no need to
+    wrap it again here.
+    """
+    x, y, w, h = box
+    draw_box_outline(stdscr, y, x, h, w, theme_pairs.get("urgent", 0))
 
 
 @dataclass

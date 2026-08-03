@@ -12,9 +12,14 @@ from tuicc.resize_mode import (
     move_step,
     cancel_resize,
     ResizeState,
-    start,
-    commit,
-    escape,
+    enter_edit_mode,
+    exit_edit_mode,
+    enter_box_editing,
+    commit_box_editing,
+    escape_box_editing,
+    request_delete,
+    confirm_delete_yes,
+    confirm_delete_no,
     apply_direction,
     toggle_dimension,
     hint_text,
@@ -142,78 +147,151 @@ def test_move_step_clamps_at_terminal_edge():
     assert box.x == pytest.approx(0.74)
 
 
-# ---------- ResizeState: start / commit / escape ----------
+# ---------- ResizeState: enter_edit_mode / exit_edit_mode (browsing) ----------
 
-def test_start_snapshots_and_activates():
+def test_enter_edit_mode_opens_browsing_with_no_box():
+    state = ResizeState()
+
+    enter_edit_mode(state)
+
+    assert state.active is True
+    assert state.editing is False
+    assert state.box is None
+
+
+def test_exit_edit_mode_fully_resets_from_either_level():
+    box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
+    state = ResizeState()
+    enter_box_editing(state, box)
+
+    exit_edit_mode(state)
+
+    assert state.active is False
+    assert state.editing is False
+    assert state.box is None
+    assert state.snapshot is None
+
+
+# ---------- ResizeState: enter_box_editing / commit_box_editing / escape_box_editing ----------
+
+def test_enter_box_editing_snapshots_and_activates():
     box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
     state = ResizeState()
 
-    start(state, box)
+    enter_box_editing(state, box)
 
     assert state.active is True
+    assert state.editing is True
     assert state.box is box
     assert state.snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6}
     assert state.dimension == "size"
     assert state.is_new_box is False
 
 
-def test_start_with_is_new_starts_in_move_dimension():
+def test_enter_box_editing_works_standalone_without_prior_browsing():
+    # spawn_box/resize both still work directly from full normal
+    # navigation, with no enter_edit_mode first.
     box = ModuleBox(name="clock", x=0.4, y=0.4, w=0.2, h=0.2)
     state = ResizeState()
 
-    start(state, box, is_new=True)
+    enter_box_editing(state, box, is_new=True)
 
+    assert state.active is True
     assert state.dimension == "move"
     assert state.is_new_box is True
 
 
-def test_commit_resets_state_but_keeps_box_changes():
+def test_commit_box_editing_returns_to_browsing_and_keeps_box_changes():
     box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
     state = ResizeState()
-    start(state, box)
+    enter_box_editing(state, box)
     box.w = 0.5  # a change made during the session
 
-    commit(state)
+    commit_box_editing(state)
 
-    assert state.active is False
+    assert state.active is True  # still in the session, just browsing
+    assert state.editing is False
     assert state.box is None
     assert state.snapshot is None
     assert box.w == 0.5  # not reverted
 
 
-def test_escape_reverts_an_existing_box():
+def test_escape_box_editing_reverts_an_existing_box_and_returns_to_browsing():
     box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
     state = ResizeState()
-    start(state, box)
+    enter_box_editing(state, box)
     box.w = 0.5
 
-    escape(state, layout_boxes=[box])
+    escape_box_editing(state, layout_boxes=[box])
 
     assert box.w == 0.26
-    assert state.active is False
+    assert state.active is True
+    assert state.editing is False
 
 
-def test_escape_removes_a_just_spawned_box():
+def test_escape_box_editing_removes_a_just_spawned_box():
     box = ModuleBox(name="clock", x=0.4, y=0.4, w=0.2, h=0.2)
     state = ResizeState()
-    start(state, box, is_new=True)
+    enter_box_editing(state, box, is_new=True)
     layout_boxes = [box]
 
-    escape(state, layout_boxes)
+    escape_box_editing(state, layout_boxes)
 
     assert box not in layout_boxes
-    assert state.active is False
+    assert state.active is True
+    assert state.editing is False
 
 
-def test_escape_after_confirm_delete_pending_still_resets_it():
+def test_escape_box_editing_after_confirm_delete_pending_still_resets_it():
     box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
     state = ResizeState()
-    start(state, box)
+    enter_box_editing(state, box)
     state.confirm_delete = True
 
-    escape(state, layout_boxes=[box])
+    escape_box_editing(state, layout_boxes=[box])
 
     assert state.confirm_delete is False
+
+
+# ---------- ResizeState: request_delete / confirm_delete_yes / confirm_delete_no ----------
+
+def test_request_delete_from_browsing_sets_box_and_pending():
+    box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
+    state = ResizeState()
+    enter_edit_mode(state)
+
+    request_delete(state, box)
+
+    assert state.box is box
+    assert state.confirm_delete is True
+
+
+def test_confirm_delete_yes_removes_box_and_returns_to_browsing():
+    box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
+    state = ResizeState()
+    enter_box_editing(state, box)
+    request_delete(state, box)
+    layout_boxes = [box]
+
+    confirm_delete_yes(state, layout_boxes)
+
+    assert box not in layout_boxes
+    assert state.editing is False
+    assert state.box is None
+    assert state.confirm_delete is False
+
+
+def test_confirm_delete_no_cancels_pending_and_resumes_editing():
+    box = ModuleBox(name="sidebar", x=0.1, y=0.2, w=0.26, h=0.6)
+    state = ResizeState()
+    enter_box_editing(state, box)
+    request_delete(state, box)
+
+    confirm_delete_no(state)
+
+    assert state.confirm_delete is False
+    assert state.editing is True  # resumed, not reset
+    assert state.box is box
 
 
 # ---------- ResizeState: apply_direction / toggle_dimension ----------
@@ -221,7 +299,7 @@ def test_escape_after_confirm_delete_pending_still_resets_it():
 def test_apply_direction_size_dimension_resizes():
     box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
     state = ResizeState()
-    start(state, box)
+    enter_box_editing(state, box)
 
     apply_direction(state, "right", term_width=100, term_height=40, x_cells=0, y_cells=0, w_cells=50, h_cells=20)
 
@@ -232,7 +310,7 @@ def test_apply_direction_size_dimension_resizes():
 def test_apply_direction_move_dimension_moves():
     box = ModuleBox(name="sidebar", x=0.2, y=0.0, w=0.26, h=0.5)
     state = ResizeState()
-    start(state, box)
+    enter_box_editing(state, box)
     state.dimension = "move"
 
     apply_direction(state, "right", term_width=100, term_height=40, x_cells=20, y_cells=0, w_cells=26, h_cells=20)
@@ -259,8 +337,17 @@ def test_hint_text_shows_confirm_delete_prompt_when_pending():
     assert hint_text(state, "sidebar") == "Delete sidebar? y/n"
 
 
-def test_hint_text_shows_dimension_and_module():
-    state = ResizeState(dimension="size")
+def test_hint_text_shows_browsing_hint_when_not_editing():
+    state = ResizeState(editing=False)
+
+    text = hint_text(state, "sidebar")
+
+    assert "sidebar" in text
+    assert "EDIT MODE" in text
+
+
+def test_hint_text_shows_dimension_and_module_when_editing():
+    state = ResizeState(editing=True, dimension="size")
     assert "SIZE" in hint_text(state, "sidebar")
     assert "sidebar" in hint_text(state, "sidebar")
 
