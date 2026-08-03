@@ -558,7 +558,18 @@ def main(stdscr):
                     do_enter_help()
                 continue
 
-            module_names = [box.name for box in cfg.layout.boxes]
+            # Sorted by position, not declaration order in the preset
+            # file — module-to-module movement (Left/Right, and Tab/
+            # Shift+Tab rolling past a module's last/first item) should
+            # feel spatially sensible even though it's not spatial
+            # search anymore. Same sort key tab_order() already uses
+            # for items within a module, just applied to each module's
+            # own box instead of a NavItem's rect.
+            module_position_key = (
+                (lambda box: (box.y, box.x)) if cfg.tab_order == "rows_first"
+                else (lambda box: (box.x, box.y))
+            )
+            module_names = [box.name for box in sorted(cfg.layout.boxes, key=module_position_key)]
 
             if key == cfg.keybinds["confirm"] and selected_item is not None:
                 handler = ACTION_HANDLERS.get(selected_item.target_kind)
