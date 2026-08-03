@@ -152,6 +152,13 @@ for_window [app_id="tuicc_scratch"] move scratchpad
 bindsym $mod+grave [app_id="tuicc_scratch"] scratchpad show
 ```
 
+Want a single key that launches tuicc if it isn't running, dismisses
+it if it's focused, and brings it to focus otherwise (whether that
+means un-hiding it from the scratchpad or just switching to it) —
+one keybind instead of three? See
+[`contrib/sway/tuicc_toggle.py`](contrib/sway/tuicc_toggle.py) — bind
+it in place of the `exec kitty ...` launch command above.
+
 **i3 — scratchpad:** the same idea, but i3's criteria use `class`, not
 `app_id` (i3 is X11-only, and kitty's `--app-id` flag sets the X11
 `WM_CLASS` class from the same invocation):
