@@ -11,6 +11,7 @@ from tuicc.config import (
     ensure_all_packaged_presets_exist,
     next_free_preset_number,
     save_new_preset,
+    save_layout_to_preset,
     build_layout_from_preset,
     available_preset_numbers,
     set_active_preset,
@@ -176,6 +177,40 @@ def test_save_new_preset_never_overwrites_an_existing_file(tmp_path, monkeypatch
     assert preset_number == 2
     assert (user_dir / "1.toml").read_text() == "# hand-authored, must survive\n"
     assert (user_dir / "2.toml").exists()
+
+
+# ---------- save_layout_to_preset ----------
+
+def test_save_layout_to_preset_overwrites_the_given_number(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "3.toml").write_text("# old contents\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    save_layout_to_preset(_sample_layout(), 3)
+
+    loaded = build_layout_from_preset(3)
+    by_name = {box.name: box for box in loaded.boxes}
+    assert by_name["sidebar"].w == 0.26
+    assert by_name["power_menu"].h == 0.1
+    assert not (user_dir / "4.toml").exists()  # no new number minted
+
+
+def test_save_layout_to_preset_creates_the_file_if_missing(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    save_layout_to_preset(_sample_layout(), 5)
+
+    assert (user_dir / "5.toml").exists()
 
 
 # ---------- available_preset_numbers ----------

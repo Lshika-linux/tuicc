@@ -162,10 +162,10 @@ def next_free_preset_number() -> int:
 def save_new_preset(layout: Layout) -> int:
     """Writes layout as a brand-new numbered preset file under
     USER_PRESETS_DIR, atomically (same reasoning as session.py's
-    save_session). Never overwrites an existing preset — resize mode
-    always creates a new number rather than regenerating one in place,
-    since tomli_w's round-trip would silently strip any hand-written
-    comments (like preset 1.toml's) a regenerated file can't get back.
+    save_session). Never touches an existing preset number — picks the
+    next free one via next_free_preset_number(), since tomli_w's
+    round-trip would silently strip any hand-written comments (like
+    preset 1.toml's) a regenerated file can't get back.
 
     Returns the preset number used. This never touches config.toml
     itself, same "never risk corrupting hand-written config" principle
@@ -175,6 +175,22 @@ def save_new_preset(layout: Layout) -> int:
     over to a number this wrote.
     """
     preset_number = next_free_preset_number()
+    save_layout_to_preset(layout, preset_number)
+    return preset_number
+
+
+def save_layout_to_preset(layout: Layout, preset_number: int) -> None:
+    """Overwrites preset_number's user-dir file in place with layout —
+    unlike save_new_preset, reuses the existing number instead of
+    minting a new one. Used by resize mode's F3 to update the preset
+    you're actively iterating on, so repeated saves during one editing
+    session don't pile up a new numbered file each time. Strips any
+    hand-written comments the file had (tomli_w round-trip, same
+    one-time cost save_new_preset's docstring documents for a
+    brand-new file) — accepted because this only fires on a preset the
+    user is actively reshaping via resize mode, not a hands-off
+    reference file.
+    """
     data = boxes_to_toml_data(layout.boxes)
 
     USER_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -183,8 +199,6 @@ def save_new_preset(layout: Layout) -> int:
     with open(tmp_path, "wb") as f:
         tomli_w.dump(data, f)
     tmp_path.replace(path)
-
-    return preset_number
 
 
 def available_preset_numbers() -> list[int]:
