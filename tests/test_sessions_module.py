@@ -117,7 +117,7 @@ def test_handle_slot_load_target_occupied_asks_for_confirmation(tmp_path, monkey
     assert ctx.restore_queue == []
     assert should_exit is False
     assert pending["confirm_text"] == "Load? (overwrites your session)"
-    assert pending["exit_after_confirm"] is False
+    assert pending["dismiss_after_confirm"] is False
     assert pending["kill_regions"] == ["5"]
     assert len(pending["restore_entries"]) == 1
 

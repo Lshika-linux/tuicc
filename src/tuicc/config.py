@@ -54,6 +54,8 @@ class Config:
     tab_order: str
     provider_name: str
     total_workspaces: int
+    self_app_id: str | None
+    return_to_origin: bool
     theme: dict
     keybinds: dict
     quick_actions: list
@@ -324,6 +326,8 @@ def load_config() -> Config:
     tab_order_mode = user_data["navigation"]["tab_order"]
     provider_name = user_data["wm"]["provider"]
     total_workspaces = user_data["wm"]["total_workspaces"]
+    self_app_id = user_data["wm"].get("self_app_id") or None
+    return_to_origin = user_data["wm"].get("return_to_origin", False)
 
     theme = {}
     for role, value in user_data["theme"].items():
@@ -341,6 +345,11 @@ def load_config() -> Config:
             "command": action_data["command"],
             "confirm": action_data.get("confirm", False),
             "shell_true": action_data.get("shell_true", False),
+            # Whether this action dismisses tuicc after it runs (or, if
+            # confirm=true, after the confirmation is answered yes) —
+            # default True matches every quick action's behavior before
+            # this field existed (mirrors power_menu, always dismiss).
+            "exit_after": action_data.get("exit_after", True),
         })
 
     power_menu_actions = []
@@ -392,6 +401,8 @@ def load_config() -> Config:
         tab_order=tab_order_mode,
         provider_name=provider_name,
         total_workspaces=total_workspaces,
+        self_app_id=self_app_id,
+        return_to_origin=return_to_origin,
         theme=theme,
         keybinds=keybinds,
         quick_actions=quick_actions,

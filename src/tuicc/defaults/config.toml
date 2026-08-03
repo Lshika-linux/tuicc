@@ -25,6 +25,22 @@ provider = "sway"
 # I do not want. You're ofc free to alter the code.
 
 total_workspaces = 10
+# Optional. If your launch command gives tuicc's window a known,
+# stable app_id (e.g. `kitty --app-id tuicc_scratch ...` — see
+# README's "Summoning tuicc" section), set it here so tuicc can mark
+# its own window by criteria instead of "whatever's focused when
+# tuicc starts", which removes a race if you ever launch several
+# instances back-to-back. Leave "" (the default) for a plain
+# terminal launch with no known app_id — tuicc falls back to marking
+# whatever's focused at startup, same as before.
+self_app_id = ""
+# When Escape dismisses tuicc from the top level (no menu/mode open),
+# also return WM focus to wherever it was right before you summoned
+# tuicc. Off by default: a scratchpad summon (sway/i3, see README)
+# already restores prior focus itself when hidden, so this is mainly
+# for WMs with no scratchpad-equivalent (e.g. niri's dedicated-
+# workspace style).
+return_to_origin = false
 
 [theme]
 # Each value accepts: "inherit" (use the terminal's own color),
@@ -87,6 +103,9 @@ delete_box = "Delete"
 # shell_true = true only if command needs real shell syntax (pipes,
 # ;, &&, $VARS) — otherwise it runs as plain arguments, no shell
 # involved. Off by default: safer, and most commands don't need it.
+# exit_after = false to keep tuicc open after this action runs (or
+# after its confirmation is answered) — defaults to true (dismiss),
+# meant for one-off, non-destructive actions like restarting a bar.
 label = "== LOCK =="
 icon = ""
 command = "swaylock"

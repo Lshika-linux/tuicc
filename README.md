@@ -30,11 +30,10 @@ This is a from-scratch rebuild, actively in progress. Right now it can:
 
 Not yet built: scrollable-WM support (`scroll`/niri, see below), a
 `quick_actions` module exists in the code but isn't wired into the
-default layout yet (reserved for something more open-ended later), and
-there's no way to summon tuicc itself with a keybind — that part's on
-your WM's own config for now (bind a key to launch `tuicc` in a
-terminal, or a scratchpad terminal, however you'd normally do it). See
-the architecture section below for where this is headed.
+default layout yet (reserved for something more open-ended later). See
+"Summoning tuicc" below for how to wire up a keybind on sway/i3,
+Hyprland, or niri, and the architecture section below for where this
+is headed.
 
 ## Try it
 
@@ -51,14 +50,20 @@ Shift+Tab cycles through modules; Tab cycles through items within the
 active module. Arrow keys move to the nearest navigable item in that
 direction, regardless of which module it belongs to. Enter runs the
 selected item — switches to a workspace, focuses a window,
-connects/disconnects wifi or bluetooth, or runs a launcher/power-menu
-entry — and exits tuicc, except for the launcher and connectivity
-(both stay open, so you keep working), or asks for confirmation first
-on destructive power-menu actions. Typing anywhere opens the launcher.
-There's no dedicated quit key yet — `Ctrl+C` (an ordinary terminal
-interrupt, not a tuicc keybind) is the only way out for now. Requires
-a running sway or i3 session; set `provider = "sway"` or `provider =
-"i3"` under `[wm]` in your config (see below).
+connects/disconnects wifi or bluetooth, runs a launcher/power-menu
+entry, or (for destructive power actions) asks for confirmation first
+— and **dismisses** tuicc (hides its window, doesn't end the process),
+except for the launcher and connectivity, which stay open so you keep
+working. Escape does the same at the top level (no menu/mode open) —
+same as any other dismiss. Typing anywhere opens the launcher.
+
+tuicc is meant to run as one long-lived process your WM shows and
+hides, not something you relaunch each time — see "Summoning tuicc"
+below. Config changes apply after a restart: summon, `Ctrl+C`,
+relaunch — that's the only way to actually end the process; there's
+deliberately no quit menu entry or quit keybind. Requires a running
+sway or i3 session; set `provider = "sway"` or `provider = "i3"` under
+`[wm]` in your config (see below).
 
 ## Testing
 
@@ -120,6 +125,74 @@ syntax (pipes, `;`, `&&`, `$VARS`).
 about color resolution is packaged or hidden separately. (And yeah,
 `config.toml` is a beefy boi by the time all the sections are in
 there — that's the tradeoff for zero hidden defaults.)
+
+## Summoning tuicc
+
+tuicc is meant to run as a single, long-lived process, toggled into and
+out of view by your WM — not relaunched each time. Launch it once (by
+hand, or from your WM's startup config), then bind a key that shows/
+hides its window; dismissing (Enter on most actions, or Escape at the
+top level) hides it instantly with a warm process and warm caches,
+ready for the next summon. The only way to actually end the process is
+`Ctrl+C`.
+
+Pick the one path below that matches your WM — each launches tuicc's
+window carrying a recognizable identity (`tuicc_scratch`) so the WM
+config can target it specifically, and so setting `[wm] self_app_id =
+"tuicc_scratch"` in tuicc's own config.toml lets it mark (and later
+dismiss) its own window unambiguously, no focus-timing assumptions
+needed (see `CLAUDE.md` if you're curious why that matters).
+
+**sway (and `scroll`) — scratchpad:**
+
+```
+# ~/.config/sway/config
+exec kitty --app-id tuicc_scratch -e python /path/to/tuicc/main.py
+for_window [app_id="tuicc_scratch"] move scratchpad
+bindsym $mod+grave [app_id="tuicc_scratch"] scratchpad show
+```
+
+**i3 — scratchpad:** the same idea, but i3's criteria use `class`, not
+`app_id` (i3 is X11-only, and kitty's `--app-id` flag sets the X11
+`WM_CLASS` class from the same invocation):
+
+```
+# ~/.config/i3/config
+exec --no-startup-id kitty --app-id tuicc_scratch -e python /path/to/tuicc/main.py
+for_window [class="tuicc_scratch"] move scratchpad
+bindsym $mod+grave [class="tuicc_scratch"] scratchpad show
+```
+
+**Hyprland — special workspace:**
+
+```
+# ~/.config/hypr/hyprland.conf
+exec-once = kitty --app-id tuicc_scratch -e python /path/to/tuicc/main.py
+windowrulev2 = workspace special:tuicc silent, class:^(tuicc_scratch)$
+bind = $mainMod, GRAVE, togglespecialworkspace, tuicc
+```
+
+**niri — dedicated workspace** (niri has no scratchpad-equivalent, so
+there's no built-in toggle — set `[wm] return_to_origin = true` in
+tuicc's own config so Escape returns you to whatever workspace you
+summoned from):
+
+```
+// ~/.config/niri/config.kdl
+workspace "tuicc"
+spawn-at-startup "python" "/path/to/tuicc/main.py"
+
+binds {
+    Mod+Grave { focus-workspace "tuicc"; }
+}
+```
+
+All four still need a working `provider = "sway"` / `provider = "i3"`
+under `[wm]` in tuicc's own config, matching whichever IPC your
+compositor speaks — Hyprland/niri need their own provider (not built
+yet, see the architecture section below) to report live state; the
+WM-side toggle keybinds above document the summon shape ahead of that
+provider landing.
 
 ## Architecture
 

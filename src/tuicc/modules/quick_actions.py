@@ -86,9 +86,11 @@ def handle(ctx, item, cfg):
         # A copy, not the config dict itself — "module" tags which
         # module's draw() should show this, config.quick_actions is
         # shared, shouldn't be mutated by a single confirm.
-        # exit_after_confirm=True: today's actual quick_actions entries
-        # mirror power_menu's (lock/logout/reboot/shutdown) — revisit
-        # if a future non-exit-worthy quick action needs this False.
-        return False, {**action, "module": "quick_actions", "exit_after_confirm": True}
+        # exit_after (from TOML, default True) replaces the old
+        # hardcoded True — most quick actions still behave like
+        # before (mirrors power_menu's always-dismiss lock/logout/
+        # reboot/shutdown), but a non-destructive one-off (e.g.
+        # "restart polybar") can opt out and stay open afterward.
+        return False, {**action, "module": "quick_actions", "dismiss_after_confirm": action.get("exit_after", True)}
     spawn_detached(action["command"], action["shell_true"])
-    return True, None
+    return action.get("exit_after", True), None

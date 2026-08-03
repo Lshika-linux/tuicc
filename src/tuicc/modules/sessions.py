@@ -151,7 +151,7 @@ def handle_slot(ctx, item, cfg):
                 # "this is the desktop now", not "add these on top".
                 "kill_regions": list(overlap),
                 "confirm_text": "Load? (overwrites your session)",
-                "exit_after_confirm": False,
+                "dismiss_after_confirm": False,
                 "module": "sessions",
             }
 
@@ -165,7 +165,7 @@ def handle_slot(ctx, item, cfg):
             "command": f"rm {shlex.quote(str(path))}",
             "shell_true": False,
             "confirm_text": f"Delete session {slot}?",
-            "exit_after_confirm": False,
+            "dismiss_after_confirm": False,
             "module": "sessions",
         }
 

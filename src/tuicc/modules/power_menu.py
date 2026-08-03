@@ -96,9 +96,12 @@ def handle(ctx, item, cfg):
         # A copy, not the config dict itself — "module" tags which
         # module's draw() should show this, config.power_menu_actions
         # is shared, shouldn't be mutated by a single confirm.
-        # exit_after_confirm=True: these are all destructive/session-
-        # ending actions (shutdown/reboot/logout), tuicc has nothing
-        # left to do once one's confirmed.
-        return False, {**action, "module": "power_menu", "exit_after_confirm": True}
+        # dismiss_after_confirm=True, always: these are all destructive/
+        # session-ending actions (shutdown/reboot/logout) or lock —
+        # tuicc dismisses once confirmed either way; this no longer
+        # means the process exits, only that it hides (see VISION.md's
+        # lifecycle model — logout/reboot/shutdown end the session/
+        # machine regardless of whether tuicc raced to exit itself).
+        return False, {**action, "module": "power_menu", "dismiss_after_confirm": True}
     spawn_detached(action["command"], action["shell_true"])
     return True, None

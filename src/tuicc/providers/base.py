@@ -43,14 +43,24 @@ class Provider(ABC):
         """
         raise NotImplementedError
 
-    def mark_self(self) -> None:
+    def mark_self(self, app_id: str | None = None) -> None:
         """
         We need to hide tuicc itself from the preview and sidebar..
 
-        Mark the currently-focused window (called once at startup,
-        when tuicc's own window is assumed to be the freshly-focused
-        one) so get_state() can exclude it from the Windows it reports
-        downstream — tuicc never lists itself in its own preview/sidebar.
+        Mark tuicc's own window (called once at startup) so get_state()
+        can exclude it from the Windows it reports downstream — tuicc
+        never lists itself in its own preview/sidebar.
+
+        app_id, if given (from `[wm] self_app_id` in config.toml — the
+        documented scratchpad launch uses `kitty --app-id tuicc_scratch`,
+        see README's "Summoning tuicc" section), lets an implementation
+        mark by WM CRITERIA (match a known, stable window property)
+        instead of assuming tuicc's own window is whichever one is
+        currently focused at call time — removing the race that
+        assumption has when several instances launch back-to-back.
+        None (the default, and the only thing a caller with no known
+        app_id ever passes) falls back to that original focus-based
+        assumption.
 
         NOT abstract: not every WM has an equivalent concept to sway/i3's
         marks. The default here is a no-op — a provider for a WM without
@@ -62,6 +72,30 @@ class Provider(ABC):
         marks. Implement it for a new provider if its WM has any
         equivalent "tag a window, filter by tag later" concept; if not,
         leave the no-op default and accept the degraded case above.
+        """
+        pass
+
+    def dismiss_self(self) -> None:
+        """
+        Hide tuicc's own window without ending the process — the
+        "dismiss" half of tuicc's persistent-process lifecycle model
+        (see CLAUDE.md's lifecycle paragraph, and VISION.md section 2).
+        main.py calls this instead of exiting wherever a handler used
+        to mean "quit" — the process keeps running afterward, warm,
+        ready for the next summon. The only real way to end tuicc is
+        Ctrl+C.
+
+        NOT abstract, default no-op: a provider for a WM with no hide/
+        scratchpad-equivalent concept just can't dismiss this way — the
+        window stays on screen, a known degraded case, not a crash,
+        same optionality as mark_self()/resolve_pid()/
+        set_floating_geometry() above.
+
+        Who needs to implement this: sway and i3 both do, by targeting
+        the same mark mark_self() already applies to this instance's
+        own window — matching by that mark (not "whatever's focused
+        right now") is what makes this immune to the same multi-instance
+        timing race mark_self()'s focus-based fallback has.
         """
         pass
 

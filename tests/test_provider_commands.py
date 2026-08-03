@@ -94,6 +94,46 @@ def test_i3_mark_self():
     assert conn.commands == [f"mark --add _tuicc_self_{os.getpid()}"]
 
 
+def test_sway_mark_self_with_app_id_uses_criteria():
+    import os
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.mark_self("tuicc_scratch")
+
+    assert conn.commands == [f'[app_id="tuicc_scratch"] mark --add _tuicc_self_{os.getpid()}']
+
+
+def test_i3_mark_self_with_app_id_uses_class_criteria():
+    import os
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.mark_self("tuicc_scratch")
+
+    assert conn.commands == [f'[class="tuicc_scratch"] mark --add _tuicc_self_{os.getpid()}']
+
+
+def test_sway_dismiss_self():
+    import os
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.dismiss_self()
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] move scratchpad"]
+
+
+def test_i3_dismiss_self():
+    import os
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.dismiss_self()
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] move scratchpad"]
+
+
 def test_sway_close_window():
     conn = FakeConnection()
     provider = SwayProvider(conn=conn)

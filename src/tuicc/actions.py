@@ -8,10 +8,14 @@ connectivity.py knows what "toggle" means for that data), so those
 handlers self-register from connectivity.py instead — same pattern
 quick_actions.py uses for its own TARGET_KIND.
 
-Handler signature: (ctx, item, cfg) -> (should_exit, pending). ctx is
-an ActionContext bundling the WM provider and the connectivity
-worker. should_exit=True means tuicc exits after this runs. pending,
-if not None, becomes the new pending_confirm value.
+Handler signature: (ctx, item, cfg) -> (should_dismiss, pending). ctx
+is an ActionContext bundling the WM provider and the connectivity
+worker. should_dismiss=True means tuicc calls Provider.dismiss_self()
+after this runs — hides tuicc, the process keeps running. This never
+terminates tuicc; the only way to actually quit is Ctrl+C (main.py's
+try/finally handles cleanup for that path). pending, if not None,
+becomes the new pending_confirm value — see its "dismiss_after_confirm"
+key for the same meaning, deferred until the y/n answer comes in.
 """
 
 import shlex

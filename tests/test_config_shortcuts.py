@@ -114,6 +114,19 @@ def test_shortcuts_resolve_to_correct_key_codes(tmp_path, monkeypatch):
     assert cfg.global_shortcuts[15] == {"target_kind": "power_action", "item_id": "power_menu:1"}
 
 
+def test_self_app_id_and_return_to_origin_default_when_absent_from_wm_section(tmp_path, monkeypatch):
+    # BASE_TOML's [wm] section has no self_app_id/return_to_origin keys
+    # at all — load_config() must tolerate that (both are optional
+    # fields within the otherwise-mandatory [wm] table), not KeyError.
+    actions_toml = _action_toml("Lock", shortcut=None)
+    _write_config(tmp_path, monkeypatch, actions_toml)
+
+    cfg = load_config()
+
+    assert cfg.self_app_id is None
+    assert cfg.return_to_origin is False
+
+
 def test_action_without_shortcut_is_not_in_global_shortcuts(tmp_path, monkeypatch):
     actions_toml = _action_toml("Lock", shortcut=None)
     _write_config(tmp_path, monkeypatch, actions_toml)

@@ -152,8 +152,18 @@ class I3Provider(Provider):
     def close_window(self, window_id: str) -> None:
         self.conn.command(f"[con_id={window_id}] kill")
 
-    def mark_self(self) -> None:
-        # KNOWN LIMITATION: this assumes tuicc's own window is the one
+    def mark_self(self, app_id: str | None = None) -> None:
+        mark = f"{MARK_PREFIX}{os.getpid()}"
+        if app_id:
+            # Marks by WM criteria — no focus-timing assumption at all,
+            # so this is immune to the race the fallback below has. i3
+            # is X11-only, no "app_id" concept — its criteria keyword is
+            # "class" (see _leaf_to_window mapping window_class into the
+            # generic model's app_id field for the same reason).
+            self.conn.command(f'[class="{app_id}"] mark --add {mark}')
+            return
+        # KNOWN LIMITATION (fallback only, when no self_app_id is
+        # configured): this assumes tuicc's own window is the one
         # currently focused at call time. Launching several instances in
         # rapid, back-to-back succession (not normal keypress-paced usage)
         # can race — a not-yet-focused instance could mark a DIFFERENT
@@ -162,7 +172,10 @@ class I3Provider(Provider):
         # need identifying "my own window" independent of focus timing
         # (e.g. matching the hosting terminal's PID), which is real
         # complexity for a scenario nobody hits under normal use.
-        self.conn.command(f"mark --add {MARK_PREFIX}{os.getpid()}")
+        self.conn.command(f"mark --add {mark}")
+
+    def dismiss_self(self) -> None:
+        self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")
 
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())
