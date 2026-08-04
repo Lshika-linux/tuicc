@@ -112,6 +112,24 @@ def main(stdscr):
     saved_active_module = None
     pending_moves = []
     claimed_window_ids = set()
+    # True from the moment dismiss_self() is called until the next real
+    # keypress arrives (a keypress can only reach tuicc's own terminal
+    # while it's focused, the same assumption ambient typing already
+    # relies on) — lets the pending_moves loop below know not to call
+    # focus_self() while tuicc is deliberately hidden. Without this, a
+    # window that finishes spawning after tuicc was dismissed would
+    # have focus_self() pull tuicc back onto the screen on its own,
+    # since focusing a scratchpadded window un-hides it on sway/i3.
+    #
+    # KNOWN LIMITATION: resets on the next KEYPRESS, not the next
+    # resummon — so a pending_moves entry that resolves after you've
+    # resummoned tuicc but before you've pressed anything yet still
+    # skips focus_self(), even though tuicc is genuinely visible again
+    # at that point. Narrow (needs the spawned window to finish moving
+    # in that exact gap) and not worth tightening further right now —
+    # same category of accepted race as mark_self()'s focus-based
+    # fallback (see providers/base.py).
+    dismissed = False
     MOVE_TIMEOUT_SECONDS = 8.0
     # How long a pending move waits for its expected pid to show up on
     # a window before giving up on pid-matching specifically (not the
@@ -281,7 +299,14 @@ def main(stdscr):
                         # keystroke goes to the window hiding underneath
                         # it instead. See Provider.focus_self()'s
                         # docstring for why this isn't optional-feeling.
-                        provider.focus_self()
+                        # Skipped while dismissed: tuicc isn't visually on
+                        # top of anything right now, and on sway/i3
+                        # focusing a scratchpadded window un-hides it —
+                        # calling this unconditionally would make tuicc
+                        # pop back on screen by itself the moment a
+                        # spawn you dismissed tuicc before finished.
+                        if not dismissed:
+                            provider.focus_self()
                     elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
                         still_pending.append(entry)
                 pending_moves = still_pending
@@ -373,6 +398,7 @@ def main(stdscr):
 
             if key == -1:
                 continue
+            dismissed = False
 
             if pending_confirm is not None:
                 if key == cfg.keybinds["confirm_yes"]:
@@ -389,6 +415,7 @@ def main(stdscr):
                     should_dismiss = pending_confirm["dismiss_after_confirm"]
                     pending_confirm = None
                     if should_dismiss:
+                        dismissed = True
                         provider.dismiss_self()
                 elif key == cfg.keybinds["confirm_no"]:
                     pending_confirm = None
@@ -402,6 +429,7 @@ def main(stdscr):
                     if pending is not None:
                         pending_confirm = pending
                     if should_dismiss:
+                        dismissed = True
                         provider.dismiss_self()
                 continue
 
@@ -578,6 +606,7 @@ def main(stdscr):
                     if pending is not None:
                         pending_confirm = pending
                     if should_dismiss:
+                        dismissed = True
                         provider.dismiss_self()
 
             elif key in next_item_keys and ordered:
@@ -631,6 +660,7 @@ def main(stdscr):
             elif key == 27:  # Escape, no active input claim: dismiss at top level
                 if cfg.return_to_origin and origin_region_id is not None:
                     provider.focus_region(origin_region_id)
+                dismissed = True
                 provider.dismiss_self()
     finally:
         connectivity.stop()
