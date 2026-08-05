@@ -26,7 +26,7 @@ from tuicc.config import (
     build_layout_from_preset,
 )
 from tuicc.context import RenderContext
-from tuicc.actions import ActionContext, spawn_detached
+from tuicc.actions import ActionContext, spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
 from tuicc.connectivity.worker import ConnectivityWorker
@@ -325,36 +325,22 @@ def main(stdscr):
             dismissed = False
 
             if pending_confirm is not None:
-                if key == cfg.keybinds["confirm_yes"]:
-                    if "restore_entries" in pending_confirm:
-                        if "kill_regions" in pending_confirm:
-                            kill_regions = set(pending_confirm["kill_regions"])
-                            for region in provider.get_state().regions:
-                                if region.id in kill_regions:
-                                    for window in region.windows:
-                                        provider.close_window(window.id)
-                        action_ctx.restore_queue.extend(pending_confirm["restore_entries"])
-                    else:
-                        spawn_detached(pending_confirm["command"], pending_confirm["shell_true"])
-                    should_dismiss = pending_confirm["dismiss_after_confirm"]
-                    pending_confirm = None
-                    if should_dismiss:
-                        dismissed = True
-                        provider.dismiss_self()
-                elif key == cfg.keybinds["confirm_no"]:
-                    pending_confirm = None
+                should_dismiss, pending_confirm = handle_pending_confirm(action_ctx, pending_confirm, key, cfg)
+                if should_dismiss:
+                    dismissed = True
+                    provider.dismiss_self()
                 continue
 
             global_item = global_shortcut_item(cfg.global_shortcuts, key)
             if global_item is not None:
-                handler = ACTION_HANDLERS.get(global_item.target_kind)
-                if handler is not None:
-                    should_dismiss, pending = handler(action_ctx, global_item, cfg)
-                    if pending is not None:
-                        pending_confirm = pending
-                    if should_dismiss:
-                        dismissed = True
-                        provider.dismiss_self()
+                # pending_confirm is always None here — the tier above
+                # already intercepted and continued otherwise (see
+                # dispatch_action's docstring for why this makes an
+                # unconditional assignment safe).
+                should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
+                if should_dismiss:
+                    dismissed = True
+                    provider.dismiss_self()
                 continue
 
             if help_state.active:
@@ -522,14 +508,12 @@ def main(stdscr):
             module_names = [box.name for box in sorted(cfg.layout.boxes, key=module_position_key)]
 
             if key == cfg.keybinds["confirm"] and selected_item is not None:
-                handler = ACTION_HANDLERS.get(selected_item.target_kind)
-                if handler is not None:
-                    should_dismiss, pending = handler(action_ctx, selected_item, cfg)
-                    if pending is not None:
-                        pending_confirm = pending
-                    if should_dismiss:
-                        dismissed = True
-                        provider.dismiss_self()
+                # pending_confirm is always None here — same invariant
+                # as the global-shortcut tier above.
+                should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
+                if should_dismiss:
+                    dismissed = True
+                    provider.dismiss_self()
 
             elif key in next_item_keys and ordered:
                 next_item = next_item_in_module(ordered, active_module, selected_id)

@@ -1,23 +1,46 @@
-"""Tests for actions.py — BASE_HANDLERS, with a mock provider so no real
-WM connection is needed.
+"""Tests for actions.py — BASE_HANDLERS, dispatch_action, and
+handle_pending_confirm, with a mock provider so no real WM connection
+is needed.
 """
 
 import subprocess
 from types import SimpleNamespace
 
-from tuicc.actions import BASE_HANDLERS, ActionContext, spawn_detached
+from tuicc.actions import (
+    BASE_HANDLERS,
+    ActionContext,
+    spawn_detached,
+    dispatch_action,
+    handle_pending_confirm,
+)
+
+
+class _FakeConfig:
+    """Just enough of Config to exercise handle_pending_confirm's key lookups."""
+    keybinds = {"confirm_yes": ord("y"), "confirm_no": ord("n")}
+
+
+_cfg = _FakeConfig()
 
 
 class _FakeProvider:
     def __init__(self):
         self.focused_region = None
         self.focused_window = None
+        self.closed_windows = []
+        self.regions = []
 
     def focus_region(self, region_id):
         self.focused_region = region_id
 
     def focus_window(self, window_id):
         self.focused_window = window_id
+
+    def close_window(self, window_id):
+        self.closed_windows.append(window_id)
+
+    def get_state(self):
+        return SimpleNamespace(regions=self.regions)
 
 
 def test_region_handler_calls_focus_region():
@@ -108,3 +131,104 @@ def test_spawn_detached_accepts_a_presplit_list_unchanged(monkeypatch):
     cmd, kwargs = calls[0]
     assert cmd == ["kitty", "--title", "has a space"]
     assert kwargs["shell"] is False
+
+
+# ---------- dispatch_action ----------
+
+def test_dispatch_action_runs_the_matching_handler():
+    provider = _FakeProvider()
+    ctx = ActionContext(provider=provider, connectivity=None)
+    item = SimpleNamespace(target_kind="region", focus_target="workspace-3")
+
+    should_dismiss, pending = dispatch_action(ctx, BASE_HANDLERS, item, cfg=None)
+
+    assert provider.focused_region == "workspace-3"
+    assert should_dismiss is True
+    assert pending is None
+
+
+def test_dispatch_action_unknown_target_kind_returns_false_none():
+    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    item = SimpleNamespace(target_kind="nonexistent_kind")
+
+    should_dismiss, pending = dispatch_action(ctx, BASE_HANDLERS, item, cfg=None)
+
+    assert (should_dismiss, pending) == (False, None)
+
+
+def test_dispatch_action_propagates_pending_from_handler():
+    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    item = SimpleNamespace(target_kind="confirm_kind")
+    handlers = {"confirm_kind": lambda ctx, item, cfg: (False, {"command": "rm -rf /", "shell_true": False})}
+
+    should_dismiss, pending = dispatch_action(ctx, handlers, item, cfg=None)
+
+    assert pending == {"command": "rm -rf /", "shell_true": False}
+    assert should_dismiss is False
+
+
+# ---------- handle_pending_confirm ----------
+
+def test_handle_pending_confirm_yes_command_shaped_spawns_it(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
+
+    should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("y"), _cfg)
+
+    assert calls[0][0] == ["swaylock"]
+    assert (should_dismiss, new_pending) == (True, None)
+
+
+def test_handle_pending_confirm_yes_restore_shaped_extends_restore_queue():
+    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    pending = {
+        "restore_entries": [{"cmdline": ["kitty"]}],
+        "dismiss_after_confirm": False,
+    }
+
+    should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("y"), _cfg)
+
+    assert ctx.restore_queue == [{"cmdline": ["kitty"]}]
+    assert (should_dismiss, new_pending) == (False, None)
+
+
+def test_handle_pending_confirm_yes_restore_shaped_with_kill_regions_closes_matched_windows():
+    provider = _FakeProvider()
+    provider.regions = [
+        SimpleNamespace(id="1", windows=[SimpleNamespace(id="w1"), SimpleNamespace(id="w2")]),
+        SimpleNamespace(id="2", windows=[SimpleNamespace(id="w3")]),
+    ]
+    ctx = ActionContext(provider=provider, connectivity=None)
+    pending = {
+        "restore_entries": [{"cmdline": ["kitty"]}],
+        "kill_regions": ["1"],
+        "dismiss_after_confirm": False,
+    }
+
+    handle_pending_confirm(ctx, pending, ord("y"), _cfg)
+
+    assert provider.closed_windows == ["w1", "w2"]
+
+
+def test_handle_pending_confirm_no_discards_without_running_anything(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
+
+    should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("n"), _cfg)
+
+    assert calls == []
+    assert (should_dismiss, new_pending) == (False, None)
+
+
+def test_handle_pending_confirm_other_key_leaves_dialog_open_unchanged():
+    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
+
+    should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("x"), _cfg)
+
+    assert new_pending is pending
+    assert should_dismiss is False

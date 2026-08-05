@@ -16,6 +16,16 @@ terminates tuicc; the only way to actually quit is Ctrl+C (main.py's
 try/finally handles cleanup for that path). pending, if not None,
 becomes the new pending_confirm value — see its "dismiss_after_confirm"
 key for the same meaning, deferred until the y/n answer comes in.
+
+dispatch_action/handle_pending_confirm below are pure, value-returning
+functions, not ActionContext mutators — the same carve-out
+resize_mode.choose()/help_mode.apply_color_edit() get from their
+sibling modules' usual "state-first, mutate in place" convention.
+pending_confirm deliberately stays a plain ad hoc dict here rather than
+a dataclass: four different producer call sites (sessions.py,
+power_menu.py, quick_actions.py) build it with different key subsets,
+and none of them should have to agree on a shared schema just because
+this file needs to read a few of those keys back out.
 """
 
 import shlex
@@ -88,3 +98,57 @@ BASE_HANDLERS = {
     "region": _handle_region,
     "window": _handle_window,
 }
+
+
+def dispatch_action(ctx, handlers, item, cfg):
+    """Looks up handlers.get(item.target_kind) and runs it, returning
+    (should_dismiss, pending) straight from the handler — same shape
+    every handler already returns (see the module docstring) — or
+    (False, None) if there's no handler registered for this
+    target_kind at all. handlers is passed in explicitly (main.py
+    passes render.ACTION_HANDLERS) rather than imported here, so this
+    module stays as ignorant of render.py as it already is of any
+    specific module.
+
+    Both of this function's call sites in main.py are only ever
+    reached with pending_confirm already None — the pending_confirm-
+    is-not-None tier intercepts and continues first otherwise — so
+    the caller can unconditionally assign pending_confirm from this
+    function's return value, without an `if pending is not None:`
+    guard, and get the exact same result.
+    """
+    handler = handlers.get(item.target_kind)
+    if handler is None:
+        return False, None
+    return handler(ctx, item, cfg)
+
+
+def handle_pending_confirm(ctx, pending, key, cfg):
+    """Resolves a y/n confirm dialog. On confirm_yes: runs whichever
+    action `pending` describes — branching on `"restore_entries" in
+    pending`, not a discriminator field, matching how sessions.py/
+    power_menu.py/quick_actions.py all build this dict — and returns
+    (pending["dismiss_after_confirm"], None). On confirm_no: returns
+    (False, None). Any other key leaves the dialog open, unchanged:
+    (False, pending). Same (should_dismiss, pending) return order as
+    dispatch_action/every handler, for consistency within this file.
+
+    The caller still calls provider.dismiss_self() and does its own
+    dismissed=True bookkeeping when should_dismiss comes back True —
+    neither is reachable from the dict alone.
+    """
+    if key == cfg.keybinds["confirm_yes"]:
+        if "restore_entries" in pending:
+            if "kill_regions" in pending:
+                kill_regions = set(pending["kill_regions"])
+                for region in ctx.provider.get_state().regions:
+                    if region.id in kill_regions:
+                        for window in region.windows:
+                            ctx.provider.close_window(window.id)
+            ctx.restore_queue.extend(pending["restore_entries"])
+        else:
+            spawn_detached(pending["command"], pending["shell_true"])
+        return pending["dismiss_after_confirm"], None
+    if key == cfg.keybinds["confirm_no"]:
+        return False, None
+    return False, pending
