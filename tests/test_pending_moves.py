@@ -279,9 +279,10 @@ def test_process_focus_self_called_when_not_dismissed():
     queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty")]
 
-    process(queue, provider, current, dismissed=False, now=1.0)
+    result = process(queue, provider, current, dismissed=False, now=1.0)
 
     assert provider.focus_self_calls == 1
+    assert result is True
 
 
 def test_process_focus_self_not_called_when_dismissed():
@@ -292,10 +293,25 @@ def test_process_focus_self_not_called_when_dismissed():
     queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty")]
 
-    process(queue, provider, current, dismissed=True, now=1.0)
+    result = process(queue, provider, current, dismissed=True, now=1.0)
 
     assert provider.moved == [("1", "3")]
     assert provider.focus_self_calls == 0
+    assert result is False
+
+
+def test_process_returns_false_when_nothing_resolves():
+    # No new window at all this round — main.py's transition detector
+    # must not be told to expect a self-inflicted focus reclaim that
+    # never actually happens.
+    provider = _FakeProvider()
+    entry = {"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]  # no new window
+
+    result = process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert result is False
 
 
 def test_process_floating_entry_calls_set_floating_geometry():

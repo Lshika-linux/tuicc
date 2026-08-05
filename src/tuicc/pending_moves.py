@@ -164,7 +164,7 @@ def promote_restore_queue(queue: PendingMovesQueue, restore_queue: list, known_i
     queue.last_restore_launch = now
 
 
-def process(queue: PendingMovesQueue, provider, current_windows: list[Window], dismissed: bool, now: float) -> None:
+def process(queue: PendingMovesQueue, provider, current_windows: list[Window], dismissed: bool, now: float) -> bool:
     """Resolves every entry in queue against current_windows: downgrades
     an entry from pid- to app_id-matching after PID_GRACE_SECONDS (a
     next-call handoff, not a same-tick fallback — see
@@ -177,7 +177,19 @@ def process(queue: PendingMovesQueue, provider, current_windows: list[Window], d
     including its one known, narrow limitation). Entries that neither
     match nor are within MOVE_TIMEOUT_SECONDS are silently dropped —
     give-up-by-omission, not an explicit failure state.
+
+    Returns whether focus_self() was called this round — a real WM-
+    focus transition, but a self-inflicted one, not the user having
+    switched to a different real context. main.py's loop needs to
+    know this to avoid its own "real WM-focus transition" detector
+    (see its comment) misreading tuicc reclaiming its own focus as the
+    user having gone elsewhere, which would otherwise silently reset
+    selected_id/focus_id mid-launcher-session — see the regression
+    test for the concrete bug this caused (a spawn's target silently
+    switching workspace because an earlier spawn's focus_self() call
+    happened to land between selecting a workspace and confirming).
     """
+    reclaimed_focus = False
     still_pending = []
     for entry in queue.entries:
         if (entry.get("pid") is not None and entry.get("app_id") is not None
@@ -192,8 +204,10 @@ def process(queue: PendingMovesQueue, provider, current_windows: list[Window], d
                 provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
             if not dismissed:
                 provider.focus_self()
+                reclaimed_focus = True
         elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
             still_pending.append(entry)
     queue.entries = still_pending
     if not queue.entries:
         queue.claimed_ids.clear()
+    return reclaimed_focus

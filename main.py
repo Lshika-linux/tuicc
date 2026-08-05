@@ -136,6 +136,16 @@ def main(stdscr):
     # focus_region/focus_window, so no further transition fires).
     last_focused_region_id = None
     origin_region_id = None
+    # True for exactly one frame after pending_moves.process() calls
+    # provider.focus_self() — a real WM-focus transition, but a
+    # self-inflicted one (tuicc reclaiming its own focus after a
+    # spawn/restore resolves), not the user having switched to a
+    # different real context. The transition detector below reads and
+    # clears this to tell the two apart — without it, a focus_self()
+    # landing between a sidebar selection and confirming a launcher
+    # spawn silently resets that selection, and the spawn targets
+    # wherever real focus happened to land instead of what was picked.
+    expect_focus_reclaim = False
 
     # Session state for the input-hijacking/queueing concerns this file
     # coordinates but doesn't itself contain the logic for — see
@@ -207,23 +217,33 @@ def main(stdscr):
             if state.focused_region_id is not None and state.focused_region_id != last_focused_region_id:
                 origin_region_id = last_focused_region_id
                 last_focused_region_id = state.focused_region_id
-                # A real WM-focus transition — as opposed to just
-                # browsing tuicc's own sidebar, which deliberately never
-                # touches real focus (that's what lets you target a
-                # spawn at a workspace without actually switching to it
-                # first) — most commonly means tuicc was just dismissed
-                # to the scratchpad, you switched real workspaces, and
-                # resummoned it somewhere new. Force a re-sync: without
-                # this, focus_id/selected_id stay pinned to wherever you
-                # last left the cursor, possibly in a completely
-                # different real context, and every launcher spawn
-                # silently keeps targeting that stale workspace instead
-                # of wherever you actually are now. Invalidating
-                # selected_id here (rather than resetting focus_id
-                # directly) reuses the still_valid recovery block right
-                # below, which already correctly re-derives selected_id/
-                # active_module/focus_id together via resolve_selection.
-                selected_id = None
+                if expect_focus_reclaim:
+                    # tuicc reclaiming its own focus after a spawn/
+                    # restore resolved (pending_moves.process()'s
+                    # focus_self() call last frame) — a real transition
+                    # by the check above, but self-inflicted, not the
+                    # user having gone anywhere. Skip the reset below;
+                    # still update origin/last_focused_region_id above,
+                    # since those track real focus regardless of cause.
+                    expect_focus_reclaim = False
+                else:
+                    # A real WM-focus transition — as opposed to just
+                    # browsing tuicc's own sidebar, which deliberately never
+                    # touches real focus (that's what lets you target a
+                    # spawn at a workspace without actually switching to it
+                    # first) — most commonly means tuicc was just dismissed
+                    # to the scratchpad, you switched real workspaces, and
+                    # resummoned it somewhere new. Force a re-sync: without
+                    # this, focus_id/selected_id stay pinned to wherever you
+                    # last left the cursor, possibly in a completely
+                    # different real context, and every launcher spawn
+                    # silently keeps targeting that stale workspace instead
+                    # of wherever you actually are now. Invalidating
+                    # selected_id here (rather than resetting focus_id
+                    # directly) reuses the still_valid recovery block right
+                    # below, which already correctly re-derives selected_id/
+                    # active_module/focus_id together via resolve_selection.
+                    selected_id = None
 
             if action_ctx.restore_queue:
                 known_ids = {w.id for r in state.regions for w in r.windows}
@@ -234,8 +254,10 @@ def main(stdscr):
                 # See Provider.focus_self()'s docstring for why reclaiming
                 # focus on a match isn't optional-feeling, and pending_moves.
                 # process()'s own docstring for why it's skipped while
-                # dismissed.
-                pending_moves.process(moves, provider, current_windows, dismissed, time.monotonic())
+                # dismissed (and for what its return value means, consumed
+                # by the transition detector above on the NEXT frame).
+                if pending_moves.process(moves, provider, current_windows, dismissed, time.monotonic()):
+                    expect_focus_reclaim = True
 
             ctx = RenderContext(
                 state=state,
