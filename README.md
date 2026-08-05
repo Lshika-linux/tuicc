@@ -46,6 +46,29 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Quick install
+
+Want it set up as your daily driver (scratchpad summon, keybind, the
+works) instead of a one-off look?
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lshika-linux/tuicc/main/install.sh | bash
+```
+
+Clones tuicc into `~/.local/share/tuicc`, sets up a venv, detects sway
+vs i3 (asks if it can't tell), seeds `~/.config/tuicc/config.toml`
+with `provider`/`self_app_id` already set for a race-free scratchpad
+summon (see "Summoning tuicc" below), installs a filled-in toggle
+script to `~/.local/bin/tuicc_toggle.py`, and prompts for a keybind
+(default `$mod+Tab`) — but never edits your WM config itself: it
+prints the exact block to paste in and reload yourself. Re-run it any
+time to update (`git pull`s the existing checkout instead of
+re-cloning, and never overwrites an existing `config.toml`).
+
+Prefer to see exactly what it does first, or don't want to pipe a
+script straight into bash? `curl -fsSL <url above> -o install.sh`,
+read it, then `bash install.sh`.
+
 Tab/Shift+Tab move to the next/previous item, rolling into the
 next/previous module once you run past either end of the current one
 (Down/Up are plain duplicates of Tab/Shift+Tab). Left/Right jump
@@ -141,6 +164,13 @@ top level) hides it instantly with a warm process and warm caches,
 ready for the next summon. The only way to actually end the process is
 `Ctrl+C`.
 
+`install.sh` (see "Quick install" above) sets most of this up for you
+— clones, creates a venv, seeds `config.toml` with `self_app_id`
+already set, drops a filled-in toggle script into `~/.local/bin/`, and
+prints the exact block below for your WM so you can paste it in
+yourself (it never edits your WM config for you). Everything below
+also works by hand if you'd rather skip the installer.
+
 Pick the one path below that matches your WM — each launches tuicc's
 window carrying a recognizable identity (`tuicc_scratch`) so the WM
 config can target it specifically, and so setting `[wm] self_app_id =
@@ -148,31 +178,57 @@ config can target it specifically, and so setting `[wm] self_app_id =
 dismiss) its own window unambiguously, no focus-timing assumptions
 needed (see `CLAUDE.md` if you're curious why that matters).
 
-**sway (and `scroll`) — scratchpad:**
+**sway (and `scroll`) — scratchpad, single-keybind toggle:**
+
+[`contrib/sway/tuicc_toggle.py`](contrib/sway/tuicc_toggle.py) picks
+the right action based on tuicc's current state — launches it if it
+isn't running, dismisses it if it's focused, brings it to focus
+otherwise (un-hiding it from the scratchpad, or just switching to it)
+— one keybind instead of juggling separate launch/show/hide binds.
+Edit `APP_ID`/`TUICC_MAIN` at the top to match your setup, `chmod +x`
+it, then:
+
+```
+# ~/.config/sway/config
+for_window [app_id="tuicc_scratch"] floating enable
+bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
+```
+
+Don't add a static `for_window ... move scratchpad` rule alongside
+this — the script does the scratchpad move/show itself, and a static
+rule would hide tuicc the instant it maps, before the script's first
+launch ever gets to show it.
+
+If you'd rather not use the toggle script, a plain three-line summon
+still works, just with separate implicit show/hide instead of one
+smart toggle:
 
 ```
 # ~/.config/sway/config
 exec kitty --app-id tuicc_scratch -e python /path/to/tuicc/main.py
 for_window [app_id="tuicc_scratch"] move scratchpad
-bindsym $mod+grave [app_id="tuicc_scratch"] scratchpad show
+bindsym $mod+Tab [app_id="tuicc_scratch"] scratchpad show
 ```
 
-Want a single key that launches tuicc if it isn't running, dismisses
-it if it's focused, and brings it to focus otherwise (whether that
-means un-hiding it from the scratchpad or just switching to it) —
-one keybind instead of three? See
-[`contrib/sway/tuicc_toggle.py`](contrib/sway/tuicc_toggle.py) — bind
-it in place of the `exec kitty ...` launch command above.
+**i3 — scratchpad, single-keybind toggle:** the same idea, via
+[`contrib/i3/tuicc_toggle.py`](contrib/i3/tuicc_toggle.py) — i3's
+criteria use `class`, not `app_id` (i3 is X11-only, and kitty's
+`--app-id` flag sets the X11 `WM_CLASS` class from the same
+invocation):
 
-**i3 — scratchpad:** the same idea, but i3's criteria use `class`, not
-`app_id` (i3 is X11-only, and kitty's `--app-id` flag sets the X11
-`WM_CLASS` class from the same invocation):
+```
+# ~/.config/i3/config
+for_window [class="tuicc_scratch"] floating enable
+bindsym $mod+Tab exec --no-startup-id ~/scripts_i3/tuicc_toggle.py
+```
+
+Or, without the toggle script:
 
 ```
 # ~/.config/i3/config
 exec --no-startup-id kitty --app-id tuicc_scratch -e python /path/to/tuicc/main.py
 for_window [class="tuicc_scratch"] move scratchpad
-bindsym $mod+grave [class="tuicc_scratch"] scratchpad show
+bindsym $mod+Tab [class="tuicc_scratch"] scratchpad show
 ```
 
 **Hyprland — special workspace:**
@@ -181,7 +237,7 @@ bindsym $mod+grave [class="tuicc_scratch"] scratchpad show
 # ~/.config/hypr/hyprland.conf
 exec-once = kitty --app-id tuicc_scratch -e python /path/to/tuicc/main.py
 windowrulev2 = workspace special:tuicc silent, class:^(tuicc_scratch)$
-bind = $mainMod, GRAVE, togglespecialworkspace, tuicc
+bind = $mainMod, Tab, togglespecialworkspace, tuicc
 ```
 
 **niri — dedicated workspace** (niri has no scratchpad-equivalent, so
@@ -195,7 +251,7 @@ workspace "tuicc"
 spawn-at-startup "python" "/path/to/tuicc/main.py"
 
 binds {
-    Mod+Grave { focus-workspace "tuicc"; }
+    Mod+Tab { focus-workspace "tuicc"; }
 }
 ```
 
@@ -205,6 +261,11 @@ compositor speaks — Hyprland/niri need their own provider (not built
 yet, see the architecture section below) to report live state; the
 WM-side toggle keybinds above document the summon shape ahead of that
 provider landing.
+
+`$mod+Tab` above is just this doc's example default (and what
+`install.sh` proposes if you accept its default) — it can collide with
+a window-switcher bind on some setups, so treat it as a starting point
+to rebind, not a fixed convention.
 
 ## Architecture
 
