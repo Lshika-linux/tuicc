@@ -35,15 +35,32 @@ ask() {
     # Open /dev/tty on its own fd first, with only THAT attempt's
     # stderr suppressed (the "No such device or address" bash prints
     # when there's no controlling terminal at all, e.g. under setsid).
-    # Once opened, the actual `read -p` runs normally — its prompt
-    # goes to stderr same as always, which must NOT be suppressed, or
-    # you get exactly what happened live: the script silently waiting
-    # on a prompt it never showed you. fd 9, not something low like 3
-    # — this script runs from a file (not `bash -c`), and a low fd
-    # number risks colliding with whatever fd bash itself is using to
-    # read the script's own remaining source.
-    if exec 9</dev/tty 2>/dev/null; then
-        read -rp "$1" REPLY <&9
+    # fd 9, not something low like 3 — this script runs from a file
+    # (not `bash -c`), and a low fd number risks colliding with
+    # whatever fd bash itself is using to read the script's own
+    # remaining source.
+    #
+    # Prompt printed by hand via printf, deliberately NOT `read -p`:
+    # under `curl | bash`, bash starts up genuinely non-interactive
+    # (its ORIGINAL stdin is the pipe, not a terminal), and `read -p`
+    # decides whether to print its prompt at all based on that
+    # shell-wide interactive flag — not on whichever fd a given read
+    # call was redirected from. Redirecting the read itself from a
+    # real /dev/tty (below) doesn't change that flag, so `read -p`
+    # stayed silent at every single prompt even though it was
+    # correctly waiting for real input the whole time. Printing the
+    # prompt ourselves sidesteps that heuristic entirely.
+    # Redirections apply left-to-right — `exec 9</dev/tty 2>/dev/null`
+    # would try to open fd 9 BEFORE 2>/dev/null takes effect, so a
+    # failed open still prints its error on the way there. Testing
+    # openability first with a no-op command (`:`), stderr-suppression
+    # listed FIRST so it's already active if the open fails, avoids
+    # that — its redirects are scoped to just that command and don't
+    # persist, unlike exec's.
+    if : 2>/dev/null 9</dev/tty; then
+        exec 9</dev/tty
+        printf '%s' "$1"
+        read -r REPLY <&9
         exec 9<&-
     fi
 }
