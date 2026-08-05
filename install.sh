@@ -5,6 +5,15 @@
 # block you need. No step here silently mutates your WM config
 # without asking first — same "no silent fallbacks" principle as the
 # rest of tuicc.
+#
+# Every prompt below reads from /dev/tty explicitly, not bare stdin.
+# Piped through `curl ... | bash`, bash's own stdin IS the pipe
+# carrying this script's remaining source — a bare `read` would
+# silently "answer" itself with the next line of the script instead
+# of asking you, corrupting both the answer and (once enough reads
+# have desynced it) the script's own parsing. TUICC_WM/TUICC_TERMINAL/
+# TUICC_KEYBIND/TUICC_WRITE_CONFIG env vars skip the matching prompt
+# entirely, for scripted/non-interactive installs.
 set -euo pipefail
 
 REPO_URL="${TUICC_REPO_URL:-https://github.com/Lshika-linux/tuicc}"
@@ -16,6 +25,15 @@ DEFAULT_KEYBIND='$mod+Tab'
 
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 note() { printf '  %s\n' "$1"; }
+
+# Reads one line from the controlling terminal, if there is one.
+# Leaves $REPLY empty (not an error) when there isn't — callers decide
+# what that means for them (fall back to a default, or treat it as
+# "no answer available").
+ask() {
+    REPLY=""
+    { read -rp "$1" REPLY < /dev/tty; } 2>/dev/null || true
+}
 
 for cmd in git python3; do
     command -v "$cmd" >/dev/null 2>&1 || {
@@ -49,15 +67,17 @@ MAIN_PY="$INSTALL_DIR/main.py"
 
 # --- 3. Detect (or ask for) the WM -------------------------------------
 
-WM=""
-if [ -n "${SWAYSOCK:-}" ]; then
-    WM="sway"
-elif [ -n "${I3SOCK:-}" ]; then
-    WM="i3"
-elif pgrep -x sway >/dev/null 2>&1; then
-    WM="sway"
-elif pgrep -x i3 >/dev/null 2>&1; then
-    WM="i3"
+WM="${TUICC_WM:-}"
+if [ -z "$WM" ]; then
+    if [ -n "${SWAYSOCK:-}" ]; then
+        WM="sway"
+    elif [ -n "${I3SOCK:-}" ]; then
+        WM="i3"
+    elif pgrep -x sway >/dev/null 2>&1; then
+        WM="sway"
+    elif pgrep -x i3 >/dev/null 2>&1; then
+        WM="i3"
+    fi
 fi
 
 if [ -z "$WM" ]; then
@@ -65,7 +85,13 @@ if [ -z "$WM" ]; then
     echo "Couldn't detect a running sway or i3 session (checked \$SWAYSOCK,"
     echo "\$I3SOCK, and running processes — this is normal if you're"
     echo "installing ahead of time, e.g. from a plain TTY)."
-    read -rp "Which one will you use — sway or i3? " WM
+    ask "Which one will you use — sway or i3? "
+    WM="$REPLY"
+    if [ -z "$WM" ]; then
+        echo "Error: no interactive terminal to ask, and \$TUICC_WM isn't set." >&2
+        echo "Re-run with TUICC_WM=sway (or TUICC_WM=i3) set." >&2
+        exit 1
+    fi
 fi
 case "$WM" in
     sway|i3) ;;
@@ -121,31 +147,42 @@ build_launch_cmd_pylist() {
 
 DETECTED_TERMINAL="$(detect_terminal || true)"
 echo
-if [ -n "$DETECTED_TERMINAL" ]; then
-    read -rp "Terminal to launch tuicc in [detected: $DETECTED_TERMINAL]: " TERMINAL
-    TERMINAL="${TERMINAL:-$DETECTED_TERMINAL}"
+if [ -n "${TUICC_TERMINAL:-}" ]; then
+    TERMINAL="$TUICC_TERMINAL"
+elif [ -n "$DETECTED_TERMINAL" ]; then
+    ask "Terminal to launch tuicc in [detected: $DETECTED_TERMINAL]: "
+    TERMINAL="${REPLY:-$DETECTED_TERMINAL}"
 else
     echo "Couldn't detect a known terminal in your process tree."
     echo "Known: $KNOWN_TERMINALS"
-    read -rp "Terminal to launch tuicc in: " TERMINAL
+    ask "Terminal to launch tuicc in: "
+    TERMINAL="$REPLY"
 fi
 
 LAUNCH_CMD_PYLIST=""
-while [ -z "$LAUNCH_CMD_PYLIST" ]; do
-    if LAUNCH_CMD_PYLIST="$(build_launch_cmd_pylist "$TERMINAL")"; then
-        break
-    fi
-    echo "'$TERMINAL' isn't in the known list ($KNOWN_TERMINALS)."
-    read -rp "Pick one of those, or Ctrl+C to install anyway and edit LAUNCH_CMD by hand later: " TERMINAL
-    [ -z "$TERMINAL" ] && { note "Skipping toggle-script setup — install.sh will still finish the rest."; break; }
-done
+if [ -z "$TERMINAL" ]; then
+    note "No terminal chosen — toggle script installed with a placeholder"
+    note "LAUNCH_CMD; edit it by hand before using the toggle script."
+else
+    while [ -n "$TERMINAL" ] && [ -z "$LAUNCH_CMD_PYLIST" ]; do
+        if LAUNCH_CMD_PYLIST="$(build_launch_cmd_pylist "$TERMINAL")"; then
+            break
+        fi
+        echo "'$TERMINAL' isn't in the known list ($KNOWN_TERMINALS)."
+        ask "Pick one of those, or press Enter to skip and edit LAUNCH_CMD by hand later: "
+        TERMINAL="$REPLY"
+    done
+fi
 bold "Terminal: ${TERMINAL:-(none — toggle script needs manual LAUNCH_CMD)}"
 
 # --- 5. Keybind ---------------------------------------------------------
 
 echo
-read -rp "Keybind to summon/dismiss/focus tuicc [default: $DEFAULT_KEYBIND]: " KEYBIND
-KEYBIND="${KEYBIND:-$DEFAULT_KEYBIND}"
+KEYBIND="${TUICC_KEYBIND:-}"
+if [ -z "$KEYBIND" ]; then
+    ask "Keybind to summon/dismiss/focus tuicc [default: $DEFAULT_KEYBIND]: "
+    KEYBIND="${REPLY:-$DEFAULT_KEYBIND}"
+fi
 
 # --- 6. Seed config.toml, never clobbering one that already exists -------
 
@@ -228,8 +265,11 @@ note "ever see it."
 # --- 9. Offer to write it in + reload, but only if you say so --------------
 
 echo
-WRITE_ANSWER=""
-read -rp "Append this block to $WM_CONFIG_PATH and reload $WM now? [y/N]: " WRITE_ANSWER
+WRITE_ANSWER="${TUICC_WRITE_CONFIG:-}"
+if [ -z "$WRITE_ANSWER" ]; then
+    ask "Append this block to $WM_CONFIG_PATH and reload $WM now? [y/N]: "
+    WRITE_ANSWER="$REPLY"
+fi
 case "$WRITE_ANSWER" in
     y|Y|yes|Yes)
         if [ -f "$WM_CONFIG_PATH" ] && grep -qF "$APP_ID" "$WM_CONFIG_PATH"; then
