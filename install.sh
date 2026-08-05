@@ -32,7 +32,20 @@ note() { printf '  %s\n' "$1"; }
 # "no answer available").
 ask() {
     REPLY=""
-    { read -rp "$1" REPLY < /dev/tty; } 2>/dev/null || true
+    # Open /dev/tty on its own fd first, with only THAT attempt's
+    # stderr suppressed (the "No such device or address" bash prints
+    # when there's no controlling terminal at all, e.g. under setsid).
+    # Once opened, the actual `read -p` runs normally — its prompt
+    # goes to stderr same as always, which must NOT be suppressed, or
+    # you get exactly what happened live: the script silently waiting
+    # on a prompt it never showed you. fd 9, not something low like 3
+    # — this script runs from a file (not `bash -c`), and a low fd
+    # number risks colliding with whatever fd bash itself is using to
+    # read the script's own remaining source.
+    if exec 9</dev/tty 2>/dev/null; then
+        read -rp "$1" REPLY <&9
+        exec 9<&-
+    fi
 }
 
 for cmd in git python3; do
