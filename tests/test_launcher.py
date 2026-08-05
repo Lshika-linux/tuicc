@@ -1,10 +1,19 @@
-"""Tests for the launcher's fuzzy matching — _fuzzy_score and
-filter_apps are pure functions over strings/lists, no .desktop file
-scanning involved.
+"""Tests for the launcher's fuzzy matching (_fuzzy_score/filter_apps,
+pure functions over strings/lists, no .desktop file scanning involved)
+and LauncherState (the typing-mode session layer main.py's loop
+drives) — no curses, no I/O.
 """
 
 import tuicc.modules.launcher as launcher
-from tuicc.modules.launcher import _fuzzy_score, filter_apps, handle_typing_key, enter_typing_mode
+from tuicc.modules.launcher import (
+    _fuzzy_score,
+    filter_apps,
+    LauncherState,
+    handle_typing_key,
+    enter_typing_mode,
+    exit_typing_mode,
+    resolve_selected,
+)
 
 
 class _FakeConfig:
@@ -144,63 +153,122 @@ def test_scan_desktop_apps_falls_back_to_filename_without_wm_class(tmp_path, mon
 
 # ---------- handle_typing_key ----------
 
-def test_handle_typing_key_escape_clears_and_exits():
-    query, index, still_typing = handle_typing_key(27, _cfg, "firefo", 2)
+def test_handle_typing_key_escape_clears_and_exits_typing_mode():
+    state = LauncherState(typing_mode=True, search_query="firefo", search_selected_index=2)
 
-    assert (query, index, still_typing) == ("", 0, False)
+    handle_typing_key(state, 27, _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("", 0, False)
 
 
 def test_handle_typing_key_backspace_removes_last_char():
-    query, index, still_typing = handle_typing_key(127, _cfg, "firefox", 3)
+    state = LauncherState(typing_mode=True, search_query="firefox", search_selected_index=3)
 
-    assert (query, index, still_typing) == ("firefo", 0, True)
+    handle_typing_key(state, 127, _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("firefo", 0, True)
 
 
-def test_handle_typing_key_backspace_on_empty_query_exits():
-    query, index, still_typing = handle_typing_key(127, _cfg, "", 0)
+def test_handle_typing_key_backspace_on_empty_query_exits_typing_mode():
+    state = LauncherState(typing_mode=True, search_query="", search_selected_index=0)
 
-    assert (query, index, still_typing) == ("", 0, False)
+    handle_typing_key(state, 127, _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("", 0, False)
 
 
 def test_handle_typing_key_left_moves_selection_down():
-    query, index, still_typing = handle_typing_key(_cfg.keybinds["left"], _cfg, "fire", 2)
+    state = LauncherState(typing_mode=True, search_query="fire", search_selected_index=2)
 
-    assert (query, index, still_typing) == ("fire", 1, True)
+    handle_typing_key(state, _cfg.keybinds["left"], _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("fire", 1, True)
 
 
 def test_handle_typing_key_left_does_not_go_below_zero():
-    query, index, still_typing = handle_typing_key(_cfg.keybinds["left"], _cfg, "fire", 0)
+    state = LauncherState(typing_mode=True, search_query="fire", search_selected_index=0)
 
-    assert (query, index, still_typing) == ("fire", 0, True)
+    handle_typing_key(state, _cfg.keybinds["left"], _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("fire", 0, True)
 
 
 def test_handle_typing_key_right_moves_selection_up():
-    query, index, still_typing = handle_typing_key(_cfg.keybinds["right"], _cfg, "fire", 1)
+    state = LauncherState(typing_mode=True, search_query="fire", search_selected_index=1)
 
-    assert (query, index, still_typing) == ("fire", 2, True)
+    handle_typing_key(state, _cfg.keybinds["right"], _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("fire", 2, True)
 
 
 def test_handle_typing_key_printable_char_appends_and_resets_index():
-    query, index, still_typing = handle_typing_key(ord("x"), _cfg, "fire", 3)
+    state = LauncherState(typing_mode=True, search_query="fire", search_selected_index=3)
 
-    assert (query, index, still_typing) == ("firex", 0, True)
+    handle_typing_key(state, ord("x"), _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("firex", 0, True)
 
 
 def test_handle_typing_key_unhandled_key_leaves_state_unchanged():
-    query, index, still_typing = handle_typing_key(999999, _cfg, "fire", 1)
+    state = LauncherState(typing_mode=True, search_query="fire", search_selected_index=1)
 
-    assert (query, index, still_typing) == ("fire", 1, True)
+    handle_typing_key(state, 999999, _cfg)
+
+    assert (state.search_query, state.search_selected_index, state.typing_mode) == ("fire", 1, True)
 
 
-# ---------- enter_typing_mode ----------
+# ---------- enter_typing_mode / exit_typing_mode ----------
 
 def test_enter_typing_mode_saves_previous_selection():
-    result = enter_typing_mode("sidebar:1", "sidebar", "")
+    state = LauncherState()
 
-    assert result == ("sidebar:1", "sidebar", True, "", 0, "launcher")
+    enter_typing_mode(state, "sidebar:1", "sidebar")
+
+    assert (state.saved_selected_id, state.saved_active_module) == ("sidebar:1", "sidebar")
+    assert (state.typing_mode, state.search_query, state.search_selected_index) == (True, "", 0)
 
 
 def test_enter_typing_mode_seeds_query_with_typed_character():
-    result = enter_typing_mode("sidebar:1", "sidebar", "f")
+    state = LauncherState()
 
-    assert result == ("sidebar:1", "sidebar", True, "f", 0, "launcher")
+    enter_typing_mode(state, "sidebar:1", "sidebar", "f")
+
+    assert (state.typing_mode, state.search_query, state.search_selected_index) == (True, "f", 0)
+
+
+def test_exit_typing_mode_resets_editable_fields_but_not_saved_selection():
+    # saved_selected_id/saved_active_module are read by the caller right
+    # after exit_typing_mode returns, to restore selected_id/active_module
+    # — they must survive this call untouched.
+    state = LauncherState(
+        typing_mode=True, search_query="fire", search_selected_index=2,
+        saved_selected_id="sidebar:1", saved_active_module="sidebar",
+    )
+
+    exit_typing_mode(state)
+
+    assert (state.typing_mode, state.search_query, state.search_selected_index) == (False, "", 0)
+    assert (state.saved_selected_id, state.saved_active_module) == ("sidebar:1", "sidebar")
+
+
+# ---------- resolve_selected ----------
+
+def test_resolve_selected_returns_command_and_app_id_for_selection(monkeypatch):
+    monkeypatch.setattr(launcher, "_apps_cache", [
+        ("Firefox", "firefox", "firefox"),
+        ("kitty", "kitty", "kitty"),
+    ])
+    state = LauncherState(search_query="", search_selected_index=1)
+
+    result = resolve_selected(state)
+
+    assert result == ("kitty", "kitty")
+
+
+def test_resolve_selected_no_matches_returns_none(monkeypatch):
+    monkeypatch.setattr(launcher, "_apps_cache", [("Firefox", "firefox", "firefox")])
+    state = LauncherState(search_query="zzz", search_selected_index=0)
+
+    result = resolve_selected(state)
+
+    assert result is None

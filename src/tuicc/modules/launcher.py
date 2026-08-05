@@ -2,11 +2,22 @@
 launch the selection on the workspace currently shown in the sidebar
 and preview (ctx.focus_id). Also the future home of saved workspace
 layouts (save/overwrite/run) — not built yet.
+
+LauncherState and the functions below it are the typing-mode session
+layer — what main.py's loop used to hold as five loose local variables
+(typing_mode/search_query/search_selected_index/saved_selected_id/
+saved_active_module) plus inline key-handling. Same "pure function over
+an explicit value" style as resize_mode.py/help_mode.py: a dataclass is
+just the state, every function here takes one and mutates it, main.py
+still owns *when* to call them (and still owns active_module itself —
+see enter_typing_mode's docstring for why that one field stays outside
+this dataclass).
 """
 
 import curses
 import os
 import subprocess
+from dataclasses import dataclass
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
@@ -128,7 +139,24 @@ def filter_apps(query, apps):
     return [(name, cmd, app_id) for _score, name, cmd, app_id in scored]
 
 
-def resolve_selected(query, selected_index):
+@dataclass
+class LauncherState:
+    """typing_mode/search_query/search_selected_index are the live
+    editing fields, reset on every entry/exit. saved_selected_id/
+    saved_active_module sit at their None default whenever typing_mode
+    is False — enter_typing_mode populates them, exit_typing_mode never
+    touches them, so the caller (main.py) can read them right after to
+    restore selected_id/active_module, same as it does after a
+    successful confirm.
+    """
+    typing_mode: bool = False
+    search_query: str = ""
+    search_selected_index: int = 0
+    saved_selected_id: str | None = None
+    saved_active_module: str | None = None
+
+
+def resolve_selected(state: LauncherState):
     """The (exec_command, app_id_hint) for the currently selected search
     result, or None if there are no results. Spawning it and getting it
     onto the right workspace is main.py's job — it needs to snapshot
@@ -137,55 +165,74 @@ def resolve_selected(query, selected_index):
     main.py's pending_moves matching fall back to an app_id match if
     the spawned process's own pid never shows up on any window.
     """
-    results = filter_apps(query, _get_apps())
+    results = filter_apps(state.search_query, _get_apps())
     if not results:
         return None
-    index = min(selected_index, len(results) - 1)
+    index = min(state.search_selected_index, len(results) - 1)
     _name, cmd, app_id = results[index]
     return cmd, app_id
 
 
-def handle_typing_key(key, cfg, search_query, search_selected_index):
-    """Pure state transition for the launcher's typing-mode editing keys
+def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_query="") -> None:
+    """Saves the pre-typing selection so handle_typing_key's Escape/
+    Backspace-to-empty exit (or a successful confirm) can restore it
+    later. Deliberately does NOT set active_module itself — main.py
+    still does `active_module = "launcher"` right next to this call,
+    same asymmetry resize_mode.enter_box_editing has for active_module
+    (this dataclass owns everything about the typing session except
+    the one field that's genuinely main.py's own loop variable).
+    """
+    state.saved_selected_id = selected_id
+    state.saved_active_module = active_module
+    state.typing_mode = True
+    state.search_query = initial_query
+    state.search_selected_index = 0
+
+
+def exit_typing_mode(state: LauncherState) -> None:
+    """Leaves typing mode, resetting the editable fields. saved_* are
+    left untouched — the caller reads them right after this call to
+    restore selected_id/active_module, then moves on.
+    """
+    state.typing_mode = False
+    state.search_query = ""
+    state.search_selected_index = 0
+
+
+def handle_typing_key(state: LauncherState, key, cfg) -> None:
+    """Mutates state for the launcher's typing-mode editing keys
     (Escape, Backspace, Left/Right, printable characters). Does NOT
     handle the confirm key — resolving and launching a command needs
     main.py's loop state (known window ids, target region, a
     timestamp) that this module deliberately doesn't have, same
-    reasoning as resolve_selected().
-
-    Returns (new_search_query, new_search_selected_index, still_typing).
-    still_typing=False means the caller should exit typing mode and
-    restore its own saved selection/active module, same as it does
-    for a successful confirm.
+    reasoning as resolve_selected(). Escape and Backspace-on-empty-
+    query call exit_typing_mode themselves; the caller only needs to
+    check state.typing_mode afterward to know whether to restore its
+    saved selection, same as it does for a successful confirm.
     """
     if key == 27:  # Escape
-        return "", 0, False
+        exit_typing_mode(state)
+        return
 
     if key in (curses.KEY_BACKSPACE, 127, 8):
-        if search_query:
-            return search_query[:-1], 0, True
-        return search_query, search_selected_index, False
+        if state.search_query:
+            state.search_query = state.search_query[:-1]
+            state.search_selected_index = 0
+        else:
+            exit_typing_mode(state)
+        return
 
     if key == cfg.keybinds["left"]:
-        return search_query, max(search_selected_index - 1, 0), True
+        state.search_selected_index = max(state.search_selected_index - 1, 0)
+        return
 
     if key == cfg.keybinds["right"]:
-        return search_query, search_selected_index + 1, True
+        state.search_selected_index += 1
+        return
 
     if 32 <= key <= 126:
-        return search_query + chr(key), 0, True
-
-    return search_query, search_selected_index, True
-
-
-def enter_typing_mode(selected_id, active_module, initial_query):
-    """New (saved_selected_id, saved_active_module, typing_mode,
-    search_query, search_selected_index, active_module) for entering
-    the launcher's typing mode — saves the pre-typing selection so
-    handle_typing_key's Escape/Backspace-to-empty exit can restore it
-    later.
-    """
-    return selected_id, active_module, True, initial_query, 0, "launcher"
+        state.search_query += chr(key)
+        state.search_selected_index = 0
 
 
 def _build_window(results, sel, avail_w):

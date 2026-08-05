@@ -46,9 +46,9 @@ from tuicc.navigation import (
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
 from tuicc.render_utils import draw_status_line
 from tuicc.theme_setup import setup_theme, reassign_theme_pairs
-from tuicc.modules.launcher import resolve_selected, handle_typing_key, enter_typing_mode
 from tuicc.pending_moves import resolve_pending_move
 from tuicc import resize_mode, help_mode
+from tuicc.modules import launcher as launcher_mode
 
 
 def main(stdscr):
@@ -105,11 +105,6 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    typing_mode = False
-    search_query = ""
-    search_selected_index = 0
-    saved_selected_id = None
-    saved_active_module = None
     pending_moves = []
     claimed_window_ids = set()
     # True from the moment dismiss_self() is called until the next real
@@ -155,14 +150,15 @@ def main(stdscr):
     last_focused_region_id = None
     origin_region_id = None
 
-    # Session state for the three input-hijacking modes this file
-    # coordinates but doesn't itself contain the logic for — see
-    # resize_mode.py/help_mode.py. This file owns *when* to call their
-    # functions (which key means what, in what order), not the state
-    # transitions or math themselves.
+    # Session state for the input-hijacking modes this file coordinates
+    # but doesn't itself contain the logic for — see resize_mode.py/
+    # help_mode.py/launcher.py's LauncherState. This file owns *when*
+    # to call their functions (which key means what, in what order),
+    # not the state transitions or math themselves.
     resize = resize_mode.ResizeState()
     spawn_picker = resize_mode.SpawnPickerState()
     help_state = help_mode.HelpState()
+    launcher = launcher_mode.LauncherState()
 
     # A generic transient toast — used by save/cycle-preset as much as
     # by resize, genuinely main-loop-level, not owned by either module.
@@ -321,9 +317,9 @@ def main(stdscr):
                 config=cfg,
                 pending_confirm=pending_confirm,
                 active_module=active_module,
-                typing_mode=typing_mode,
-                search_query=search_query,
-                search_selected_index=search_selected_index,
+                typing_mode=launcher.typing_mode,
+                search_query=launcher.search_query,
+                search_selected_index=launcher.search_selected_index,
                 wifi_networks=connectivity.get_wifi_networks(),
                 bluetooth_devices=connectivity.get_bluetooth_devices(),
                 connectivity=connectivity,
@@ -466,9 +462,9 @@ def main(stdscr):
                     help_state.page = None
                 continue
 
-            if typing_mode:
+            if launcher.typing_mode:
                 if key == cfg.keybinds["confirm"]:
-                    selected = resolve_selected(search_query, search_selected_index)
+                    selected = launcher_mode.resolve_selected(launcher)
                     if selected is not None:
                         cmd, app_id_hint = selected
                         known_ids = {w.id for r in state.regions for w in r.windows}
@@ -492,16 +488,16 @@ def main(stdscr):
                             "app_id": app_id_hint,
                             "started_at": time.monotonic(),
                         })
-                        typing_mode = False
-                        selected_id = saved_selected_id
-                        active_module = saved_active_module
+                        launcher_mode.exit_typing_mode(launcher)
+                        selected_id = launcher.saved_selected_id
+                        active_module = launcher.saved_active_module
+                    # selected is None (no search results): nothing happens,
+                    # typing_mode stays True — not an implicit cancel.
                 else:
-                    search_query, search_selected_index, typing_mode = handle_typing_key(
-                        key, cfg, search_query, search_selected_index
-                    )
-                    if not typing_mode:
-                        selected_id = saved_selected_id
-                        active_module = saved_active_module
+                    launcher_mode.handle_typing_key(launcher, key, cfg)
+                    if not launcher.typing_mode:
+                        selected_id = launcher.saved_selected_id
+                        active_module = launcher.saved_active_module
                 continue
 
             if spawn_picker.active:
@@ -648,15 +644,11 @@ def main(stdscr):
             elif key == cfg.keybinds["help"]:
                 do_enter_help()
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
-                (saved_selected_id, saved_active_module, typing_mode,
-                 search_query, search_selected_index, active_module) = enter_typing_mode(
-                    selected_id, active_module, ""
-                )
+                launcher_mode.enter_typing_mode(launcher, selected_id, active_module)
+                active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
-                (saved_selected_id, saved_active_module, typing_mode,
-                 search_query, search_selected_index, active_module) = enter_typing_mode(
-                    selected_id, active_module, chr(key)
-                )
+                launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
+                active_module = "launcher"
             elif key == 27:  # Escape, no active input claim: dismiss at top level
                 if cfg.return_to_origin and origin_region_id is not None:
                     provider.focus_region(origin_region_id)
