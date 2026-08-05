@@ -144,6 +144,16 @@ def test_sway_focus_self():
     assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus"]
 
 
+def test_sway_focus_self_fullscreen():
+    import os
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.focus_self(fullscreen=True)
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus, fullscreen enable"]
+
+
 def test_i3_focus_self():
     import os
     conn = FakeConnection()
@@ -152,6 +162,16 @@ def test_i3_focus_self():
     provider.focus_self()
 
     assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus"]
+
+
+def test_i3_focus_self_fullscreen():
+    import os
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.focus_self(fullscreen=True)
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus, fullscreen enable"]
 
 
 def test_sway_close_window():

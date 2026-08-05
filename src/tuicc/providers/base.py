@@ -99,12 +99,12 @@ class Provider(ABC):
         """
         pass
 
-    def focus_self(self) -> None:
+    def focus_self(self, fullscreen: bool = False) -> None:
         """
         Reclaim keyboard focus for tuicc's own window — called by
-        main.py's pending_moves loop right after it moves a freshly
-        spawned (launcher) or restored (sessions) window into its
-        target region.
+        pending_moves.process() right after it moves a freshly spawned
+        (launcher) or restored (sessions) window into its target
+        region.
 
         NOT implementing this for a WM whose default behavior steals
         focus on window-map makes tuicc's launcher (and session
@@ -118,6 +118,22 @@ class Provider(ABC):
         the first spawn — the launcher's whole "spawn without losing
         your place" promise (see README) breaks immediately, it isn't
         an edge case.
+
+        fullscreen (from `[wm] fullscreen_only` in config.toml, only
+        ever passed True by callers that already read that setting —
+        this method never reads config itself) re-asserts fullscreen
+        state alongside reclaiming focus. Needed because sway/i3 both
+        drop a container back to plain floating the instant ANY new
+        window is mapped anywhere in the session — even one that's
+        about to be moved somewhere else entirely — if it happens to
+        map onto tuicc's own workspace first (which new windows
+        typically do, landing wherever real focus currently is, before
+        anything gets a chance to move them elsewhere). Without this,
+        a fullscreen tuicc silently drops to floating on the very
+        first launcher spawn or session restore, every time. Default
+        False so a provider ignoring this argument (or a caller not
+        passing it) keeps today's plain-focus behavior — never forces
+        fullscreen on a setup that never asked for it.
 
         NOT abstract, default no-op: only meaningful for a WM that can
         both (a) focus a specific window on demand and (b) actually

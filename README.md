@@ -56,14 +56,20 @@ curl -fsSL https://raw.githubusercontent.com/Lshika-linux/tuicc/main/install.sh 
 ```
 
 Clones tuicc into `~/.local/share/tuicc`, sets up a venv, detects sway
-vs i3 (asks if it can't tell), seeds `~/.config/tuicc/config.toml`
-with `provider`/`self_app_id` already set for a race-free scratchpad
-summon (see "Summoning tuicc" below), installs a filled-in toggle
-script to `~/.local/bin/tuicc_toggle.py`, and prompts for a keybind
-(default `$mod+Tab`) — but never edits your WM config itself: it
-prints the exact block to paste in and reload yourself. Re-run it any
-time to update (`git pull`s the existing checkout instead of
-re-cloning, and never overwrites an existing `config.toml`).
+vs i3 (asks if it can't tell), asks which terminal to run tuicc in and
+what keybind to summon it with (defaults: whichever terminal it's
+running in, `$mod+Tab`), asks whether to show tuicc fullscreen or as a
+plain floating window (default: fullscreen — the full experience out
+of the box, no i3/sway config expertise needed first; plain floating
+is a tweak you opt into later, not the starting point), then seeds
+`~/.config/tuicc/config.toml` with `provider`/`self_app_id`/
+`fullscreen_only` all set to match (see "Summoning tuicc" below) and
+installs a filled-in toggle script to `~/.local/bin/tuicc_toggle.py`.
+It offers (asks first — never does this silently) to append the WM
+config block and reload sway/i3 for you; say no and it just prints the
+block to paste in and reload yourself. Re-run it any time to update
+(`git pull`s the existing checkout instead of re-cloning, and never
+overwrites an existing `config.toml`).
 
 Prefer to see exactly what it does first, or don't want to pipe a
 script straight into bash? `curl -fsSL <url above> -o install.sh`,
@@ -201,11 +207,18 @@ bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
 Don't add a static `for_window ... move scratchpad` rule alongside
 this — the script does the scratchpad move/show itself, and a static
 rule would hide tuicc the instant it maps, before the script's first
-launch ever gets to show it. The script also re-asserts `fullscreen
-enable` on every show/focus (sway drops it back to plain floating
-whenever a container is hidden in the scratchpad) — drop `, fullscreen
-enable` from the rule above and from the toggle script's own action
-strings if you'd rather have tuicc float instead.
+launch ever gets to show it. The full, fullscreen tuicc experience
+(shown above, and what `install.sh` sets up by default — no i3/sway
+config expertise needed to get there) also needs `[wm] fullscreen_only
+= true` set in tuicc's own config.toml: the toggle script reads that
+value at runtime (see its own docstring) and re-asserts `fullscreen
+enable` on every show/focus, since sway drops a container back to
+plain floating the instant any new window is mapped anywhere in the
+session, even briefly on tuicc's own workspace before it's moved
+elsewhere. Plain floating is a deliberate tweak, not the default —
+drop `, fullscreen enable` from the rule above and set
+`fullscreen_only = false` in config.toml if you'd rather have tuicc
+float.
 
 If you'd rather not use the toggle script, a plain three-line summon
 still works, just with separate implicit show/hide instead of one
@@ -230,9 +243,10 @@ for_window [class="tuicc_scratch"] floating enable, fullscreen enable
 bindsym $mod+Tab exec --no-startup-id ~/scripts_i3/tuicc_toggle.py
 ```
 
-Same deal as sway above — the toggle script re-asserts `fullscreen
-enable` on every show/focus, so drop it from both the rule and the
-script's action strings if you'd rather have tuicc float instead.
+Same deal as sway above — set `[wm] fullscreen_only = true` in
+config.toml (the packaged default, and what `install.sh` sets up) to
+match, or `false` plus dropping `, fullscreen enable` from both the
+rule and config.toml if you'd rather have tuicc float instead.
 
 Or, without the toggle script:
 

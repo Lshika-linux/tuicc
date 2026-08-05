@@ -214,18 +214,39 @@ if [ -z "$KEYBIND" ]; then
     KEYBIND="${REPLY:-$DEFAULT_KEYBIND}"
 fi
 
+# --- 5b. Fullscreen ------------------------------------------------------
+
+# Not a hardcoded default anywhere downstream — this answer sets both
+# [wm] fullscreen_only in config.toml AND whether the printed/written
+# for_window rule includes `fullscreen enable`, and the installed
+# toggle script reads fullscreen_only from config.toml itself at
+# runtime (see its own docstring) rather than having this baked in.
+echo
+FULLSCREEN_ANSWER="${TUICC_FULLSCREEN:-}"
+if [ -z "$FULLSCREEN_ANSWER" ]; then
+    ask "Show tuicc fullscreen instead of a floating window? [Y/n]: "
+    FULLSCREEN_ANSWER="$REPLY"
+fi
+case "$FULLSCREEN_ANSWER" in
+    n|N|no|No) FULLSCREEN_ONLY=false ;;
+    *) FULLSCREEN_ONLY=true ;;
+esac
+bold "Fullscreen: $FULLSCREEN_ONLY"
+
 # --- 6. Seed config.toml, never clobbering one that already exists -------
 
 mkdir -p "$CONFIG_DIR"
 if [ -f "$CONFIG_DIR/config.toml" ]; then
     bold "$CONFIG_DIR/config.toml already exists — leaving it untouched."
-    note "Make sure [wm] provider = \"$WM\" and self_app_id = \"$APP_ID\" are set"
-    note "there yourself if you want the race-free marking this script sets up."
+    note "Make sure [wm] provider = \"$WM\", self_app_id = \"$APP_ID\", and"
+    note "fullscreen_only = $FULLSCREEN_ONLY are set there yourself if you want"
+    note "the race-free marking and fullscreen behavior this script sets up."
 else
-    bold "Seeding $CONFIG_DIR/config.toml (provider=$WM, self_app_id=$APP_ID)..."
+    bold "Seeding $CONFIG_DIR/config.toml (provider=$WM, self_app_id=$APP_ID, fullscreen_only=$FULLSCREEN_ONLY)..."
     cp "$INSTALL_DIR/src/tuicc/defaults/config.toml" "$CONFIG_DIR/config.toml"
     sed -i "s/^provider = .*/provider = \"$WM\"/" "$CONFIG_DIR/config.toml"
     sed -i "s/^self_app_id = .*/self_app_id = \"$APP_ID\"/" "$CONFIG_DIR/config.toml"
+    sed -i "s/^fullscreen_only = .*/fullscreen_only = $FULLSCREEN_ONLY/" "$CONFIG_DIR/config.toml"
     if [ "$WM" = "i3" ]; then
         # The packaged power-menu defaults assume sway (swaylock,
         # swaymsg exit) — see the comment above [[power_menu.action]]
@@ -264,12 +285,18 @@ chmod +x "$TOGGLE_DST"
 
 # --- 8. Build the WM config block (used for both printing and writing) -----
 
+if [ "$FULLSCREEN_ONLY" = "true" ]; then
+    FLOAT_RULE="floating enable, fullscreen enable"
+else
+    FLOAT_RULE="floating enable"
+fi
+
 if [ "$WM" = "sway" ]; then
     WM_CONFIG_PATH="$HOME/.config/sway/config"
     BLOCK=$(cat <<EOF
 # tuicc (added by install.sh)
-for_window [app_id="$APP_ID"] floating enable, fullscreen enable
-for_window [class="$APP_ID"] floating enable, fullscreen enable
+for_window [app_id="$APP_ID"] $FLOAT_RULE
+for_window [class="$APP_ID"] $FLOAT_RULE
 bindsym $KEYBIND exec $TOGGLE_DST
 EOF
 )
@@ -277,7 +304,7 @@ else
     WM_CONFIG_PATH="$HOME/.config/i3/config"
     BLOCK=$(cat <<EOF
 # tuicc (added by install.sh)
-for_window [class="$APP_ID"] floating enable, fullscreen enable
+for_window [class="$APP_ID"] $FLOAT_RULE
 bindsym $KEYBIND exec --no-startup-id $TOGGLE_DST
 EOF
 )

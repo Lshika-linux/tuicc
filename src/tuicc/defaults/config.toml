@@ -41,6 +41,22 @@ self_app_id = ""
 # for WMs with no scratchpad-equivalent (e.g. niri's dedicated-
 # workspace style).
 return_to_origin = false
+# On by default: the full tuicc experience (see README's "Summoning
+# tuicc" section — install.sh sets this up for you, matching whichever
+# answer you gave its own fullscreen prompt) is meant to be fullscreen
+# out of the box, no i3/sway config expertise required first. Plain
+# floating is a deliberate tweak you opt INTO later, not the starting
+# point. With this true, tuicc re-asserts fullscreen itself right
+# after a launcher spawn or session restore resolves — sway/i3 both
+# drop a container back to plain floating the instant ANY new window
+# is mapped anywhere in your session, even briefly on tuicc's own
+# workspace before tuicc gets a chance to move it elsewhere.
+# Only meaningful if your for_window rule (or the toggle scripts in
+# contrib/, which read this same value) actually uses `fullscreen
+# enable` in the first place — set this to false (and drop `fullscreen
+# enable` from your for_window rule) if you'd rather run tuicc as a
+# plain floating window.
+fullscreen_only = true
 
 [theme]
 # Each value accepts: "inherit" (use the terminal's own color),

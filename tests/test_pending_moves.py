@@ -32,6 +32,7 @@ class _FakeProvider:
         self.moved = []
         self.floated = []
         self.focus_self_calls = 0
+        self.focus_self_fullscreen_args = []
         # window_id -> pid, what resolve_pid() "discovers" for it —
         # mirrors a real provider's X11 lookup without touching X11.
         self.resolved_pids = resolved_pids or {}
@@ -43,8 +44,9 @@ class _FakeProvider:
     def set_floating_geometry(self, window_id, region_id, rect):
         self.floated.append((window_id, region_id, rect))
 
-    def focus_self(self):
+    def focus_self(self, fullscreen=False):
         self.focus_self_calls += 1
+        self.focus_self_fullscreen_args.append(fullscreen)
 
     def resolve_pid(self, window_id):
         self.resolve_pid_calls.append(window_id)
@@ -292,6 +294,40 @@ def test_process_focus_self_called_when_not_dismissed():
 
     assert provider.focus_self_calls == 1
     assert result is True
+
+
+def test_process_defaults_to_not_fullscreen():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.focus_self_fullscreen_args == [False]
+
+
+def test_process_passes_fullscreen_only_through_to_focus_self():
+    # The actual fix for tuicc losing fullscreen on a spawn/restore —
+    # see Provider.focus_self()'s docstring for why reclaiming focus
+    # alone isn't enough.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0, fullscreen_only=True)
+
+    assert provider.focus_self_fullscreen_args == [True]
+
+
+def test_process_fullscreen_only_ignored_while_dismissed():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=True, now=1.0, fullscreen_only=True)
+
+    assert provider.focus_self_calls == 0
+    assert provider.focus_self_fullscreen_args == []
 
 
 def test_process_focus_self_not_called_when_dismissed():

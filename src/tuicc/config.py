@@ -56,6 +56,7 @@ class Config:
     total_workspaces: int
     self_app_id: str | None
     return_to_origin: bool
+    fullscreen_only: bool
     theme: dict
     keybinds: dict
     quick_actions: list
@@ -328,6 +329,7 @@ def load_config() -> Config:
     total_workspaces = user_data["wm"]["total_workspaces"]
     self_app_id = user_data["wm"].get("self_app_id") or None
     return_to_origin = user_data["wm"].get("return_to_origin", False)
+    fullscreen_only = user_data["wm"].get("fullscreen_only", False)
 
     theme = {}
     for role, value in user_data["theme"].items():
@@ -403,6 +405,7 @@ def load_config() -> Config:
         total_workspaces=total_workspaces,
         self_app_id=self_app_id,
         return_to_origin=return_to_origin,
+        fullscreen_only=fullscreen_only,
         theme=theme,
         keybinds=keybinds,
         quick_actions=quick_actions,

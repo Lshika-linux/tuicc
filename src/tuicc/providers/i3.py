@@ -177,8 +177,9 @@ class I3Provider(Provider):
     def dismiss_self(self) -> None:
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")
 
-    def focus_self(self) -> None:
-        self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] focus")
+    def focus_self(self, fullscreen: bool = False) -> None:
+        action = "focus, fullscreen enable" if fullscreen else "focus"
+        self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] {action}")
 
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())

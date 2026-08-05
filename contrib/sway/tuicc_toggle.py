@@ -38,39 +38,63 @@ Setup:
      whichever terminal you choose).
   2. Make this file executable: chmod +x tuicc_toggle.py
   3. Bind a key to it, e.g. (sway config):
-       for_window [app_id="tuicc_scratch"] floating enable, fullscreen enable
-       for_window [class="tuicc_scratch"] floating enable, fullscreen enable
+       for_window [app_id="tuicc_scratch"] floating enable
+       for_window [class="tuicc_scratch"] floating enable
        bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
      replacing whatever direct `exec kitty --app-id ... -e ...` line
      README's "Summoning tuicc" section has you start with. Don't also
      keep a static `for_window ... move scratchpad` rule alongside
      this script — that rule hides tuicc the instant it maps, before
      this script's first launch ever gets to show it. `floating
-     enable, fullscreen enable` alone is enough; this script does the
-     scratchpad move/show itself.
+     enable` alone is enough; this script does the scratchpad
+     move/show itself.
 
-This script (and the for_window rule above) default to fullscreen,
-not just floating — sway can't hold a container in genuine fullscreen
-state while it's hidden in the scratchpad, so `move scratchpad` drops
-it back to plain floating on its own; re-asserting `fullscreen enable`
-is why `_run_for_both_criteria()` chains it onto the `"scratchpad
-show"`/`"focus"` actions below (never onto `"move scratchpad"` —
-you're hiding it there, not showing it). This matters beyond looks:
+Fullscreen is config-driven, not hardcoded here: this script reads
+`[wm] fullscreen_only` from tuicc's own ~/.config/tuicc/config.toml
+(install.sh sets this for you, matching whatever you answer its own
+fullscreen prompt) and, if true, chains `, fullscreen enable` onto the
+"scratchpad show"/"focus" actions below (never onto "move scratchpad"
+— you're hiding it there, not showing it). Why re-assert it at all,
+rather than just adding `fullscreen enable` to the for_window rule
+above and leaving it at that: sway drops a container back to plain
+floating the instant ANY new window is mapped anywhere in the session
+if it happens to land on tuicc's own workspace first — which new
+windows typically do, briefly, before anything gets a chance to move
+them elsewhere (see main.py's pending_moves.py for the tuicc-side half
+of this same fix). Without re-asserting it here too, a fullscreen
+tuicc silently drops to floating on your first launcher spawn or
+session restore after every summon. This also matters beyond looks:
 while a container is truly fullscreen, sway won't let anything else on
 that workspace steal keyboard focus, which is what makes spawning from
-tuicc's launcher reliable after the first summon (see main.py's
-`focus_self()` docstring for the same problem from tuicc's own side —
-that fix helps, but real fullscreen prevents the steal outright
-instead of just correcting it afterward). Want plain floating instead?
-Drop `, fullscreen enable` from both the for_window rule above and the
-two action strings in main() below.
+tuicc's launcher reliable (see main.py's `focus_self()` docstring for
+the same problem from tuicc's own side — that fix helps, but real
+fullscreen prevents the steal outright instead of just correcting it
+afterward). If `fullscreen_only` is false (the default) or your
+config.toml can't be read for any reason, this script just does plain
+floating show/focus — same as if fullscreen didn't exist here at all.
 """
 import json
 import subprocess
+import tomllib
+from pathlib import Path
 
 APP_ID = "tuicc_scratch"
 TUICC_MAIN = "/path/to/tuicc/main.py"
 LAUNCH_CMD = ["kitty", "--app-id", APP_ID, "-e", "python", TUICC_MAIN]
+CONFIG_PATH = Path.home() / ".config" / "tuicc" / "config.toml"
+
+
+def _fullscreen_only() -> bool:
+    """Same default (False) and same "no config file yet = defaults"
+    behavior as tuicc's own config.py — this script deliberately
+    doesn't create or require config.toml to exist.
+    """
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return bool(data.get("wm", {}).get("fullscreen_only", False))
 
 
 def find_tuicc(node, workspace_name=None):
@@ -104,12 +128,13 @@ def main():
         return
 
     node, workspace_name = result
+    suffix = ", fullscreen enable" if _fullscreen_only() else ""
     if node.get("focused"):
         _run_for_both_criteria("move scratchpad")
     elif workspace_name == "__i3_scratch":
-        _run_for_both_criteria("scratchpad show, fullscreen enable")
+        _run_for_both_criteria(f"scratchpad show{suffix}")
     else:
-        _run_for_both_criteria("focus, fullscreen enable")
+        _run_for_both_criteria(f"focus{suffix}")
 
 
 if __name__ == "__main__":

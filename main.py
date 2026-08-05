@@ -256,7 +256,9 @@ def main(stdscr):
                 # process()'s own docstring for why it's skipped while
                 # dismissed (and for what its return value means, consumed
                 # by the transition detector above on the NEXT frame).
-                if pending_moves.process(moves, provider, current_windows, dismissed, time.monotonic()):
+                if pending_moves.process(
+                    moves, provider, current_windows, dismissed, time.monotonic(), cfg.fullscreen_only,
+                ):
                     expect_focus_reclaim = True
 
             ctx = RenderContext(

@@ -202,7 +202,10 @@ def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Windo
             w.pid = provider.resolve_pid(w.id)
 
 
-def process(queue: PendingMovesQueue, provider, current_windows: list[Window], dismissed: bool, now: float) -> bool:
+def process(
+    queue: PendingMovesQueue, provider, current_windows: list[Window],
+    dismissed: bool, now: float, fullscreen_only: bool = False,
+) -> bool:
     """Resolves every entry in queue against current_windows: enriches
     still-unknown pids via provider.resolve_pid() first (see
     _enrich_pids — the fix for providers, i3 today, whose get_state()
@@ -218,6 +221,11 @@ def process(queue: PendingMovesQueue, provider, current_windows: list[Window], d
     including its one known, narrow limitation). Entries that neither
     match nor are within MOVE_TIMEOUT_SECONDS are silently dropped —
     give-up-by-omission, not an explicit failure state.
+
+    fullscreen_only (from `[wm] fullscreen_only` in config.toml) is
+    passed straight through to provider.focus_self() — see that
+    method's docstring for why reclaiming focus alone isn't enough to
+    keep a fullscreen tuicc fullscreen through a spawn/restore.
 
     Returns whether focus_self() was called this round — a real WM-
     focus transition, but a self-inflicted one, not the user having
@@ -245,7 +253,7 @@ def process(queue: PendingMovesQueue, provider, current_windows: list[Window], d
             if entry.get("floating"):
                 provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
             if not dismissed:
-                provider.focus_self()
+                provider.focus_self(fullscreen=fullscreen_only)
                 reclaimed_focus = True
         elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
             still_pending.append(entry)
