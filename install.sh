@@ -159,6 +159,18 @@ else
     cp "$INSTALL_DIR/src/tuicc/defaults/config.toml" "$CONFIG_DIR/config.toml"
     sed -i "s/^provider = .*/provider = \"$WM\"/" "$CONFIG_DIR/config.toml"
     sed -i "s/^self_app_id = .*/self_app_id = \"$APP_ID\"/" "$CONFIG_DIR/config.toml"
+    if [ "$WM" = "i3" ]; then
+        # The packaged power-menu defaults assume sway (swaylock,
+        # swaymsg exit) — see the comment above [[power_menu.action]]
+        # in defaults/config.toml. i3lock/i3-msg are the closest i3
+        # equivalents; swap the command yourself if you use a
+        # different locker.
+        sed -i 's/^command = "swaylock"$/command = "i3lock"/' "$CONFIG_DIR/config.toml"
+        sed -i 's/^command = "swaymsg exit"$/command = "i3-msg exit"/' "$CONFIG_DIR/config.toml"
+        note "Swapped power-menu Lock/Logout for i3lock/i3-msg exit (the"
+        note "packaged defaults assume sway) — edit config.toml if you use"
+        note "a different locker."
+    fi
 fi
 
 # --- 7. Install the WM-specific toggle script ------------------------------

@@ -170,6 +170,12 @@ bluetooth_backend = "bluez"
 # shell_true = true only if command needs real shell syntax (pipes,
 # ;, &&, $VARS) \u2014 otherwise it runs as plain arguments, no shell
 # involved. Off by default: safer, and most commands don't need it.
+#
+# Lock/Logout below assume sway (swaylock/swaymsg) \u2014 running on i3?
+# Swap them for i3lock (or whatever locker you use) and "i3-msg exit"
+# before you rely on this. install.sh does this for you automatically
+# if you use it; a plain git-clone setup needs this edited by hand,
+# same as [wm] provider below.
 label = "Lock"
 shortcut = "Ctrl+L"
 icon = "\uf023"

@@ -91,7 +91,11 @@ below. Config changes apply after a restart: summon, `Ctrl+C`,
 relaunch — that's the only way to actually end the process; there's
 deliberately no quit menu entry or quit keybind. Requires a running
 sway or i3 session; set `provider = "sway"` or `provider = "i3"` under
-`[wm]` in your config (see below).
+`[wm]` in your config (see below). On i3, also check the power menu's
+Lock/Logout commands — the packaged defaults are `swaylock`/`swaymsg
+exit`, which `install.sh` swaps for `i3lock`/`i3-msg exit`
+automatically; a plain git-clone setup needs that edited by hand (see
+the comment above `[[power_menu.action]]` in `config.toml`).
 
 ## Testing
 
