@@ -46,8 +46,7 @@ from tuicc.navigation import (
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
 from tuicc.render_utils import draw_status_line
 from tuicc.theme_setup import setup_theme, reassign_theme_pairs
-from tuicc.pending_moves import resolve_pending_move
-from tuicc import resize_mode, help_mode
+from tuicc import resize_mode, help_mode, pending_moves
 from tuicc.modules import launcher as launcher_mode
 
 
@@ -105,12 +104,10 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    pending_moves = []
-    claimed_window_ids = set()
     # True from the moment dismiss_self() is called until the next real
     # keypress arrives (a keypress can only reach tuicc's own terminal
     # while it's focused, the same assumption ambient typing already
-    # relies on) — lets the pending_moves loop below know not to call
+    # relies on) — lets pending_moves.process() below know not to call
     # focus_self() while tuicc is deliberately hidden. Without this, a
     # window that finishes spawning after tuicc was dismissed would
     # have focus_self() pull tuicc back onto the screen on its own,
@@ -125,16 +122,6 @@ def main(stdscr):
     # same category of accepted race as mark_self()'s focus-based
     # fallback (see providers/base.py).
     dismissed = False
-    MOVE_TIMEOUT_SECONDS = 8.0
-    # How long a pending move waits for its expected pid to show up on
-    # a window before giving up on pid-matching specifically (not the
-    # whole entry — see the pending_moves loop's downgrade-to-app_id
-    # step below). Short: most apps' pid IS reliable and matches within
-    # one or two frames; this only exists for the ones that never will.
-    PID_GRACE_SECONDS = 1.5
-
-    last_restore_launch = 0.0
-    RESTORE_STAGGER_SECONDS = 0.3
 
     # Tracks the region focused right before tuicc's own — used by
     # return_to_origin's top-level Escape dismiss. Can't just read
@@ -150,15 +137,17 @@ def main(stdscr):
     last_focused_region_id = None
     origin_region_id = None
 
-    # Session state for the input-hijacking modes this file coordinates
-    # but doesn't itself contain the logic for — see resize_mode.py/
-    # help_mode.py/launcher.py's LauncherState. This file owns *when*
-    # to call their functions (which key means what, in what order),
-    # not the state transitions or math themselves.
+    # Session state for the input-hijacking/queueing concerns this file
+    # coordinates but doesn't itself contain the logic for — see
+    # resize_mode.py/help_mode.py/launcher.py's LauncherState/
+    # pending_moves.py's PendingMovesQueue. This file owns *when* to
+    # call their functions (which key means what, in what order), not
+    # the state transitions or math themselves.
     resize = resize_mode.ResizeState()
     spawn_picker = resize_mode.SpawnPickerState()
     help_state = help_mode.HelpState()
     launcher = launcher_mode.LauncherState()
+    moves = pending_moves.PendingMovesQueue()
 
     # A generic transient toast — used by save/cycle-preset as much as
     # by resize, genuinely main-loop-level, not owned by either module.
@@ -206,7 +195,7 @@ def main(stdscr):
     try:
         while True:
             stdscr.timeout(
-                50 if (pending_moves or action_ctx.restore_queue or connectivity.has_pending()
+                50 if (moves.entries or action_ctx.restore_queue or connectivity.has_pending()
                        or resize_message is not None) else 1000
             )
             stdscr.erase()
@@ -237,77 +226,16 @@ def main(stdscr):
                 selected_id = None
 
             if action_ctx.restore_queue:
-                now = time.monotonic()
-                if now - last_restore_launch >= RESTORE_STAGGER_SECONDS:
-                    session_entry = action_ctx.restore_queue.pop(0)
-                    known_ids = {w.id for r in state.regions for w in r.windows}
-                    pid = spawn_detached(session_entry["cmdline"], shell_true=False)
-                    pending_entry = {
-                        "target_region": session_entry["target_region"],
-                        "known_ids": known_ids,
-                        "pid": pid,
-                        "app_id": session_entry["app_id"],
-                        "started_at": now,
-                        "floating": session_entry.get("floating", False),
-                    }
-                    if pending_entry["floating"]:
-                        pending_entry["rect"] = (
-                            session_entry["x"], session_entry["y"],
-                            session_entry["w"], session_entry["h"],
-                        )
-                    pending_moves.append(pending_entry)
-                    last_restore_launch = now
+                known_ids = {w.id for r in state.regions for w in r.windows}
+                pending_moves.promote_restore_queue(moves, action_ctx.restore_queue, known_ids, time.monotonic())
 
-            if pending_moves:
-                now = time.monotonic()
+            if moves.entries:
                 current_windows = [w for r in state.regions for w in r.windows]
-                still_pending = []
-                for entry in pending_moves:
-                    # Downgrade from pid- to app_id-matching after a short
-                    # grace period, instead of waiting the full
-                    # MOVE_TIMEOUT_SECONDS and giving up on the entry
-                    # entirely. A spawned process whose pid never shows up
-                    # on any window (most commonly a single-instance app —
-                    # Firefox, Obsidian, plenty of Electron apps — that
-                    # just asks an already-running instance to open a
-                    # window and exits itself) will NEVER match by pid, no
-                    # matter how long we wait. resolve_pending_move
-                    # deliberately never falls through from pid to app_id
-                    # within one attempt (see its own docstring — that
-                    # exact cascade caused real window misassignment
-                    # before), so the downgrade has to happen out here, by
-                    # mutating which tier this entry attempts on its NEXT
-                    # call — not a same-tick fallback, a clean handoff
-                    # between two exclusive attempts.
-                    if (entry.get("pid") is not None and entry.get("app_id") is not None
-                            and now - entry["started_at"] > PID_GRACE_SECONDS):
-                        entry["pid"] = None
-
-                    match = resolve_pending_move(entry, current_windows, claimed_window_ids)
-                    if match is not None:
-                        claimed_window_ids.add(match.id)
-                        provider.move_window_to_region(match.id, entry["target_region"])
-                        if entry.get("floating"):
-                            provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
-                        # Newly-mapped windows steal WM focus on most WMs
-                        # regardless of stacking order — without this,
-                        # tuicc's still visually on top but your next
-                        # keystroke goes to the window hiding underneath
-                        # it instead. See Provider.focus_self()'s
-                        # docstring for why this isn't optional-feeling.
-                        # Skipped while dismissed: tuicc isn't visually on
-                        # top of anything right now, and on sway/i3
-                        # focusing a scratchpadded window un-hides it —
-                        # calling this unconditionally would make tuicc
-                        # pop back on screen by itself the moment a
-                        # spawn you dismissed tuicc before finished.
-                        if not dismissed:
-                            provider.focus_self()
-                    elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
-                        still_pending.append(entry)
-                pending_moves = still_pending
-                if not pending_moves:
-                    claimed_window_ids.clear()
+                # See Provider.focus_self()'s docstring for why reclaiming
+                # focus on a match isn't optional-feeling, and pending_moves.
+                # process()'s own docstring for why it's skipped while
+                # dismissed.
+                pending_moves.process(moves, provider, current_windows, dismissed, time.monotonic())
 
             ctx = RenderContext(
                 state=state,
@@ -470,24 +398,22 @@ def main(stdscr):
                         known_ids = {w.id for r in state.regions for w in r.windows}
                         # .desktop Exec= is spec'd to never be shell-interpreted.
                         pid = spawn_detached(cmd, shell_true=False)
-                        pending_moves.append({
-                            # focus_id is only ever set by explicitly selecting
-                            # a sidebar region item — without one selected (or
-                            # without a sidebar in the layout at all), fall
-                            # back to whatever's actually focused right now,
-                            # same live-follow pattern preview.py's draw() uses.
-                            "target_region": focus_id if focus_id is not None else state.focused_region_id,
-                            "known_ids": known_ids,
-                            "pid": pid,
-                            # app_id_hint (see launcher.scan_desktop_apps) is
-                            # only a fallback — resolve_pending_move always
-                            # tries the pid tier first, this just gives the
-                            # pending_moves loop's grace-period downgrade
-                            # something to fall back to for single-instance
-                            # apps whose pid will never appear on a window.
-                            "app_id": app_id_hint,
-                            "started_at": time.monotonic(),
-                        })
+                        # focus_id is only ever set by explicitly selecting a
+                        # sidebar region item — without one selected (or
+                        # without a sidebar in the layout at all), fall back
+                        # to whatever's actually focused right now, same
+                        # live-follow pattern preview.py's draw() uses.
+                        # app_id_hint (see launcher.scan_desktop_apps) is only
+                        # a fallback — resolve_pending_move always tries the
+                        # pid tier first, this just gives process()'s
+                        # grace-period downgrade something to fall back to
+                        # for single-instance apps whose pid will never
+                        # appear on a window.
+                        pending_moves.queue_launcher_spawn(
+                            moves,
+                            focus_id if focus_id is not None else state.focused_region_id,
+                            known_ids, pid, app_id_hint, time.monotonic(),
+                        )
                         launcher_mode.exit_typing_mode(launcher)
                         selected_id = launcher.saved_selected_id
                         active_module = launcher.saved_active_module

@@ -15,9 +15,26 @@ at once): with no shared "already used" tracking, two pending entries can
 both match the same new window, or the wrong window can be assigned to
 the wrong target — verified live against a real WM by testing a similar
 tool's matcher (github.com/Hinikaa/tileroot) which has exactly this gap.
+
+PendingMovesQueue and the functions below it are the session-level layer
+on top of resolve_pending_move's per-entry matching — what main.py's loop
+used to hold as two loose locals (pending_moves/claimed_window_ids) plus
+a bare float (last_restore_launch) and three module-level constants.
+Same "pure function over an explicit value" style as resize_mode.py/
+help_mode.py/launcher.py's LauncherState: a dataclass is just the state,
+every function here takes one and mutates it, main.py still owns *when*
+to call them (and still owns `dismissed`, threaded in as an explicit
+param — see process()'s docstring).
 """
 
+from dataclasses import dataclass, field
+
+from tuicc.actions import spawn_detached
 from tuicc.model import Window
+
+PID_GRACE_SECONDS = 1.5
+MOVE_TIMEOUT_SECONDS = 8.0
+RESTORE_STAGGER_SECONDS = 0.3
 
 
 def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: set[str]) -> Window | None:
@@ -78,3 +95,105 @@ def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: se
         return None
 
     return new_windows[0]
+
+
+@dataclass
+class PendingMovesQueue:
+    """entries mirrors the old pending_moves list (dicts, heterogeneous
+    shape — see queue_restore_entry/queue_launcher_spawn below, they
+    don't build identical key sets). claimed_ids mirrors
+    claimed_window_ids, only cleared once entries is fully drained, not
+    per-entry. last_restore_launch gates promote_restore_queue's
+    staggering.
+    """
+    entries: list = field(default_factory=list)
+    claimed_ids: set = field(default_factory=set)
+    last_restore_launch: float = 0.0
+
+
+def queue_restore_entry(queue: PendingMovesQueue, session_entry: dict, known_ids: set, pid, now: float) -> None:
+    """Appends one entry for a session-restore spawn. Carries
+    floating+rect when the saved window was floating (session.py's
+    saved shape) — queue_launcher_spawn below never does, since the
+    launcher has no saved geometry to restore.
+    """
+    entry = {
+        "target_region": session_entry["target_region"],
+        "known_ids": known_ids,
+        "pid": pid,
+        "app_id": session_entry["app_id"],
+        "started_at": now,
+        "floating": session_entry.get("floating", False),
+    }
+    if entry["floating"]:
+        entry["rect"] = (
+            session_entry["x"], session_entry["y"],
+            session_entry["w"], session_entry["h"],
+        )
+    queue.entries.append(entry)
+
+
+def queue_launcher_spawn(queue: PendingMovesQueue, target_region, known_ids: set, pid, app_id_hint, now: float) -> None:
+    """Appends one entry for a launcher-confirmed spawn — never carries
+    floating/rect, unlike queue_restore_entry's entries.
+    """
+    queue.entries.append({
+        "target_region": target_region,
+        "known_ids": known_ids,
+        "pid": pid,
+        "app_id": app_id_hint,
+        "started_at": now,
+    })
+
+
+def promote_restore_queue(queue: PendingMovesQueue, restore_queue: list, known_ids: set, now: float) -> None:
+    """Pops one entry off restore_queue (session.py's load queue) and
+    spawns it, staggered by RESTORE_STAGGER_SECONDS so a multi-window
+    session restore doesn't fire every process in the same frame.
+    No-ops if restore_queue is empty — checked BEFORE the stagger-time
+    comparison, so an empty queue never touches last_restore_launch and
+    a later real restore isn't held back by a stale timestamp.
+    """
+    if not restore_queue:
+        return
+    if now - queue.last_restore_launch < RESTORE_STAGGER_SECONDS:
+        return
+    session_entry = restore_queue.pop(0)
+    pid = spawn_detached(session_entry["cmdline"], shell_true=False)
+    queue_restore_entry(queue, session_entry, known_ids, pid, now)
+    queue.last_restore_launch = now
+
+
+def process(queue: PendingMovesQueue, provider, current_windows: list[Window], dismissed: bool, now: float) -> None:
+    """Resolves every entry in queue against current_windows: downgrades
+    an entry from pid- to app_id-matching after PID_GRACE_SECONDS (a
+    next-call handoff, not a same-tick fallback — see
+    resolve_pending_move's own docstring for why that distinction
+    matters), moves + optionally floats a matched window, then reclaims
+    focus for tuicc unless dismissed is True — focusing a scratchpadded
+    tuicc window un-hides it on sway/i3, so this must not fire while
+    tuicc was deliberately dismissed after the spawn but before it
+    resolved (see main.py's own `dismissed` comment for the full story,
+    including its one known, narrow limitation). Entries that neither
+    match nor are within MOVE_TIMEOUT_SECONDS are silently dropped —
+    give-up-by-omission, not an explicit failure state.
+    """
+    still_pending = []
+    for entry in queue.entries:
+        if (entry.get("pid") is not None and entry.get("app_id") is not None
+                and now - entry["started_at"] > PID_GRACE_SECONDS):
+            entry["pid"] = None
+
+        match = resolve_pending_move(entry, current_windows, queue.claimed_ids)
+        if match is not None:
+            queue.claimed_ids.add(match.id)
+            provider.move_window_to_region(match.id, entry["target_region"])
+            if entry.get("floating"):
+                provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
+            if not dismissed:
+                provider.focus_self()
+        elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
+            still_pending.append(entry)
+    queue.entries = still_pending
+    if not queue.entries:
+        queue.claimed_ids.clear()
