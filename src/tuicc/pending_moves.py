@@ -164,10 +164,51 @@ def promote_restore_queue(queue: PendingMovesQueue, restore_queue: list, known_i
     queue.last_restore_launch = now
 
 
+def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Window]) -> None:
+    """Fills in .pid (in place) for windows get_state() left at None,
+    via provider.resolve_pid() — on-demand, not part of the per-frame
+    get_state() path, so this is the one place it's worth paying for.
+
+    Only for windows no entry has seen yet (not in ANY entry's
+    known_ids) and not already claimed — the actual candidate set for
+    a NEW spawn, typically 0-1 windows, not every open window on the
+    desktop. Scoped this way because resolve_pending_move's pid tier
+    is otherwise structurally dead on a provider whose get_state()
+    never populates pid at all (i3 today — its GET_TREE has no pid
+    field, unlike sway's): every pending entry would burn
+    PID_GRACE_SECONDS, downgrade to the app_id tier, and — if the
+    spawned app's actual runtime app_id doesn't match what its
+    .desktop entry hinted (not rare for Python/Electron apps launched
+    via a bare interpreter, which often report the interpreter's own
+    class instead of the app's) — never resolve at all, silently
+    dropped after MOVE_TIMEOUT_SECONDS. Found live: a spawn timing out
+    this way left its window sitting wherever the WM naturally opened
+    it — tuicc's own workspace, in the reproducing case — with no
+    resolved match to move it, which is also what triggered the
+    unrelated-looking symptom of tuicc losing fullscreen (a new tiled
+    window landing on its workspace).
+
+    provider.resolve_pid() defaults to a no-op returning None for any
+    provider that doesn't override it (sway doesn't need to — its
+    windows already carry a real pid from get_state()), so calling
+    this unconditionally is safe everywhere, just a no-op where it
+    isn't needed.
+    """
+    known_to_any_entry = set()
+    for entry in queue.entries:
+        known_to_any_entry |= entry.get("known_ids", set())
+    for w in current_windows:
+        if w.pid is None and w.id not in known_to_any_entry and w.id not in queue.claimed_ids:
+            w.pid = provider.resolve_pid(w.id)
+
+
 def process(queue: PendingMovesQueue, provider, current_windows: list[Window], dismissed: bool, now: float) -> bool:
-    """Resolves every entry in queue against current_windows: downgrades
-    an entry from pid- to app_id-matching after PID_GRACE_SECONDS (a
-    next-call handoff, not a same-tick fallback — see
+    """Resolves every entry in queue against current_windows: enriches
+    still-unknown pids via provider.resolve_pid() first (see
+    _enrich_pids — the fix for providers, i3 today, whose get_state()
+    never supplies one), downgrades an entry from pid- to app_id-
+    matching after PID_GRACE_SECONDS if that still didn't produce one
+    (a next-call handoff, not a same-tick fallback — see
     resolve_pending_move's own docstring for why that distinction
     matters), moves + optionally floats a matched window, then reclaims
     focus for tuicc unless dismissed is True — focusing a scratchpadded
@@ -189,6 +230,7 @@ def process(queue: PendingMovesQueue, provider, current_windows: list[Window], d
     switching workspace because an earlier spawn's focus_self() call
     happened to land between selecting a workspace and confirming).
     """
+    _enrich_pids(queue, provider, current_windows)
     reclaimed_focus = False
     still_pending = []
     for entry in queue.entries:

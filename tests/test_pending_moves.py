@@ -16,6 +16,7 @@ from tuicc.pending_moves import (
     queue_launcher_spawn,
     promote_restore_queue,
     process,
+    _enrich_pids,
     PID_GRACE_SECONDS,
     MOVE_TIMEOUT_SECONDS,
     RESTORE_STAGGER_SECONDS,
@@ -27,10 +28,14 @@ def _window(id, app_id, pid=None):
 
 
 class _FakeProvider:
-    def __init__(self):
+    def __init__(self, resolved_pids=None):
         self.moved = []
         self.floated = []
         self.focus_self_calls = 0
+        # window_id -> pid, what resolve_pid() "discovers" for it —
+        # mirrors a real provider's X11 lookup without touching X11.
+        self.resolved_pids = resolved_pids or {}
+        self.resolve_pid_calls = []
 
     def move_window_to_region(self, window_id, region_id):
         self.moved.append((window_id, region_id))
@@ -40,6 +45,10 @@ class _FakeProvider:
 
     def focus_self(self):
         self.focus_self_calls += 1
+
+    def resolve_pid(self, window_id):
+        self.resolve_pid_calls.append(window_id)
+        return self.resolved_pids.get(window_id)
 
 
 # ---------- basic matching ----------
@@ -385,3 +394,80 @@ def test_process_claimed_ids_clear_once_queue_fully_drained():
 
     assert queue.entries == []
     assert queue.claimed_ids == set()
+
+
+# ---------- _enrich_pids ----------
+
+def test_enrich_pids_fills_in_pid_for_a_new_unclaimed_window():
+    # Regression: on a provider whose get_state() never supplies pid
+    # (i3 — its GET_TREE has no pid field), the pid tier was
+    # structurally dead — every entry burned PID_GRACE_SECONDS then
+    # relied entirely on app_id matching, which fails outright for
+    # apps whose real runtime app_id doesn't match their .desktop
+    # entry's hint (common for Python/Electron apps launched via a
+    # bare interpreter). Found live: this left a spawn's window
+    # sitting wherever the WM opened it — unmoved — which is also
+    # what triggered tuicc losing fullscreen when that happened to be
+    # tuicc's own workspace.
+    provider = _FakeProvider(resolved_pids={"2": 555})
+    queue = PendingMovesQueue(entries=[{"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty"), _window("2", "blanket", pid=None)]
+
+    _enrich_pids(queue, provider, current)
+
+    assert current[1].pid == 555
+    assert provider.resolve_pid_calls == ["2"]
+
+
+def test_enrich_pids_skips_windows_every_entry_already_knew_about():
+    provider = _FakeProvider(resolved_pids={"1": 111})
+    queue = PendingMovesQueue(entries=[{"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty", pid=None)]
+
+    _enrich_pids(queue, provider, current)
+
+    assert current[0].pid is None
+    assert provider.resolve_pid_calls == []
+
+
+def test_enrich_pids_skips_already_claimed_windows():
+    provider = _FakeProvider(resolved_pids={"2": 555})
+    queue = PendingMovesQueue(
+        entries=[{"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}],
+        claimed_ids={"2"},
+    )
+    current = [_window("1", "kitty"), _window("2", "blanket", pid=None)]
+
+    _enrich_pids(queue, provider, current)
+
+    assert current[1].pid is None
+    assert provider.resolve_pid_calls == []
+
+
+def test_enrich_pids_leaves_an_already_known_pid_untouched():
+    provider = _FakeProvider(resolved_pids={"2": 555})
+    queue = PendingMovesQueue(entries=[{"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty"), _window("2", "blanket", pid=999)]
+
+    _enrich_pids(queue, provider, current)
+
+    assert current[1].pid == 999
+    assert provider.resolve_pid_calls == []
+
+
+def test_process_matches_via_enriched_pid_on_a_provider_with_no_native_pid():
+    # End-to-end: entry expects pid 555 (from spawn_detached), the
+    # window's own pid starts unknown (i3-shaped), process() enriches
+    # it via resolve_pid() before matching — should match immediately,
+    # not wait out PID_GRACE_SECONDS and fall through to app_id.
+    provider = _FakeProvider(resolved_pids={"2": 555})
+    queue = PendingMovesQueue(entries=[{
+        "known_ids": {"1"}, "target_region": "3", "started_at": 0.0,
+        "pid": 555, "app_id": "blanket",
+    }])
+    current = [_window("1", "kitty"), _window("2", "python3", pid=None)]  # real app_id mismatches the hint
+
+    process(queue, provider, current, dismissed=False, now=0.1)
+
+    assert provider.moved == [("2", "3")]
+    assert queue.entries == []
