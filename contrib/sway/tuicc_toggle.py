@@ -38,33 +38,32 @@ Setup:
      whichever terminal you choose).
   2. Make this file executable: chmod +x tuicc_toggle.py
   3. Bind a key to it, e.g. (sway config):
-       for_window [app_id="tuicc_scratch"] floating enable
-       for_window [class="tuicc_scratch"] floating enable
+       for_window [app_id="tuicc_scratch"] floating enable, fullscreen enable
+       for_window [class="tuicc_scratch"] floating enable, fullscreen enable
        bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
      replacing whatever direct `exec kitty --app-id ... -e ...` line
      README's "Summoning tuicc" section has you start with. Don't also
      keep a static `for_window ... move scratchpad` rule alongside
      this script — that rule hides tuicc the instant it maps, before
      this script's first launch ever gets to show it. `floating
-     enable` alone is enough; this script does the scratchpad
-     move/show itself.
+     enable, fullscreen enable` alone is enough; this script does the
+     scratchpad move/show itself.
 
-If you've ALSO added `fullscreen enable` to your own `for_window`
-rule for tuicc's window (README's documented setup doesn't, but it's
-a common tweak for a truly-fullscreen feel) — note that sway can't
-hold a container in genuine fullscreen state while it's hidden in the
-scratchpad, so `move scratchpad` silently drops it back to plain
-floating; showing it again won't restore fullscreen on its own. This
-matters beyond looks: while a container is truly fullscreen, sway
-won't let anything else on that workspace steal keyboard focus, which
-is what makes spawning from tuicc's launcher reliable after the first
-summon (see main.py's `focus_self()` docstring for the same problem
-from tuicc's own side — that fix helps, but real fullscreen prevents
-the steal outright instead of just correcting it afterward). If you
-use fullscreen, chain `, fullscreen enable` onto the `"scratchpad
-show"`/`"focus"` action strings passed to _run_for_both_criteria()
-below (not onto `"move scratchpad"` — you're hiding it there, not
-showing it).
+This script (and the for_window rule above) default to fullscreen,
+not just floating — sway can't hold a container in genuine fullscreen
+state while it's hidden in the scratchpad, so `move scratchpad` drops
+it back to plain floating on its own; re-asserting `fullscreen enable`
+is why `_run_for_both_criteria()` chains it onto the `"scratchpad
+show"`/`"focus"` actions below (never onto `"move scratchpad"` —
+you're hiding it there, not showing it). This matters beyond looks:
+while a container is truly fullscreen, sway won't let anything else on
+that workspace steal keyboard focus, which is what makes spawning from
+tuicc's launcher reliable after the first summon (see main.py's
+`focus_self()` docstring for the same problem from tuicc's own side —
+that fix helps, but real fullscreen prevents the steal outright
+instead of just correcting it afterward). Want plain floating instead?
+Drop `, fullscreen enable` from both the for_window rule above and the
+two action strings in main() below.
 """
 import json
 import subprocess
@@ -108,9 +107,9 @@ def main():
     if node.get("focused"):
         _run_for_both_criteria("move scratchpad")
     elif workspace_name == "__i3_scratch":
-        _run_for_both_criteria("scratchpad show")
+        _run_for_both_criteria("scratchpad show, fullscreen enable")
     else:
-        _run_for_both_criteria("focus")
+        _run_for_both_criteria("focus, fullscreen enable")
 
 
 if __name__ == "__main__":

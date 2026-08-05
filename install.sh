@@ -251,8 +251,8 @@ if [ "$WM" = "sway" ]; then
     WM_CONFIG_PATH="$HOME/.config/sway/config"
     BLOCK=$(cat <<EOF
 # tuicc (added by install.sh)
-for_window [app_id="$APP_ID"] floating enable
-for_window [class="$APP_ID"] floating enable
+for_window [app_id="$APP_ID"] floating enable, fullscreen enable
+for_window [class="$APP_ID"] floating enable, fullscreen enable
 bindsym $KEYBIND exec $TOGGLE_DST
 EOF
 )
@@ -260,7 +260,7 @@ else
     WM_CONFIG_PATH="$HOME/.config/i3/config"
     BLOCK=$(cat <<EOF
 # tuicc (added by install.sh)
-for_window [class="$APP_ID"] floating enable
+for_window [class="$APP_ID"] floating enable, fullscreen enable
 bindsym $KEYBIND exec --no-startup-id $TOGGLE_DST
 EOF
 )

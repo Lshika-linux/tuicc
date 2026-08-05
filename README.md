@@ -194,14 +194,18 @@ it, then:
 
 ```
 # ~/.config/sway/config
-for_window [app_id="tuicc_scratch"] floating enable
+for_window [app_id="tuicc_scratch"] floating enable, fullscreen enable
 bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
 ```
 
 Don't add a static `for_window ... move scratchpad` rule alongside
 this — the script does the scratchpad move/show itself, and a static
 rule would hide tuicc the instant it maps, before the script's first
-launch ever gets to show it.
+launch ever gets to show it. The script also re-asserts `fullscreen
+enable` on every show/focus (sway drops it back to plain floating
+whenever a container is hidden in the scratchpad) — drop `, fullscreen
+enable` from the rule above and from the toggle script's own action
+strings if you'd rather have tuicc float instead.
 
 If you'd rather not use the toggle script, a plain three-line summon
 still works, just with separate implicit show/hide instead of one
@@ -222,9 +226,13 @@ invocation):
 
 ```
 # ~/.config/i3/config
-for_window [class="tuicc_scratch"] floating enable
+for_window [class="tuicc_scratch"] floating enable, fullscreen enable
 bindsym $mod+Tab exec --no-startup-id ~/scripts_i3/tuicc_toggle.py
 ```
+
+Same deal as sway above — the toggle script re-asserts `fullscreen
+enable` on every show/focus, so drop it from both the rule and the
+script's action strings if you'd rather have tuicc float instead.
 
 Or, without the toggle script:
 

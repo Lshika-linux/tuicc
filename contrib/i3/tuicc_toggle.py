@@ -16,6 +16,7 @@ Setup:
      command verbatim).
   2. Make this file executable: chmod +x tuicc_toggle.py
   3. Bind a key to it, e.g. (i3 config):
+       for_window [class="tuicc_scratch"] floating enable, fullscreen enable
        bindsym $mod+Tab exec --no-startup-id ~/scripts_i3/tuicc_toggle.py
      replacing whatever direct `exec --no-startup-id kitty --app-id ...`
      line README's "Summoning tuicc" section has you start with. Don't
@@ -23,8 +24,16 @@ Setup:
      scratchpad` rule alongside this script — see the for_window note
      in README's toggle-script paragraph for why that combination
      hides tuicc again immediately after this script's first launch,
-     before you ever see it. `floating enable` alone is enough; this
-     script does the scratchpad move/show itself.
+     before you ever see it. `floating enable, fullscreen enable` alone
+     is enough; this script does the scratchpad move/show itself.
+
+Defaults to fullscreen, not just floating — i3 drops fullscreen back
+to plain floating once a container is hidden in the scratchpad, same
+as sway, so `scratchpad show`/`focus` below re-assert `fullscreen
+enable` explicitly (never `move scratchpad` — you're hiding it there,
+not showing it). Want plain floating instead? Drop `, fullscreen
+enable` from both the for_window rule above and the two action
+strings in main() below.
 """
 import json
 import subprocess
@@ -59,9 +68,9 @@ def main():
     if node.get("focused"):
         subprocess.run(["i3-msg", f'[class="{APP_ID}"] move scratchpad'])
     elif workspace_name == "__i3_scratch":
-        subprocess.run(["i3-msg", f'[class="{APP_ID}"] scratchpad show'])
+        subprocess.run(["i3-msg", f'[class="{APP_ID}"] scratchpad show, fullscreen enable'])
     else:
-        subprocess.run(["i3-msg", f'[class="{APP_ID}"] focus'])
+        subprocess.run(["i3-msg", f'[class="{APP_ID}"] focus, fullscreen enable'])
 
 
 if __name__ == "__main__":
