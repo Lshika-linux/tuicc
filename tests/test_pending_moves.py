@@ -395,6 +395,44 @@ def test_process_no_match_past_timeout_is_dropped():
     assert queue.entries == []
 
 
+def test_process_reclaims_focus_when_entry_times_out_unmatched():
+    # A spawn whose window never resolves (pid never enriched in time,
+    # app_id mismatched its .desktop hint — the exact failure mode that
+    # left tuicc stuck non-fullscreen and unfocused indefinitely, found
+    # live on i3) must not hold tuicc's own recovery hostage forever:
+    # give up on the match, but still reclaim focus.
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": {"1"}, "target_region": "3", "started_at": 0.0,
+        "pid": 999, "app_id": "obsidian",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]  # no matching window ever shows up
+
+    result = process(
+        queue, provider, current, dismissed=False,
+        now=MOVE_TIMEOUT_SECONDS + 1, fullscreen_only=True,
+    )
+
+    assert queue.entries == []
+    assert provider.moved == []
+    assert provider.focus_self_calls == 1
+    assert provider.focus_self_fullscreen_args == [True]
+    assert result is True
+
+
+def test_process_does_not_reclaim_focus_on_timeout_while_dismissed():
+    provider = _FakeProvider()
+    entry = {"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]
+
+    result = process(queue, provider, current, dismissed=True, now=MOVE_TIMEOUT_SECONDS + 1)
+
+    assert provider.focus_self_calls == 0
+    assert result is False
+
+
 def test_process_pid_downgrades_to_app_id_after_grace_period():
     provider = _FakeProvider()
     entry = {"known_ids": set(), "target_region": "3", "started_at": 0.0, "pid": 999, "app_id": "kitty"}

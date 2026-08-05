@@ -32,7 +32,23 @@ from dataclasses import dataclass, field
 from tuicc.actions import spawn_detached
 from tuicc.model import Window
 
-PID_GRACE_SECONDS = 1.5
+# How long an entry keeps waiting on an exact pid match before process()
+# downgrades it to app_id-tier matching instead (see process()'s loop).
+# Was 1.5s until live i3 testing surfaced a real race: _enrich_pids()'s
+# provider.resolve_pid() (a full get_tree() round-trip + a fresh Xlib
+# connection per call, see i3.py's _x11_pid_for_window) isn't guaranteed
+# to resolve a freshly-mapped window's pid within 1.5s, and once an entry
+# downgrades, the pid tier is gone for good — resolve_pending_move's
+# tiers are exclusive, not a cascade, so a *later* successful enrichment
+# can no longer help. If the app_id it falls back to also doesn't match
+# (common on i3: a Python/Electron app's real WM_CLASS often isn't its
+# .desktop-derived hint, see _enrich_pids's docstring), the entry just
+# times out unmatched at MOVE_TIMEOUT_SECONDS with nothing left to try.
+# Widened to leave the slower, async i3 enrichment path a real chance to
+# land before giving up on the more precise signal, while still leaving
+# a couple of seconds of runway for the app_id fallback before the hard
+# timeout.
+PID_GRACE_SECONDS = 6.0
 MOVE_TIMEOUT_SECONDS = 8.0
 RESTORE_STAGGER_SECONDS = 0.3
 
@@ -219,8 +235,17 @@ def process(
     tuicc was deliberately dismissed after the spawn but before it
     resolved (see main.py's own `dismissed` comment for the full story,
     including its one known, narrow limitation). Entries that neither
-    match nor are within MOVE_TIMEOUT_SECONDS are silently dropped —
-    give-up-by-omission, not an explicit failure state.
+    match nor are within MOVE_TIMEOUT_SECONDS are dropped — but even
+    then, tuicc still reclaims its own focus (unless dismissed) before
+    dropping one: the spawned window's own placement failing (pid never
+    enriched in time, app_id mismatched its .desktop hint, or it never
+    launched at all) is a separate concern from tuicc's own fullscreen/
+    focus, which the transient-co-location problem (see focus_self()'s
+    docstring) already broke the moment the new window mapped. Found
+    live: without this, a spawn that timed out unmatched left tuicc's
+    own window stuck floating and unfocused indefinitely — well past
+    MOVE_TIMEOUT_SECONDS — with nothing left in the queue to ever call
+    focus_self() again on its behalf.
 
     fullscreen_only (from `[wm] fullscreen_only` in config.toml) is
     passed straight through to provider.focus_self() — see that
@@ -257,6 +282,12 @@ def process(
                 reclaimed_focus = True
         elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
             still_pending.append(entry)
+        elif not dismissed:
+            # Giving up on this entry's match — see the docstring above
+            # for why tuicc's own focus/fullscreen recovery must not
+            # wait on that outcome.
+            provider.focus_self(fullscreen=fullscreen_only)
+            reclaimed_focus = True
     queue.entries = still_pending
     if not queue.entries:
         queue.claimed_ids.clear()
