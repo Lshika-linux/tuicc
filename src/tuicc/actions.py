@@ -62,6 +62,17 @@ class ActionContext:
     # processing). Shared mutable resource a handler can act on,
     # same shape as connectivity above.
     restore_queue: list = field(default_factory=list)
+    # A handler sets this to a region id to ask main.py to move
+    # selection to that region's sidebar item right after this action
+    # resolves — sessions.py's "load" branch sets it to wherever tuicc's
+    # own window currently lives (ctx.provider.get_state().focused_region_id
+    # — already tuicc's own region whenever tuicc has WM focus, see
+    # CLAUDE.md), so confirming a session load returns you to the
+    # sidebar instead of leaving the cursor sitting in the Sessions
+    # module. None (the default) means no request; main.py clears it
+    # back to None once consumed — a single-use signal, same "read once,
+    # reset" idiom as main.py's own expect_focus_reclaim.
+    reselect_region_id: str | None = None
 
 
 def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
@@ -212,6 +223,7 @@ def handle_pending_confirm(ctx, pending, key, cfg):
                         for window in region.windows:
                             ctx.provider.close_window(window.id)
             ctx.restore_queue.extend(pending["restore_entries"])
+            ctx.reselect_region_id = ctx.provider.get_state().focused_region_id
         else:
             spawn_detached(pending["command"], pending["shell_true"])
         return pending["dismiss_after_confirm"], None

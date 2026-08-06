@@ -194,6 +194,25 @@ def main(stdscr):
     def do_enter_help():
         help_mode.enter(help_state)
 
+    def do_apply_reselect():
+        # See ActionContext.reselect_region_id's docstring — consumed
+        # once, right after any dispatch/confirm site that might have
+        # set it (currently only sessions.py's "load" branch). Looks up
+        # a real region NavItem instead of hardcoding an id-prefix
+        # convention here, since which module actually owns "region"
+        # items (sidebar vs sidebar_compact) is a preset/config choice,
+        # not something main.py should assume.
+        nonlocal selected_id, active_module, focus_id
+        if action_ctx.reselect_region_id is None:
+            return
+        region_item = next(
+            (it for it in ordered if it.target_kind == "region" and it.focus_target == action_ctx.reselect_region_id),
+            None,
+        )
+        if region_item is not None:
+            selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
+        action_ctx.reselect_region_id = None
+
     # No `break` anywhere below this point — tuicc's lifecycle model
     # (VISION.md section 2) is a persistent process the WM shows/hides;
     # every former "exit" site now calls provider.dismiss_self() and
@@ -255,10 +274,34 @@ def main(stdscr):
                 # process()'s own docstring for why it's skipped while
                 # dismissed (and for what its return value means, consumed
                 # by the transition detector above on the NEXT frame).
-                if pending_moves.process(
+                reclaimed_focus, resolved_target_regions = pending_moves.process(
                     moves, provider, current_windows, dismissed, time.monotonic(), cfg.fullscreen_only,
-                ):
+                    own_region_id=last_focused_region_id,
+                )
+                if reclaimed_focus:
                     expect_focus_reclaim = True
+                if resolved_target_regions and (focus_id is None or focus_id == last_focused_region_id):
+                    # expect_focus_reclaim (above) suppresses the real-
+                    # focus-transition reset for as long as a restore/
+                    # spawn is still resolving matches — necessarily, since
+                    # tuicc reclaiming its own focus each round would
+                    # otherwise look identical to a real external
+                    # transition and wipe out the in-progress session's
+                    # selection. But that also means focus_id (and so the
+                    # preview panel, which follows focus_id — see
+                    # preview.py) never gets a chance to move to wherever
+                    # the restore/spawn actually landed, until something
+                    # else eventually forces a real reset (dismiss+
+                    # resummon). Only auto-follow when focus_id currently
+                    # just mirrors tuicc's own live region (nothing
+                    # deliberately selected elsewhere in the sidebar) — a
+                    # manually-selected focus_id must never be silently
+                    # overridden by a spawn resolving in the background.
+                    # Found live: preview staying blank forever (not just
+                    # during the transient co-location window) after a
+                    # session restore completed, for the rest of that
+                    # same tuicc toggle.
+                    focus_id = resolved_target_regions[-1]
 
             ctx = RenderContext(
                 state=state,
@@ -349,6 +392,7 @@ def main(stdscr):
 
             if pending_confirm is not None:
                 should_dismiss, pending_confirm = handle_pending_confirm(action_ctx, pending_confirm, key, cfg)
+                do_apply_reselect()
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
@@ -361,6 +405,7 @@ def main(stdscr):
                 # dispatch_action's docstring for why this makes an
                 # unconditional assignment safe).
                 should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
+                do_apply_reselect()
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
@@ -539,6 +584,7 @@ def main(stdscr):
                 # pending_confirm is always None here — same invariant
                 # as the global-shortcut tier above.
                 should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
+                do_apply_reselect()
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()

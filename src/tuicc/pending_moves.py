@@ -252,7 +252,8 @@ def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Windo
 def process(
     queue: PendingMovesQueue, provider, current_windows: list[Window],
     dismissed: bool, now: float, fullscreen_only: bool = False,
-) -> bool:
+    own_region_id: str | None = None,
+) -> tuple[bool, list[str]]:
     """Resolves every entry in queue against current_windows: enriches
     still-unknown pids via provider.resolve_pid() first (see
     _enrich_pids — the fix for providers, i3 today, whose get_state()
@@ -283,19 +284,49 @@ def process(
     method's docstring for why reclaiming focus alone isn't enough to
     keep a fullscreen tuicc fullscreen through a spawn/restore.
 
-    Returns whether focus_self() was called this round — a real WM-
-    focus transition, but a self-inflicted one, not the user having
-    switched to a different real context. main.py's loop needs to
-    know this to avoid its own "real WM-focus transition" detector
+    Returns (reclaimed_focus, resolved_target_regions).
+
+    reclaimed_focus is whether focus_self() was called this round — a
+    real WM-focus transition, but a self-inflicted one, not the user
+    having switched to a different real context. main.py's loop needs
+    to know this to avoid its own "real WM-focus transition" detector
     (see its comment) misreading tuicc reclaiming its own focus as the
     user having gone elsewhere, which would otherwise silently reset
     selected_id/focus_id mid-launcher-session — see the regression
     test for the concrete bug this caused (a spawn's target silently
     switching workspace because an earlier spawn's focus_self() call
     happened to land between selecting a workspace and confirming).
+
+    resolved_target_regions lists the target_region of every entry that
+    actually matched a window this round — never the give-up-unmatched
+    path, which has no real destination to report. main.py uses this to
+    let focus_id (and so the preview panel) follow a spawn/restore to
+    wherever it actually landed: expect_focus_reclaim (set whenever
+    reclaimed_focus is True) suppresses the normal real-focus-transition
+    reset for the entire duration of a restore, so without this,
+    focus_id stays stuck on wherever it was before the restore started
+    until an unrelated external focus change eventually resets it.
+    Found live: the preview panel showing nothing, indefinitely, after
+    a session restore completed, for the rest of that same tuicc
+    toggle — not a transient blank during the restore itself, but a
+    permanent one until dismiss+resummon forced a real reset.
+
+    own_region_id (main.py's last_focused_region_id — wherever tuicc's
+    own window currently lives) is compared against each resolving
+    entry's target_region to decide whether to ask focus_self() for
+    force_relayout — see that method's docstring. Separate, structural
+    problem from the two above: a window landing on the SAME workspace
+    as a persistently-fullscreen tuicc never gets a real rect computed
+    for it at all (sway/i3 suppress tiling layout entirely for a
+    fullscreen container's workspace), so its preview box stays blank
+    even once focus_id correctly points at it. None (the default) never
+    requests force_relayout — a caller that doesn't track its own
+    region simply doesn't get this fix, same as omitting fullscreen_only
+    leaves the plain-focus-only behavior untouched.
     """
     _enrich_pids(queue, provider, current_windows)
     reclaimed_focus = False
+    resolved_target_regions = []
     still_pending = []
     for entry in queue.entries:
         if (entry.get("pid") is not None and entry.get("app_id") is not None
@@ -306,10 +337,12 @@ def process(
         if match is not None:
             queue.claimed_ids.add(match.id)
             provider.move_window_to_region(match.id, entry["target_region"])
+            resolved_target_regions.append(entry["target_region"])
             if entry.get("floating"):
                 provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
             if not dismissed:
-                provider.focus_self(fullscreen=fullscreen_only)
+                force_relayout = own_region_id is not None and entry["target_region"] == own_region_id
+                provider.focus_self(fullscreen=fullscreen_only, force_relayout=force_relayout)
                 reclaimed_focus = True
         elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
             still_pending.append(entry)
@@ -322,4 +355,4 @@ def process(
     queue.entries = still_pending
     if not queue.entries:
         queue.claimed_ids.clear()
-    return reclaimed_focus
+    return reclaimed_focus, resolved_target_regions

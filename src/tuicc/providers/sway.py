@@ -124,8 +124,18 @@ class SwayProvider(Provider):
     def dismiss_self(self) -> None:
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")
 
-    def focus_self(self, fullscreen: bool = False) -> None:
-        action = "focus, fullscreen enable" if fullscreen else "focus"
+    def focus_self(self, fullscreen: bool = False, force_relayout: bool = False) -> None:
+        if fullscreen and force_relayout:
+            # See Provider.focus_self()'s docstring: forces sway to run
+            # a real layout pass for tuicc's own workspace, which is
+            # otherwise suppressed the entire time tuicc stays
+            # fullscreen — the fix for a sibling window landing there
+            # and never getting a real rect computed for it.
+            action = "focus, fullscreen disable, fullscreen enable"
+        elif fullscreen:
+            action = "focus, fullscreen enable"
+        else:
+            action = "focus"
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] {action}")
 
     def no_focus_next_window(self, pid: int) -> None:

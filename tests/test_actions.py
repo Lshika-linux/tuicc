@@ -30,6 +30,7 @@ class _FakeProvider:
         self.focused_window = None
         self.closed_windows = []
         self.regions = []
+        self.focused_region_id = None
 
     def focus_region(self, region_id):
         self.focused_region = region_id
@@ -41,7 +42,7 @@ class _FakeProvider:
         self.closed_windows.append(window_id)
 
     def get_state(self):
-        return SimpleNamespace(regions=self.regions)
+        return SimpleNamespace(regions=self.regions, focused_region_id=self.focused_region_id)
 
 
 def test_region_handler_calls_focus_region():
@@ -281,6 +282,24 @@ def test_handle_pending_confirm_yes_restore_shaped_extends_restore_queue():
 
     assert ctx.restore_queue == [{"cmdline": ["kitty"]}]
     assert (should_dismiss, new_pending) == (False, None)
+
+
+def test_handle_pending_confirm_yes_restore_shaped_sets_reselect_region_id():
+    # See ActionContext.reselect_region_id's docstring — the confirm-
+    # needed load path (kill_regions overlap) sets it here, once the
+    # restore is actually committed, mirroring the direct no-confirm
+    # path in sessions.py's handle_slot.
+    provider = _FakeProvider()
+    provider.focused_region_id = "1"
+    ctx = ActionContext(provider=provider, connectivity=None)
+    pending = {
+        "restore_entries": [{"cmdline": ["kitty"]}],
+        "dismiss_after_confirm": False,
+    }
+
+    handle_pending_confirm(ctx, pending, ord("y"), _cfg)
+
+    assert ctx.reselect_region_id == "1"
 
 
 def test_handle_pending_confirm_yes_restore_shaped_with_kill_regions_closes_matched_windows():

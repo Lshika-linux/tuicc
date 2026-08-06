@@ -13,17 +13,19 @@ from tuicc.session import save_session
 
 
 class _FakeProvider:
-    def __init__(self, regions=()):
+    def __init__(self, regions=(), focused_region_id=None):
         self._regions = regions
+        self._focused_region_id = focused_region_id
 
     def get_state(self):
-        return WMState(regions=list(self._regions))
+        return WMState(regions=list(self._regions), focused_region_id=self._focused_region_id)
 
 
 class _FakeCtx:
     def __init__(self, provider=None):
         self.provider = provider or _FakeProvider()
         self.restore_queue = []
+        self.reselect_region_id = None
 
 
 # ---------- handle_mode ----------
@@ -98,6 +100,25 @@ def test_handle_slot_load_target_empty_queues_without_asking(tmp_path, monkeypat
     assert len(ctx.restore_queue) == 1
 
 
+def test_handle_slot_load_sets_reselect_region_id_to_tuiccs_own_region(tmp_path, monkeypatch):
+    # See ActionContext.reselect_region_id's docstring — main.py bounces
+    # selection back to the sidebar's own-workspace item after a load,
+    # instead of leaving the cursor sitting in the Sessions module.
+    monkeypatch.setattr(sessions_module, "SESSIONS_DIR", tmp_path)
+    save_session(
+        [{"app_id": "kitty", "cmdline": ["kitty"], "target_region": "5", "floating": False}],
+        tmp_path / "2.toml",
+    )
+    sessions_module._active_mode = "load"
+    provider = _FakeProvider(focused_region_id="1")
+    ctx = _FakeCtx(provider=provider)
+    item = SimpleNamespace(focus_target="2")
+
+    handle_slot(ctx, item, cfg=None)
+
+    assert ctx.reselect_region_id == "1"
+
+
 def test_handle_slot_load_target_occupied_asks_for_confirmation(tmp_path, monkeypatch):
     # Target region "5" already has a window on it — must warn instead
     # of silently piling the restored window on top.
@@ -120,6 +141,9 @@ def test_handle_slot_load_target_occupied_asks_for_confirmation(tmp_path, monkey
     assert pending["dismiss_after_confirm"] is False
     assert pending["kill_regions"] == ["5"]
     assert len(pending["restore_entries"]) == 1
+    # Not set yet on this path — the restore itself is deferred until
+    # confirm_yes (handle_pending_confirm sets it then, see test_actions.py).
+    assert ctx.reselect_region_id is None
 
 
 # ---------- handle_slot: delete ----------

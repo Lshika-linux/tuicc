@@ -154,6 +154,34 @@ def test_sway_focus_self_fullscreen():
     assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus, fullscreen enable"]
 
 
+def test_sway_focus_self_force_relayout():
+    # See Provider.focus_self()'s docstring: forces sway to run a real
+    # layout pass for tuicc's own workspace by briefly toggling
+    # fullscreen off and back on — the fix for a sibling window landing
+    # there never getting a real rect computed while tuicc stays
+    # fullscreen without interruption.
+    import os
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.focus_self(fullscreen=True, force_relayout=True)
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus, fullscreen disable, fullscreen enable"]
+
+
+def test_sway_focus_self_force_relayout_ignored_without_fullscreen():
+    # force_relayout is only meaningful alongside fullscreen=True — a
+    # non-fullscreen tuicc never suppresses its workspace's layout in
+    # the first place, nothing to work around.
+    import os
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.focus_self(fullscreen=False, force_relayout=True)
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus"]
+
+
 def test_i3_focus_self():
     import os
     conn = FakeConnection()
@@ -172,6 +200,26 @@ def test_i3_focus_self_fullscreen():
     provider.focus_self(fullscreen=True)
 
     assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus, fullscreen enable"]
+
+
+def test_i3_focus_self_force_relayout():
+    import os
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.focus_self(fullscreen=True, force_relayout=True)
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus, fullscreen disable, fullscreen enable"]
+
+
+def test_i3_focus_self_force_relayout_ignored_without_fullscreen():
+    import os
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    provider.focus_self(fullscreen=False, force_relayout=True)
+
+    assert conn.commands == [f"[con_mark=_tuicc_self_{os.getpid()}] focus"]
 
 
 def test_sway_no_focus_next_window():

@@ -99,7 +99,7 @@ class Provider(ABC):
         """
         pass
 
-    def focus_self(self, fullscreen: bool = False) -> None:
+    def focus_self(self, fullscreen: bool = False, force_relayout: bool = False) -> None:
         """
         Reclaim keyboard focus for tuicc's own window — called by
         pending_moves.process() right after it moves a freshly spawned
@@ -134,6 +134,35 @@ class Provider(ABC):
         False so a provider ignoring this argument (or a caller not
         passing it) keeps today's plain-focus behavior — never forces
         fullscreen on a setup that never asked for it.
+
+        force_relayout (only ever passed True by pending_moves.process()
+        when a match resolves onto tuicc's OWN region — see its
+        docstring) works around a separate, sway/i3-structural problem:
+        a container with fullscreen_mode=1 suppresses tiling-layout
+        computation entirely for the rest of its workspace, so a
+        sibling window that maps onto the SAME workspace as a
+        persistently-fullscreen tuicc never gets a real rect computed
+        for it at all — stuck at {0,0,0,0} — for as long as tuicc stays
+        fullscreen without interruption. Confirmed live: preview.py
+        (which draws windows from their rect) shows nothing for that
+        window, indefinitely, until something forces sway to actually
+        run a layout pass for that workspace (observed happening
+        incidentally on a manual dismiss+resummon, which drops tuicc
+        out of fullscreen entirely and back). True asks the
+        implementation to force that layout pass itself — briefly
+        toggling fullscreen off and back on — right at the moment a
+        match resolves onto tuicc's own workspace, instead of leaving
+        the window's rect broken until an unrelated dismiss/resummon
+        happens to fix it as a side effect. Only meaningful combined
+        with fullscreen=True (a non-fullscreen tuicc never suppresses
+        its workspace's layout in the first place); a provider may
+        ignore it if fullscreen is False. Relies on the floating
+        geometry being pinned to the full output (see
+        no_focus_next_window()'s docstring and install.sh's `move
+        position 0 0, resize set 100 ppt 100 ppt` for_window rule) so
+        the brief non-fullscreen instant this causes has no size to
+        visibly blink through — default False so this never fires for
+        a setup that hasn't confirmed that geometry pin is in place.
 
         NOT abstract, default no-op: only meaningful for a WM that can
         both (a) focus a specific window on demand and (b) actually

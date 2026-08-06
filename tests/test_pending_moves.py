@@ -33,6 +33,7 @@ class _FakeProvider:
         self.floated = []
         self.focus_self_calls = 0
         self.focus_self_fullscreen_args = []
+        self.focus_self_force_relayout_args = []
         # window_id -> pid, what resolve_pid() "discovers" for it —
         # mirrors a real provider's X11 lookup without touching X11.
         self.resolved_pids = resolved_pids or {}
@@ -45,9 +46,10 @@ class _FakeProvider:
     def set_floating_geometry(self, window_id, region_id, rect):
         self.floated.append((window_id, region_id, rect))
 
-    def focus_self(self, fullscreen=False):
+    def focus_self(self, fullscreen=False, force_relayout=False):
         self.focus_self_calls += 1
         self.focus_self_fullscreen_args.append(fullscreen)
+        self.focus_self_force_relayout_args.append(force_relayout)
 
     def resolve_pid(self, window_id):
         self.resolve_pid_calls.append(window_id)
@@ -332,10 +334,11 @@ def test_process_focus_self_called_when_not_dismissed():
     queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty")]
 
-    result = process(queue, provider, current, dismissed=False, now=1.0)
+    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
 
     assert provider.focus_self_calls == 1
-    assert result is True
+    assert reclaimed_focus is True
+    assert resolved_target_regions == ["3"]
 
 
 def test_process_defaults_to_not_fullscreen():
@@ -380,11 +383,12 @@ def test_process_focus_self_not_called_when_dismissed():
     queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty")]
 
-    result = process(queue, provider, current, dismissed=True, now=1.0)
+    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=True, now=1.0)
 
     assert provider.moved == [("1", "3")]
     assert provider.focus_self_calls == 0
-    assert result is False
+    assert reclaimed_focus is False
+    assert resolved_target_regions == ["3"]  # matched+moved regardless of dismissed; only focus_self() is gated
 
 
 def test_process_returns_false_when_nothing_resolves():
@@ -396,9 +400,10 @@ def test_process_returns_false_when_nothing_resolves():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]  # no new window
 
-    result = process(queue, provider, current, dismissed=False, now=1.0)
+    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
 
-    assert result is False
+    assert reclaimed_focus is False
+    assert resolved_target_regions == []
 
 
 def test_process_floating_entry_calls_set_floating_geometry():
@@ -451,7 +456,7 @@ def test_process_reclaims_focus_when_entry_times_out_unmatched():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]  # no matching window ever shows up
 
-    result = process(
+    reclaimed_focus, resolved_target_regions = process(
         queue, provider, current, dismissed=False,
         now=MOVE_TIMEOUT_SECONDS + 1, fullscreen_only=True,
     )
@@ -460,7 +465,8 @@ def test_process_reclaims_focus_when_entry_times_out_unmatched():
     assert provider.moved == []
     assert provider.focus_self_calls == 1
     assert provider.focus_self_fullscreen_args == [True]
-    assert result is True
+    assert reclaimed_focus is True
+    assert resolved_target_regions == []  # gave up unmatched — no real destination to report
 
 
 def test_process_does_not_reclaim_focus_on_timeout_while_dismissed():
@@ -469,10 +475,11 @@ def test_process_does_not_reclaim_focus_on_timeout_while_dismissed():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]
 
-    result = process(queue, provider, current, dismissed=True, now=MOVE_TIMEOUT_SECONDS + 1)
+    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=True, now=MOVE_TIMEOUT_SECONDS + 1)
 
     assert provider.focus_self_calls == 0
-    assert result is False
+    assert reclaimed_focus is False
+    assert resolved_target_regions == []
 
 
 def test_process_pid_downgrades_to_app_id_after_grace_period():
@@ -510,6 +517,113 @@ def test_process_claimed_ids_clear_once_queue_fully_drained():
 
     assert queue.entries == []
     assert queue.claimed_ids == set()
+
+
+# ---------- process: resolved_target_regions ----------
+# The fix for main.py's focus_id auto-follow (see its own comment at the
+# pending_moves.process() call site): focus_id/the preview panel staying
+# blank forever after a session restore completed, not just during the
+# transient co-location window, because expect_focus_reclaim suppresses
+# the real-focus-transition reset for the entirety of a restore. main.py
+# needs to know exactly which target_regions a round of process() really
+# resolved a window onto, so it can move focus_id to follow.
+
+def test_process_resolved_target_regions_lists_every_match_this_round():
+    provider = _FakeProvider()
+    entry_a = {"known_ids": set(), "target_region": "1", "started_at": 0.0}
+    entry_b = {"known_ids": set(), "target_region": "2", "started_at": 0.0}
+    queue = PendingMovesQueue(entries=[entry_a, entry_b])
+    current = [_window("1", "kitty"), _window("2", "firefox")]
+
+    _, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert resolved_target_regions == ["1", "2"]
+
+
+def test_process_resolved_target_regions_omits_still_pending_entries():
+    provider = _FakeProvider()
+    entry = {"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]  # no new window yet — still within timeout
+
+    _, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert resolved_target_regions == []
+    assert queue.entries == [entry]
+
+
+def test_process_resolved_target_regions_includes_a_match_even_while_dismissed():
+    # Matching/moving still happens while dismissed — only focus_self()
+    # is gated. main.py's own auto-follow logic additionally checks
+    # focus_id before acting on this, so a stray follow while tuicc is
+    # hidden isn't a concern at this layer.
+    provider = _FakeProvider()
+    entry = {"known_ids": set(), "target_region": "7", "started_at": 0.0}
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]
+
+    _, resolved_target_regions = process(queue, provider, current, dismissed=True, now=1.0)
+
+    assert resolved_target_regions == ["7"]
+
+
+# ---------- process: force_relayout ----------
+# Separate, sway/i3-structural fix from resolved_target_regions above:
+# a fullscreen tuicc suppresses tiling-layout computation for its own
+# workspace entirely, so a window landing on that SAME workspace never
+# gets a real rect computed for it — stuck blank in the preview — even
+# once focus_id correctly points at it. force_relayout asks focus_self()
+# to force a layout pass by briefly toggling fullscreen off and back on,
+# but only when it's actually needed: the resolving entry's target is
+# tuicc's own current region (own_region_id).
+
+def test_process_requests_force_relayout_when_target_matches_own_region():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0, fullscreen_only=True, own_region_id="3")
+
+    assert provider.focus_self_force_relayout_args == [True]
+
+
+def test_process_does_not_request_force_relayout_for_a_different_target():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0, fullscreen_only=True, own_region_id="9")
+
+    assert provider.focus_self_force_relayout_args == [False]
+
+
+def test_process_does_not_request_force_relayout_when_own_region_id_omitted():
+    # Default None — a caller that doesn't track its own region simply
+    # doesn't get this fix, same as main.py's own behavior before
+    # last_focused_region_id is threaded through.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0, fullscreen_only=True)
+
+    assert provider.focus_self_force_relayout_args == [False]
+
+
+def test_process_does_not_request_force_relayout_on_give_up_timeout():
+    # Nothing actually resolved onto own_region_id in the give-up path
+    # — there's no new rect to fix.
+    provider = _FakeProvider()
+    entry = {"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]  # no matching window ever shows up
+
+    process(
+        queue, provider, current, dismissed=False,
+        now=MOVE_TIMEOUT_SECONDS + 1, fullscreen_only=True, own_region_id="3",
+    )
+
+    assert provider.focus_self_force_relayout_args == [False]
 
 
 # ---------- _enrich_pids ----------

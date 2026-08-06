@@ -156,6 +156,10 @@ def handle_slot(ctx, item, cfg):
             }
 
         ctx.restore_queue.extend(entries)
+        # See ActionContext.reselect_region_id's docstring — bounces
+        # selection back to the sidebar's own-workspace item instead of
+        # leaving it sitting in the Sessions module after a load.
+        ctx.reselect_region_id = ctx.provider.get_state().focused_region_id
         return False, None
 
     if _active_mode == "delete":
