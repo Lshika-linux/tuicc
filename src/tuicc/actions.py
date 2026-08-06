@@ -45,7 +45,7 @@ class ActionContext:
     restore_queue: list = field(default_factory=list)
 
 
-def spawn_detached(cmd, shell_true=False):
+def spawn_detached(cmd, shell_true=False, log_path=None):
     """Run cmd as a detached background process that survives tuicc
     exiting right after this call.
 
@@ -67,6 +67,19 @@ def spawn_detached(cmd, shell_true=False):
     one. The pid is only ever exact for the shell_true=False path: with
     shell_true=True the pid belongs to the shell, not necessarily the
     GUI process it eventually execs.
+
+    log_path=None (the default, every existing call site) keeps stdout/
+    stderr going to DEVNULL exactly as before. When given, the spawned
+    process's stdout+stderr are captured there instead — real
+    diagnostic data for "this saved command silently didn't produce a
+    window," found live to matter a lot for session-restore specifically:
+    a relaunched app that needs environment/cwd context its captured
+    cmdline alone doesn't carry (common on NixOS, where a wrapper script
+    normally sets LD_LIBRARY_PATH/GDK paths etc. before exec'ing into
+    the raw binary /proc/<pid>/cmdline actually captures) can crash on
+    startup with a message that, discarded into DEVNULL, looks
+    identical to "never started at all" from the outside — no window,
+    no error, no way to tell those two failure modes apart without this.
     """
     if shell_true:
         popen_cmd = cmd
@@ -74,13 +87,22 @@ def spawn_detached(cmd, shell_true=False):
         popen_cmd = shlex.split(cmd)
     else:
         popen_cmd = cmd
+
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout = stderr = open(log_path, "wb")
+    else:
+        stdout = stderr = subprocess.DEVNULL
+
     process = subprocess.Popen(
         popen_cmd, shell=shell_true,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
+    if log_path is not None:
+        stdout.close()
     return process.pid
 
 

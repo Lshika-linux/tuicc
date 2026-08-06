@@ -27,10 +27,14 @@ to call them (and still owns `dismissed`, threaded in as an explicit
 param — see process()'s docstring).
 """
 
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from tuicc.actions import spawn_detached
 from tuicc.model import Window
+
+SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
 
 # How long an entry keeps waiting on an exact pid match before process()
 # downgrades it to app_id-tier matching instead (see process()'s loop).
@@ -169,13 +173,25 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     No-ops if restore_queue is empty — checked BEFORE the stagger-time
     comparison, so an empty queue never touches last_restore_launch and
     a later real restore isn't held back by a stale timestamp.
+
+    Every restore spawn gets a log_path under SPAWN_LOG_DIR (named by
+    app_id + wall-clock time, known before the pid is) — see
+    spawn_detached()'s docstring for why: session restore is exactly
+    the case where a saved cmdline can crash on launch for reasons its
+    own argv gives no hint of, and a match that never happens looks
+    identical from the outside whether the process never started or
+    started and immediately died. Found live: an Obsidian entry that
+    silently never produced a window, saved cmdline being just
+    `electron <asar path>` with none of the environment a NixOS wrapper
+    script would normally set up first.
     """
     if not restore_queue:
         return
     if now - queue.last_restore_launch < RESTORE_STAGGER_SECONDS:
         return
     session_entry = restore_queue.pop(0)
-    pid = spawn_detached(session_entry["cmdline"], shell_true=False)
+    log_path = SPAWN_LOG_DIR / f"restore_{session_entry['app_id']}_{int(time.time())}.log"
+    pid = spawn_detached(session_entry["cmdline"], shell_true=False, log_path=log_path)
     # See Provider.no_focus_next_window()'s docstring — asked for right
     # after the pid is known, well before the restored window has had a
     # chance to map and steal focus/fullscreen from tuicc.

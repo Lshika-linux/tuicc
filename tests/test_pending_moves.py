@@ -280,6 +280,25 @@ def test_promote_restore_queue_pops_one_and_spawns_it(monkeypatch):
     assert queue.entries[0]["target_region"] == "1"
 
 
+def test_promote_restore_queue_passes_a_log_path_under_spawn_log_dir(monkeypatch, tmp_path):
+    # See spawn_detached's docstring — a saved cmdline that crashes on
+    # relaunch (found live: Obsidian on NixOS, missing env a wrapper
+    # script would normally set up) looks identical to "never started"
+    # from the outside without this captured somewhere.
+    calls = []
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(k) or 4242)
+    monkeypatch.setattr(pending_moves, "SPAWN_LOG_DIR", tmp_path / "logs")
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(last_restore_launch=0.0)
+    restore_queue = [{"cmdline": ["electron", "obsidian.asar"], "target_region": "2", "app_id": "obsidian"}]
+
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+
+    log_path = calls[0]["log_path"]
+    assert log_path.parent == tmp_path / "logs"
+    assert log_path.name.startswith("restore_obsidian_")
+
+
 def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monkeypatch):
     # See Provider.no_focus_next_window()'s docstring — asked for right
     # after the pid is known, before the restored window can steal

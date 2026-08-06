@@ -133,6 +133,35 @@ def test_spawn_detached_accepts_a_presplit_list_unchanged(monkeypatch):
     assert kwargs["shell"] is False
 
 
+def test_spawn_detached_no_log_path_uses_devnull(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+
+    spawn_detached("kitty")
+
+    _, kwargs = calls[0]
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
+
+
+def test_spawn_detached_log_path_redirects_stdout_and_stderr(monkeypatch, tmp_path):
+    # See spawn_detached's docstring: a saved session cmdline that
+    # crashes on relaunch (missing env a wrapper script would normally
+    # set up, found live with Obsidian on NixOS) looks identical to
+    # "never started" from the outside unless its output is captured
+    # somewhere instead of DEVNULL.
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    log_path = tmp_path / "logs" / "restore_obsidian_123.log"
+
+    spawn_detached("kitty", log_path=log_path)
+
+    _, kwargs = calls[0]
+    assert log_path.parent.is_dir()  # created on demand, same as SESSIONS_DIR
+    assert kwargs["stdout"].name == str(log_path)
+    assert kwargs["stdout"] is kwargs["stderr"]  # same fd, chronological interleave
+
+
 # ---------- dispatch_action ----------
 
 def test_dispatch_action_runs_the_matching_handler():
