@@ -247,7 +247,7 @@ def main(stdscr):
 
             if action_ctx.restore_queue:
                 known_ids = {w.id for r in state.regions for w in r.windows}
-                pending_moves.promote_restore_queue(moves, action_ctx.restore_queue, known_ids, time.monotonic())
+                pending_moves.promote_restore_queue(moves, provider, action_ctx.restore_queue, known_ids, time.monotonic())
 
             if moves.entries:
                 current_windows = [w for r in state.regions for w in r.windows]
@@ -408,6 +408,11 @@ def main(stdscr):
                         known_ids = {w.id for r in state.regions for w in r.windows}
                         # .desktop Exec= is spec'd to never be shell-interpreted.
                         pid = spawn_detached(cmd, shell_true=False)
+                        # See Provider.no_focus_next_window()'s docstring —
+                        # asked for right after the pid is known, well
+                        # before the spawned window has had a chance to
+                        # map and steal focus/fullscreen from tuicc.
+                        provider.no_focus_next_window(pid)
                         # focus_id is only ever set by explicitly selecting a
                         # sidebar region item — without one selected (or
                         # without a sidebar in the layout at all), fall back

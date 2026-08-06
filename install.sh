@@ -286,7 +286,18 @@ chmod +x "$TOGGLE_DST"
 # --- 8. Build the WM config block (used for both printing and writing) -----
 
 if [ "$FULLSCREEN_ONLY" = "true" ]; then
-    FLOAT_RULE="floating enable, fullscreen enable"
+    # move+resize before fullscreen enable, not just floating enable +
+    # fullscreen enable: fullscreen_mode gets dropped transiently on
+    # every launcher spawn/session restore (see pending_moves.py's
+    # focus_self(fullscreen=...) re-assert) — during that gap, tuicc
+    # falls back to its underlying floating geometry. Left at whatever
+    # size the WM defaults a new floating window to (usually a small
+    # centered box), that gap is a visible shrink-then-expand pop, not
+    # just a brief flicker. Pinning the floating geometry itself to the
+    # full output up front means the gap loses only the border/always-
+    # on-top treatment, not its size — found live testing this exact
+    # transition on i3.
+    FLOAT_RULE="floating enable, move position 0 0, resize set 100 ppt 100 ppt, fullscreen enable"
 else
     FLOAT_RULE="floating enable"
 fi

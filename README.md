@@ -200,7 +200,7 @@ it, then:
 
 ```
 # ~/.config/sway/config
-for_window [app_id="tuicc_scratch"] floating enable, fullscreen enable
+for_window [app_id="tuicc_scratch"] floating enable, move position 0 0, resize set 100 ppt 100 ppt, fullscreen enable
 bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
 ```
 
@@ -215,10 +215,17 @@ value at runtime (see its own docstring) and re-asserts `fullscreen
 enable` on every show/focus, since sway drops a container back to
 plain floating the instant any new window is mapped anywhere in the
 session, even briefly on tuicc's own workspace before it's moved
-elsewhere. Plain floating is a deliberate tweak, not the default —
-drop `, fullscreen enable` from the rule above and set
-`fullscreen_only = false` in config.toml if you'd rather have tuicc
-float.
+elsewhere. The `move position 0 0, resize set 100 ppt 100 ppt` part
+matters for that same gap: it pins tuicc's *underlying* floating
+geometry to the full output up front, so the brief drop out of
+fullscreen loses only the border/always-on-top treatment, not its
+size — without it, tuicc pops down to whatever size sway defaults a
+new floating window to (usually a small centered box) and back, a much
+more jarring flicker (found live testing this exact transition on i3).
+Plain floating is a deliberate tweak, not the default — use plain
+`floating enable` (no `move position`/`resize set`/`fullscreen enable`)
+and set `fullscreen_only = false` in config.toml if you'd rather have
+tuicc float at its own natural size.
 
 If you'd rather not use the toggle script, a plain three-line summon
 still works, just with separate implicit show/hide instead of one
@@ -239,14 +246,16 @@ invocation):
 
 ```
 # ~/.config/i3/config
-for_window [class="tuicc_scratch"] floating enable, fullscreen enable
+for_window [class="tuicc_scratch"] floating enable, move position 0 0, resize set 100 ppt 100 ppt, fullscreen enable
 bindsym $mod+Tab exec --no-startup-id ~/scripts_i3/tuicc_toggle.py
 ```
 
 Same deal as sway above — set `[wm] fullscreen_only = true` in
 config.toml (the packaged default, and what `install.sh` sets up) to
-match, or `false` plus dropping `, fullscreen enable` from both the
-rule and config.toml if you'd rather have tuicc float instead.
+match, or `false` plus dropping `, move position 0 0, resize set 100
+ppt 100 ppt, fullscreen enable` down to plain `floating enable` (both
+in the rule and in config.toml) if you'd rather have tuicc float
+instead.
 
 Or, without the toggle script:
 

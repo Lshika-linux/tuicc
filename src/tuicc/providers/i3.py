@@ -181,6 +181,9 @@ class I3Provider(Provider):
         action = "focus, fullscreen enable" if fullscreen else "focus"
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] {action}")
 
+    def no_focus_next_window(self, pid: int) -> None:
+        self.conn.command(f"for_window [pid={pid}] no_focus")
+
     def get_state(self) -> WMState:
         return parse_tree(self.conn.get_tree())
 

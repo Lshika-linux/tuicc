@@ -162,7 +162,7 @@ def queue_launcher_spawn(queue: PendingMovesQueue, target_region, known_ids: set
     })
 
 
-def promote_restore_queue(queue: PendingMovesQueue, restore_queue: list, known_ids: set, now: float) -> None:
+def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: list, known_ids: set, now: float) -> None:
     """Pops one entry off restore_queue (session.py's load queue) and
     spawns it, staggered by RESTORE_STAGGER_SECONDS so a multi-window
     session restore doesn't fire every process in the same frame.
@@ -176,6 +176,10 @@ def promote_restore_queue(queue: PendingMovesQueue, restore_queue: list, known_i
         return
     session_entry = restore_queue.pop(0)
     pid = spawn_detached(session_entry["cmdline"], shell_true=False)
+    # See Provider.no_focus_next_window()'s docstring — asked for right
+    # after the pid is known, well before the restored window has had a
+    # chance to map and steal focus/fullscreen from tuicc.
+    provider.no_focus_next_window(pid)
     queue_restore_entry(queue, session_entry, known_ids, pid, now)
     queue.last_restore_launch = now
 

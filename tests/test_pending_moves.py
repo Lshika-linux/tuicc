@@ -37,6 +37,7 @@ class _FakeProvider:
         # mirrors a real provider's X11 lookup without touching X11.
         self.resolved_pids = resolved_pids or {}
         self.resolve_pid_calls = []
+        self.no_focus_next_window_calls = []
 
     def move_window_to_region(self, window_id, region_id):
         self.moved.append((window_id, region_id))
@@ -51,6 +52,9 @@ class _FakeProvider:
     def resolve_pid(self, window_id):
         self.resolve_pid_calls.append(window_id)
         return self.resolved_pids.get(window_id)
+
+    def no_focus_next_window(self, pid):
+        self.no_focus_next_window_calls.append(pid)
 
 
 # ---------- basic matching ----------
@@ -233,42 +237,61 @@ def test_queue_launcher_spawn_never_carries_floating_or_rect():
 def test_promote_restore_queue_empty_queue_is_noop_and_does_not_touch_timestamp(monkeypatch):
     calls = []
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(1) or 1)
+    provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=5.0)
 
-    promote_restore_queue(queue, restore_queue=[], known_ids=set(), now=100.0)
+    promote_restore_queue(queue, provider, restore_queue=[], known_ids=set(), now=100.0)
 
     assert queue.entries == []
     assert queue.last_restore_launch == 5.0
     assert calls == []
+    assert provider.no_focus_next_window_calls == []
 
 
 def test_promote_restore_queue_stagger_gating_blocks_too_soon(monkeypatch):
     calls = []
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(1) or 1)
+    provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=10.0)
     restore_queue = [{"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"}]
 
-    promote_restore_queue(queue, restore_queue, known_ids=set(), now=10.0 + RESTORE_STAGGER_SECONDS / 2)
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0 + RESTORE_STAGGER_SECONDS / 2)
 
     assert queue.entries == []
     assert restore_queue == [{"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"}]
     assert calls == []
+    assert provider.no_focus_next_window_calls == []
 
 
 def test_promote_restore_queue_pops_one_and_spawns_it(monkeypatch):
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)
+    provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=0.0)
     restore_queue = [
         {"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"},
         {"cmdline": ["firefox"], "target_region": "2", "app_id": "firefox"},
     ]
 
-    promote_restore_queue(queue, restore_queue, known_ids={"x"}, now=10.0)
+    promote_restore_queue(queue, provider, restore_queue, known_ids={"x"}, now=10.0)
 
     assert len(restore_queue) == 1
     assert len(queue.entries) == 1
     assert queue.entries[0]["pid"] == 4242
     assert queue.entries[0]["target_region"] == "1"
+
+
+def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monkeypatch):
+    # See Provider.no_focus_next_window()'s docstring — asked for right
+    # after the pid is known, before the restored window can steal
+    # focus/fullscreen from tuicc.
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(last_restore_launch=0.0)
+    restore_queue = [{"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"}]
+
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+
+    assert provider.no_focus_next_window_calls == [4242]
     assert queue.last_restore_launch == 10.0
 
 

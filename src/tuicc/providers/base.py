@@ -149,6 +149,65 @@ class Provider(ABC):
         """
         pass
 
+    def no_focus_next_window(self, pid: int) -> None:
+        """
+        Ask the WM not to auto-focus the very next window created by
+        the process at pid, before that process is even spawned —
+        called right after spawn_detached() returns (see main.py's
+        launcher-confirm site and pending_moves.promote_restore_queue),
+        pid still fresh, well before the process has had time to map a
+        window yet.
+
+        This is a WM-side, root-cause complement to focus_self(), not
+        a replacement for it — focus_self() stays as the reactive
+        fallback for every case this can't cover (see below), and this
+        method's docstring assumes focus_self() is still wired up.
+        Where it earns its keep: sway/i3 both drop a fullscreen tuicc
+        back to plain floating the instant the new window's initial
+        auto-focus takes keyboard focus away from tuicc's own fullscreen
+        container (confirmed live: prevent the auto-focus and the
+        fullscreen container never drops in the first place — it's not
+        an independent side effect of the window merely existing, it's
+        specifically caused by focus moving away). Without this,
+        that transient drop-then-recover (via focus_self) is still
+        visually a shrink-then-expand pop unless the floating geometry
+        is ALSO pinned (see install.sh's `move position 0 0, resize set
+        100 ppt 100 ppt` in the for_window rule) — this method and that
+        geometry pin address the same visual problem from two ends.
+
+        Implemented via `pid`, deliberately not `class`/`app_id`: those
+        would match EVERY future window of that same app for the rest
+        of the WM session (open the same app normally later, outside
+        tuicc, and it silently won't auto-focus either) — pid matches
+        exactly the one process this call is about and, barring pid
+        reuse, never anything else again. sway/i3 have no IPC command
+        to remove a `for_window` rule once added (only a full WM
+        restart clears them, not a config `reload`), so this
+        accumulates one rule per spawn for the process's lifetime —
+        accepted tradeoff, not a bug: at the kernel's modern default
+        pid_max (4194304, e.g. NixOS/most current distros), wrapping
+        the pid counter back onto a specific stale value takes years of
+        continuous uptime even under heavy process-creation load; only
+        the old 32768 default makes this a realistic (if still rare-per-
+        process) concern. A collision's actual damage if it ever
+        happens: one unrelated future window silently doesn't auto-
+        focus on creation — cosmetic (Tab/click it), not data loss.
+        Also silently a no-op for apps that fork/exec into a child
+        with a different pid than the one spawn_detached() returned —
+        same known limitation resolve_pending_move's pid tier already
+        has, not a new gap this introduces.
+
+        NOT abstract, default no-op — same optionality as mark_self()/
+        dismiss_self()/focus_self() above; a provider that skips this
+        just keeps relying on focus_self()'s reactive recovery alone,
+        a real but more visible degraded case, not a crash.
+
+        Who needs to implement this: sway and i3 both do, via
+        `for_window [pid=<pid>] no_focus` — `no_focus` is i3-native
+        (sway adopted the same directive and criteria syntax).
+        """
+        pass
+
     def resolve_pid(self, window_id: str) -> int | None:
         """
         Best-effort process id for the window's owning process, for
