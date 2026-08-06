@@ -17,6 +17,8 @@ from tuicc.navigation import (
     prev_module_name,
     next_item_in_module,
     prev_item_in_module,
+    next_item_across_modules,
+    prev_item_across_modules,
 )
 
 
@@ -284,6 +286,107 @@ def test_prev_item_in_module_no_items_returns_none():
     preview_item = NavItem(id="preview:1", rect=(0, 0, 1, 1))
 
     result = prev_item_in_module([preview_item], "sidebar", "sidebar:1")
+
+    assert result is None
+
+
+# ---------- next_item_across_modules / prev_item_across_modules ----------
+#
+# Regression coverage for a real bug found live: next_item_in_module
+# returning None (module exhausted) used to trigger exactly one
+# next_module_name + first_item_in_module lookup — if THAT module also
+# had zero items (launcher, preview, and clock all do, in the packaged
+# default preset), the keypress did nothing at all, with no way to
+# advance further. Power Menu -> Launcher (empty) -> Preview (empty)
+# -> Sessions is the exact real sequence that left Tab permanently
+# stuck once selection reached Power Menu's last item.
+
+def test_next_item_across_modules_stays_within_module_when_possible():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="sidebar:2", rect=(0, 0, 1, 1))
+
+    result = next_item_across_modules([a, b], ["sidebar", "preview"], "sidebar", "sidebar:1")
+
+    assert result.id == "sidebar:2"
+
+
+def test_next_item_across_modules_rolls_into_next_nonempty_module():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="preview:1", rect=(0, 0, 1, 1))
+
+    result = next_item_across_modules([a, b], ["sidebar", "preview"], "sidebar", "sidebar:1")
+
+    assert result.id == "preview:1"
+
+
+def test_next_item_across_modules_skips_one_empty_module():
+    # sidebar exhausted, launcher (next in module_names) has no items
+    # in `items` at all, sessions (after that) does.
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="sessions:mode:load", rect=(0, 0, 1, 1))
+
+    result = next_item_across_modules(
+        [a, b], ["sidebar", "launcher", "sessions"], "sidebar", "sidebar:1"
+    )
+
+    assert result.id == "sessions:mode:load"
+
+
+def test_next_item_across_modules_skips_several_consecutive_empty_modules():
+    # The exact real sequence: power_menu exhausted, launcher/preview
+    # both empty, sessions is where it should land.
+    a = NavItem(id="power_menu:shutdown", rect=(0, 0, 1, 1))
+    b = NavItem(id="sessions:mode:load", rect=(0, 0, 1, 1))
+
+    result = next_item_across_modules(
+        [a, b],
+        ["power_menu", "launcher", "preview", "sessions", "clock"],
+        "power_menu",
+        "power_menu:shutdown",
+    )
+
+    assert result.id == "sessions:mode:load"
+
+
+def test_next_item_across_modules_wraps_around_module_list():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+
+    result = next_item_across_modules([a], ["sidebar", "clock"], "clock", None)
+
+    assert result.id == "sidebar:1"
+
+
+def test_next_item_across_modules_all_modules_empty_returns_none():
+    result = next_item_across_modules([], ["launcher", "preview", "clock"], "launcher", None)
+
+    assert result is None
+
+
+def test_prev_item_across_modules_stays_within_module_when_possible():
+    a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
+    b = NavItem(id="sidebar:2", rect=(0, 0, 1, 1))
+
+    result = prev_item_across_modules([a, b], ["sidebar", "preview"], "sidebar", "sidebar:2")
+
+    assert result.id == "sidebar:1"
+
+
+def test_prev_item_across_modules_skips_several_consecutive_empty_modules():
+    a = NavItem(id="power_menu:lock", rect=(0, 0, 1, 1))
+    b = NavItem(id="sessions:slot:3", rect=(0, 0, 1, 1))
+
+    result = prev_item_across_modules(
+        [a, b],
+        ["power_menu", "launcher", "preview", "sessions", "clock"],
+        "power_menu",
+        "power_menu:lock",
+    )
+
+    assert result.id == "sessions:slot:3"
+
+
+def test_prev_item_across_modules_all_modules_empty_returns_none():
+    result = prev_item_across_modules([], ["launcher", "preview", "clock"], "launcher", None)
 
     assert result is None
 

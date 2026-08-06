@@ -128,6 +128,62 @@ def prev_module_name(module_names: list[str], active_module: str | None) -> str 
     return module_names[prev_index]
 
 
+def next_item_across_modules(
+    items: list[NavItem], module_names: list[str], active_module: str | None, selected_id: str | None
+) -> NavItem | None:
+    """Tab's full behavior: next_item_in_module's result, or — once
+    that's exhausted — the first item of the next module, walking
+    forward through as many modules as it takes (wrapping via
+    next_module_name, bounded to len(module_names) hops so an
+    all-empty module_names can't loop forever) until one actually has
+    an item. A single next-module lookup isn't enough: modules with
+    zero nav items are common, not a rare edge case — launcher (typing
+    captures it instead), preview, and clock all have none — so
+    landing on one must not silently swallow the keypress. Found live:
+    this used to leave Tab (and Shift+Tab, see prev_item_across_modules)
+    permanently stuck the moment selection reached Power Menu's last
+    item, since position order puts launcher (empty) immediately after
+    it in the packaged default preset — every further Tab press
+    recomputed the exact same "next module has nothing" result and did
+    nothing, with no way out except a different key. Returns None only
+    if every module is empty.
+    """
+    next_item = next_item_in_module(items, active_module, selected_id)
+    if next_item is not None:
+        return next_item
+
+    name = active_module
+    for _ in range(len(module_names)):
+        name = next_module_name(module_names, name)
+        if name is None:
+            return None
+        candidate = first_item_in_module(items, name)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def prev_item_across_modules(
+    items: list[NavItem], module_names: list[str], active_module: str | None, selected_id: str | None
+) -> NavItem | None:
+    """Mirror of next_item_across_modules for Shift+Tab — see that
+    function's docstring for the bug this fixes.
+    """
+    prev_item = prev_item_in_module(items, active_module, selected_id)
+    if prev_item is not None:
+        return prev_item
+
+    name = active_module
+    for _ in range(len(module_names)):
+        name = prev_module_name(module_names, name)
+        if name is None:
+            return None
+        candidate = last_item_in_module(items, name)
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def next_item_in_module(items: list[NavItem], module_name: str, selected_id: str | None) -> NavItem | None:
     """Next item within a single module (Tab key and duplicates), no
     wrap — None when already on the module's last item. That None is

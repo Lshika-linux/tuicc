@@ -38,10 +38,9 @@ from tuicc.navigation import (
     global_shortcut_item,
     next_module_name,
     prev_module_name,
-    next_item_in_module,
-    prev_item_in_module,
     first_item_in_module,
-    last_item_in_module,
+    next_item_across_modules,
+    prev_item_across_modules,
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
 from tuicc.render_utils import draw_status_line
@@ -545,17 +544,18 @@ def main(stdscr):
                     provider.dismiss_self()
 
             elif key in next_item_keys and ordered:
-                next_item = next_item_in_module(ordered, active_module, selected_id)
-                if next_item is None:
-                    next_module = next_module_name(module_names, active_module)
-                    next_item = first_item_in_module(ordered, next_module) if next_module else None
+                # next_item_across_modules keeps walking forward past
+                # module boundaries until it finds one with an actual
+                # item — a single next-module lookup isn't enough, since
+                # modules with zero nav items (launcher, preview, clock)
+                # are common, not a rare edge case. See its docstring:
+                # found live, this used to leave Tab permanently stuck
+                # the moment selection reached Power Menu's last item.
+                next_item = next_item_across_modules(ordered, module_names, active_module, selected_id)
                 if next_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
             elif key in prev_item_keys and ordered:
-                prev_item = prev_item_in_module(ordered, active_module, selected_id)
-                if prev_item is None:
-                    prev_module = prev_module_name(module_names, active_module)
-                    prev_item = last_item_in_module(ordered, prev_module) if prev_module else None
+                prev_item = prev_item_across_modules(ordered, module_names, active_module, selected_id)
                 if prev_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(prev_item, focus_id)
             elif key in module_next_keys:
