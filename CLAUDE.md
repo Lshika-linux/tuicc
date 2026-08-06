@@ -232,11 +232,32 @@ this session; don't invent a different one.
   deliberate repro (dismiss tuicc while workspace A is selected in the
   sidebar, switch WM focus to workspace B via a non-tuicc means,
   re-summon, check what's selected) before concluding anything.
-- **`sessions.py` arrow-key navigation bug.** Reported 2026-08-02, not
-  yet investigated at all — arrow-key navigation misbehaves specifically
-  within the sessions module. No repro steps captured yet; first task
-  is nailing down exactly what "misbehaves" means (wrong item selected?
-  navigation refuses to move? wraps incorrectly?).
+- **~~`sessions.py` arrow-key navigation bug~~ — FIXED.** Reported
+  2026-08-02 as "arrow-key navigation misbehaves specifically within
+  the sessions module," not investigated at the time. Very likely the
+  same root cause found and fixed live this session (not the same
+  investigation, but the mechanism matches exactly): `Up`/`Down` are
+  plain duplicates of `Tab`/`Shift+Tab` (see `[navigation.keys]` in
+  `defaults/config.toml`), and Tab/Shift+Tab used to get permanently
+  stuck the moment selection reached a module immediately followed —
+  in position order — by a module with zero nav items. Power Menu is
+  followed by Launcher (always empty; typing captures it instead) in
+  the packaged default preset, and Sessions sits right after that, so
+  reaching Sessions via Tab/arrows from Power Menu hit exactly this
+  dead end — which would present as "arrow keys don't work right near
+  Sessions," matching the original report closely enough that this is
+  almost certainly it. Root cause: `next_item_in_module` returning
+  `None` (module exhausted) triggered exactly one `next_module_name` +
+  `first_item_in_module` lookup; if that one module was empty, the
+  keypress silently did nothing, and since `selected_id`/`active_module`
+  never changed, every further press recomputed the identical dead
+  end — not intermittent, not timing-sensitive, 100% reproducible.
+  Fixed via `navigation.py`'s `next_item_across_modules()`/
+  `prev_item_across_modules()`, which keep walking forward/backward
+  through `module_names` (wrapping, bounded) until one with an actual
+  item turns up, instead of trying exactly one. Verified live: the
+  exact stuck repro (navigate to Power Menu's last item, single Tab)
+  now correctly lands on Sessions' first item.
 
 ### Reporting findings back
 
