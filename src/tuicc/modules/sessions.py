@@ -95,6 +95,25 @@ def collapse() -> int | None:
     return slot
 
 
+def expanded_preview() -> dict | None:
+    """{target_region: [app_id, ...]} for the currently-expanded slot's
+    saved session — None if nothing's expanded, or that slot has
+    nothing saved yet. main.py reads this once per frame and threads it
+    into RenderContext.session_preview for sidebar.py to render — see
+    that field's own docstring for why it goes through main.py instead
+    of sidebar.py reaching into this module directly.
+    """
+    if _expanded_slot is None:
+        return None
+    path = _session_path(_expanded_slot)
+    if not path.exists():
+        return None
+    preview: dict = {}
+    for entry in load_session(path):
+        preview.setdefault(entry["target_region"], []).append(entry["app_id"])
+    return preview
+
+
 def is_naming() -> bool:
     return _naming_slot is not None
 

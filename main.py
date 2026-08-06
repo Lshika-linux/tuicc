@@ -352,6 +352,7 @@ def main(stdscr):
                 wifi_networks=connectivity.get_wifi_networks(),
                 bluetooth_devices=connectivity.get_bluetooth_devices(),
                 connectivity=connectivity,
+                session_preview=sessions_mode.expanded_preview(),
             )
 
             items = collect_nav_items(cfg.layout, boxes, ctx)

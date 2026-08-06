@@ -50,10 +50,22 @@ def _condense_title(app, title, cfg):
     return first
 
 
-def _slot_height(region):
-    if region is None:
-        return 2
-    return 2 + len(region.windows)
+def _slot_height(region, preview_count=0):
+    base = 2 if region is None else 2 + len(region.windows)
+    return base + preview_count
+
+
+def _preview_apps_for(ctx, ws_id):
+    """The incoming app_ids a saved-but-not-yet-loaded session would
+    spawn onto this workspace, if the Sessions module currently has a
+    slot expanded and that slot has something saved — see
+    RenderContext.session_preview's own docstring. [] the overwhelming
+    rest of the time (nothing expanded, or this workspace isn't one of
+    that session's targets), so callers never need their own None check.
+    """
+    if not ctx.session_preview:
+        return []
+    return ctx.session_preview.get(ws_id, [])
 
 
 def _build_slots(ctx):
@@ -78,10 +90,12 @@ def draw(stdscr, box, ctx, module_name):
 
     item_y = y + 1
     for ws_id, region in _build_slots(ctx):
-        item_h = _slot_height(region)
+        preview_apps = _preview_apps_for(ctx, ws_id)
+        item_h = _slot_height(region, len(preview_apps))
         is_selected = f"sidebar:{ws_id}" == ctx.selected_id
         border_color = theme.get("selected", 0) if is_selected else theme.get("border", 0)
         text_color = theme.get("text", 0)
+        urgent_color = theme.get("urgent", 0)
 
         draw_box_outline(stdscr, item_y, x + 1, item_h, w - 2, border_color)
 
@@ -91,6 +105,7 @@ def draw(stdscr, box, ctx, module_name):
         except curses.error:
             pass
 
+        existing_count = 0
         if region is not None:
             for i, window in enumerate(region.windows):
                 app = window.app_id
@@ -106,6 +121,18 @@ def draw(stdscr, box, ctx, module_name):
                         stdscr.addstr(item_y + 1 + i, cx, f" {detail}"[:end - cx], text_color | curses.A_DIM)
                 except curses.error:
                     pass
+            existing_count = len(region.windows)
+
+        # Apps a currently-expanded (see sessions.py) session slot would
+        # spawn HERE if loaded — not yet real, so urgent (same role
+        # power_menu uses for its destructive actions) instead of the
+        # plain/bold style real windows get, and always listed after
+        # them rather than interleaved.
+        for i, app in enumerate(preview_apps):
+            try:
+                stdscr.addstr(item_y + 1 + existing_count + i, x + 2, app[:max(w - 4, 0)], urgent_color)
+            except curses.error:
+                pass
 
         item_y += item_h
 
@@ -116,7 +143,11 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 
     item_y = y + 1
     for ws_id, region in _build_slots(ctx):
-        item_h = _slot_height(region)
+        # Must match draw()'s own height exactly (including any preview
+        # apps) — the item's rect is what's actually clickable/
+        # highlighted, and item_y here has to track the same running
+        # offset draw() uses for every slot after this one.
+        item_h = _slot_height(region, len(_preview_apps_for(ctx, ws_id)))
         items.append(NavItem(
             id=f"sidebar:{ws_id}",
             rect=(x + 1, item_y, w - 2, item_h),

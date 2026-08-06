@@ -11,7 +11,7 @@ target_kind dispatch.
 from types import SimpleNamespace
 
 import tuicc.modules.sessions as sessions_module
-from tuicc.modules.sessions import handle_row, handle_action
+from tuicc.modules.sessions import handle_row, handle_action, expanded_preview
 from tuicc.model import WMState, Region, Window
 from tuicc.session import save_session
 
@@ -377,3 +377,36 @@ def test_apply_naming_empty_input_returns_empty_string():
     result = sessions_module.apply_naming()
 
     assert result == (3, "")
+
+
+# ---------- expanded_preview ----------
+
+def test_expanded_preview_none_when_nothing_expanded(tmp_path, monkeypatch):
+    monkeypatch.setattr(sessions_module, "SESSIONS_DIR", tmp_path)
+    _reset_module_state()
+
+    assert expanded_preview() is None
+
+
+def test_expanded_preview_none_when_expanded_slot_has_no_saved_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(sessions_module, "SESSIONS_DIR", tmp_path)
+    _reset_module_state()
+    sessions_module._expanded_slot = 1
+
+    assert expanded_preview() is None
+
+
+def test_expanded_preview_groups_app_ids_by_target_region(tmp_path, monkeypatch):
+    monkeypatch.setattr(sessions_module, "SESSIONS_DIR", tmp_path)
+    save_session(
+        [
+            {"app_id": "kitty", "cmdline": ["kitty"], "target_region": "3", "floating": False},
+            {"app_id": "firefox", "cmdline": ["firefox"], "target_region": "3", "floating": False},
+            {"app_id": "obsidian", "cmdline": ["obsidian"], "target_region": "5", "floating": False},
+        ],
+        tmp_path / "1.toml",
+    )
+    _reset_module_state()
+    sessions_module._expanded_slot = 1
+
+    assert expanded_preview() == {"3": ["kitty", "firefox"], "5": ["obsidian"]}
