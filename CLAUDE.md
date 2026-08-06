@@ -51,3 +51,199 @@ Full architecture, config format, and the WM-provider-writing guide are in `READ
 **`cfg.fullscreen_only`** (`[wm]` in config.toml, packaged default `true`, missing-key fallback `false` — deliberate: a fresh install gets the full experience, an existing config upgrading silently keeps its old behavior) fixes a related but distinct problem: sway/i3 both drop a container back to plain floating the instant its keyboard focus moves away to a new sibling window — which used to happen unavoidably on every spawn, since new windows land wherever real WM focus currently is (typically tuicc's own workspace) and, by default, take focus themselves the moment they map. `Provider.no_focus_next_window(pid)` (see its docstring in `providers/base.py`) now prevents that focus move at the source — `for_window [pid=<spawned pid>] no_focus`, sent right after `spawn_detached()` returns, before the window has had a chance to map — and, found live, preventing the auto-focus turns out to prevent the fullscreen drop too: it's not an independent side effect of a new window merely existing, it's specifically caused by focus leaving the fullscreen container. Called from both spawn paths (`main.py`'s launcher-confirm site, `pending_moves.promote_restore_queue()`) right after the pid is known. `pid` was deliberately chosen over `class`/`app_id` as the criteria: those would keep matching every *future* window of that same app for the rest of the WM session (open it again later, outside tuicc, and it silently won't auto-focus either), where `pid` matches only that one process, essentially never again — sway/i3 have no IPC command to remove a `for_window` rule once added (only a full WM restart clears them), so these rules accumulate one-per-spawn for the session's lifetime, but at the kernel's modern default `pid_max` (4194304) a collision with a stale rule needs years of continuous uptime to become likely even under heavy load, and its damage if it ever happens is cosmetic (one unrelated window doesn't auto-focus, Tab/click fixes it) — see the method's docstring for the full tradeoff writeup.
 
 This is NOT a replacement for `pending_moves.process()`'s existing `focus_self(fullscreen=...)` reassert (threaded from `fullscreen_only`, both on a successful match and the give-up-unmatched path) and `install.sh`'s floating-geometry pinning below — those stay as the fallback for everything `no_focus_next_window` can't cover: apps that fork/exec into a child with a different pid than `spawn_detached()` returned (same known limitation `resolve_pending_move`'s pid tier already has — the rule silently never matches, not an error), a theoretical map-before-IPC-lands timing race, and any future provider that just doesn't implement it. `focus_self()` chains `, fullscreen enable` onto the same `[con_mark=...] focus` command when `fullscreen_only` is set; the `contrib/*/tuicc_toggle.py` scripts do the same on manual show/focus, reading `fullscreen_only` from `config.toml` themselves at runtime via `tomllib` rather than hardcoding it, so the automatic (spawn/restore), manual (toggle key), and now WM-side (`no_focus_next_window`) paths all stay in sync with one config value. **Reasserting fullscreen alone still isn't enough to make a drop that does happen look clean**: a floating container's underlying (non-fullscreen) geometry is whatever the WM defaults a new floating window to — usually a small centered box — so a visible "blink" would be a shrink-then-expand pop, not just a flicker, even once `focus_self(fullscreen=True)` recovers it within one poll cycle. `install.sh`'s generated `for_window` rule (and the equivalent snippets in README's "Summoning tuicc") work around this by chaining `move position 0 0, resize set 100 ppt 100 ppt` before `fullscreen enable` — pinning the floating container's own geometry to the full output once, at window-creation time, so any drop that does slip through only ever loses the border/always-on-top treatment, never its size. Verified live: `resize set 100 ppt 100 ppt` + `move position 0 0` against a 1920x1080 output produced a 1916x1048 floating rect (sway; i3 shares the same `resize set <w> [px|ppt] <h> [px|ppt]` syntax). Only applied when `fullscreen_only` is true — plain floating mode (`fullscreen_only = false`) deliberately leaves the WM's own default floating size alone.
+
+## Expected behavior — verification checklist
+
+This section is a behavioral contract, not architecture prose: every
+item below is meant to be individually, objectively testable against a
+live sway or i3 session. Written for exactly this situation — pointing
+a fresh Claude Code session at this repo on a machine that hasn't been
+live-tested yet — so it knows precisely what "working" means without
+re-deriving it from the code, and knows which gaps are *already*
+known/reproduced (don't rediscover, either fix or re-confirm) versus
+genuinely unverified on that machine's specific WM/app combination.
+
+Diagnostic technique for all of the below: poll `swaymsg -t get_tree`
+(sway) / `i3-msg -t get_tree` (i3) on a short interval (0.5s is plenty
+— main.py itself polls every 50ms while a spawn/restore is pending, so
+0.5s won't miss a transition lasting longer than one frame), walking
+the tree and printing, per window: `ws=`/`app_id=` (or `class=` on
+i3)/`floating=`/`fullscreen_mode=`/`focused=`/`marks=`, timestamped,
+`tee`'d to a log file. `python3 -u` (unbuffered) if piping to `tee` and
+expecting to `Ctrl+C` partway through — buffered stdout loses the tail
+otherwise. This exact technique found and confirmed every bug fixed
+this session; don't invent a different one.
+
+### Launch & lifecycle
+
+- Cold start (`python main.py`, or via the WM keybind/toggle script)
+  with `[wm] fullscreen_only = true` (the packaged default): tuicc
+  appears **fullscreen immediately** — no manual toggle, no visible
+  "floating then snaps to fullscreen" step.
+- Cold start with `fullscreen_only = false`: tuicc appears as a plain
+  floating window, sized/positioned however the WM defaults a new
+  floating window (not forced full-screen) — this is the intentional
+  degraded-on-purpose case, not a bug.
+- Summon via the toggle key while tuicc is already running (hidden in
+  the scratchpad): un-hides it, `fullscreen enable` re-applied if
+  `fullscreen_only = true` (see `contrib/*/tuicc_toggle.py` — they
+  read this value from `config.toml` at runtime, don't hardcode it).
+- Dismiss (Enter on most actions, or Escape at the top level with no
+  menu/mode open): hides tuicc to the scratchpad — verify with `ps aux
+  | grep main.py` (or equivalent) that the **process is still running**
+  afterward, not exited. There is deliberately no quit keybind or quit
+  menu entry — the only way to actually end the process is `Ctrl+C` in
+  its terminal.
+- `return_to_origin = true`: top-level Escape *also* focuses back to
+  whatever window/region had focus right before tuicc's own window was
+  last focused, on top of the normal dismiss. `false` (default): dismiss
+  only, no extra focus-back.
+
+### Focus & fullscreen, under a launcher spawn or session restore
+
+- After confirming a launcher entry (or triggering a session restore),
+  tuicc **always** ends up focused again once the spawned window's
+  entry resolves (matches and moves) or times out (`MOVE_TIMEOUT_SECONDS
+  = 8.0s` — see `pending_moves.py`) — never left with keyboard input
+  silently going to the newly-spawned window while tuicc still visually
+  looks focused on top.
+- With `fullscreen_only = true`: tuicc is back in `fullscreen_mode: 1`
+  by the time focus returns, every time — not just "usually." Any
+  visible dip to `fullscreen_mode: 0` should be brief (ideally zero,
+  see `no_focus_next_window` below) and must **not** show a visible
+  shrink-to-small-box-then-expand — check the window's `rect` during
+  any dip; it should stay full-output-sized (a `for_window` rule with
+  `move position 0 0, resize set 100 ppt 100 ppt` baked in should
+  guarantee this regardless of `fullscreen_mode`'s momentary state —
+  verify your WM config actually has this, `install.sh` sets it up,
+  a hand-written `for_window` rule from before this feature landed
+  won't).
+- `Provider.no_focus_next_window(pid)` (`for_window [pid=<pid>]
+  no_focus`, sway/i3 both) is sent right after every spawn — verify via
+  the tree poll that the *newly spawned window itself* never shows
+  `focused: true` at any point before tuicc reclaims focus. If it does
+  briefly show focused, that's the fallback path being exercised (not
+  necessarily a bug — but worth noting which app triggered it, since
+  it usually means that app's real pid didn't match what
+  `spawn_detached()` captured — see "Known open issues" below).
+- While tuicc is **dismissed** mid-spawn-resolution (you hid it before
+  the spawn finished resolving): `focus_self()` must **not** fire and
+  silently un-hide tuicc — the window stays hidden, `moves.entries`
+  still resolves/times out in the background, unaffected.
+
+### Window placement — launcher spawns
+
+- Select a target workspace/region in the sidebar (Tab/arrows, not
+  typing), *then* type to search and confirm a launcher entry: the
+  spawned app must land on the **selected** region — not on whatever
+  workspace tuicc itself happens to be running on. Test this
+  specifically with tuicc living on a *different* workspace than the
+  target (this exact scenario was the original bug — see
+  `expect_focus_reclaim` above).
+- Repeat with several launcher spawns back-to-back, in quick
+  succession, before the first one has necessarily resolved — none
+  should end up on the wrong target, none should get silently dropped
+  or swapped with another's target.
+- Apps whose real WM_CLASS/`app_id` doesn't match their `.desktop`
+  entry's hint (common for Python/Electron apps launched via a bare
+  interpreter — e.g. a real app reporting itself as `python3`) still
+  resolve correctly via the pid tier, on **both** sway (native
+  `Window.pid`) and i3 (`resolve_pid()`'s on-demand X11 `_NET_WM_PID`
+  lookup — may take a moment longer than sway, budgeted up to
+  `PID_GRACE_SECONDS = 6.0s` before downgrading to the app_id tier).
+
+### Window placement — session restore
+
+- Save a session with **5+ windows across different real apps**
+  (mix of light apps like terminals and heavy/slow-starting ones —
+  browsers, Electron apps, office suites) spread across several target
+  regions, some floating, some tiled. Load it back.
+- Restores are staggered `RESTORE_STAGGER_SECONDS = 0.3s` apart, not
+  all fired in the same frame — verify via the tree poll that new
+  processes actually launch staggered, not bunched.
+- Every window ends up on its saved `target_region`; floating windows
+  additionally end up at their saved relative position/size (normalized
+  0..1 rect, see `set_floating_geometry()`), not just floating-enabled
+  at some default WM geometry.
+- Loading a session offers a kill-existing-windows-on-target-regions
+  confirm first (see "Confirm dialogs" below, `"kill_regions" in
+  pending`) — verify both accepting and declining behave correctly:
+  accepting closes the named regions' existing windows before
+  restoring; declining restores anyway without closing anything.
+- **Specifically hunt for apps that never get relocated at all** —
+  landing on tuicc's own workspace and staying there past
+  `MOVE_TIMEOUT_SECONDS`. This is a known, live-reproduced (not yet
+  fixed) failure mode — see "Known open issues" below. If you find a
+  real app that triggers it, note which one and whether it's
+  reproducible 3/3 tries; that's more valuable than just re-confirming
+  the happy path works.
+
+### Confirm dialogs
+
+- Every `[[quick_actions.action]]` / `[[power_menu.action]]` entry with
+  `confirm = true` must show a Y/N prompt before running — whether
+  triggered by normal selection + Enter, or via its `shortcut` (global,
+  works from anywhere — see "Global shortcuts bypass normal input
+  routing" above). `confirm_text` shows if set; otherwise a plain Y/N.
+- While a confirm dialog is open: only `confirm_yes`/`confirm_no`
+  (config-bound keys, default `y`/`n`) do anything — every other key,
+  including global shortcuts, must leave the dialog open unchanged
+  (see `handle_pending_confirm()`'s "any other key" branch).
+- `confirm_yes` runs the action, then dismisses tuicc **unless**
+  `exit_after = false` was set on that action (default: dismiss).
+  `confirm_no` cancels — no command runs, dialog closes, tuicc does not
+  dismiss.
+- Test with the packaged defaults (Lock/Logout/Reboot/Shutdown in both
+  `quick_actions` and `power_menu`) *and* with `shell_true = true`
+  entries if your config.toml has any customized ones — those run
+  through a real shell, worth confirming the exact command shown in
+  hover/preview matches what actually executes.
+
+### Known open issues (as of this writing — confirm current status, don't assume fixed)
+
+- **Fork/exec pid-mismatch apps silently fail to relocate.** Live-
+  reproduced (this session, deterministically, 3/3 runs) with a wrapper
+  script that backgrounds its real child instead of exec-replacing
+  itself: `spawn_detached()`'s captured pid never matches the window's
+  real owning pid, and if the app's real `app_id` *also* doesn't match
+  the launcher's `.desktop`-derived hint, `resolve_pending_move()`
+  never reaches its "any remaining unclaimed window" fallback tier
+  (that tier only ever triggers when **both** `pid` and `app_id` are
+  `None` on the entry — an app_id-mismatch-but-not-`None` entry never
+  gets there). The window just sits on tuicc's own workspace,
+  unrelocated, forever, once `MOVE_TIMEOUT_SECONDS` passes and the
+  entry is silently dropped. Suspected real-world trigger: OnlyOffice
+  (reported live, not yet confirmed to be this exact mechanism — could
+  also just be a very slow cold start exceeding the timeout; both are
+  worth distinguishing by testing). Proposed fix, not yet implemented:
+  a last-resort escalation to the "any remaining" tier right before an
+  entry would otherwise time out, when exactly one unclaimed new window
+  is still sitting there — low collision risk since it only fires at
+  the very end of the timeout window, not as an early shortcut.
+- **Resummon keeps a stale workspace selection.** Reported live (this
+  session, both sway and i3): dismissing tuicc and re-summoning it
+  sometimes shows the sidebar still selected on whatever workspace was
+  selected *before* dismiss, not necessarily matching real current WM
+  focus. Never conclusively root-caused — could be a real bug in the
+  focus-change detector, or could be correct behavior that looked like
+  a bug because real focus happened to coincide. Needs a clean,
+  deliberate repro (dismiss tuicc while workspace A is selected in the
+  sidebar, switch WM focus to workspace B via a non-tuicc means,
+  re-summon, check what's selected) before concluding anything.
+- **`sessions.py` arrow-key navigation bug.** Reported 2026-08-02, not
+  yet investigated at all — arrow-key navigation misbehaves specifically
+  within the sessions module. No repro steps captured yet; first task
+  is nailing down exactly what "misbehaves" means (wrong item selected?
+  navigation refuses to move? wraps incorrectly?).
+
+### Reporting findings back
+
+If you're running this checklist on real i3 hardware (as opposed to
+developing against sway without i3 access, the more common case this
+repo is worked on from): after working through the items above, append
+a dated entry to **`I3_TESTING_LOG.md`** (see that file for the exact
+template) and commit + push it, along with any code fixes you made.
+That file is the loop back to whichever session doesn't have i3
+hardware access — it reads the log via `git pull`, not by asking you
+directly, so make entries concrete and self-contained rather than
+assuming follow-up context.
