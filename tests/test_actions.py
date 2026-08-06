@@ -288,7 +288,7 @@ def test_handle_pending_confirm_yes_restore_shaped_sets_reselect_region_id():
     # See ActionContext.reselect_region_id's docstring — the confirm-
     # needed load path (kill_regions overlap) sets it here, once the
     # restore is actually committed, mirroring the direct no-confirm
-    # path in sessions.py's handle_slot.
+    # path in sessions.py's handle_action.
     provider = _FakeProvider()
     provider.focused_region_id = "1"
     ctx = ActionContext(provider=provider, connectivity=None)

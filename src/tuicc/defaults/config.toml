@@ -182,6 +182,16 @@ browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]
 wifi_backend = "iwd"
 bluetooth_backend = "bluez"
 
+[sessions]
+# Display name for each of the 3 save/load/delete slots — purely
+# cosmetic, doesn't affect which file a slot reads/writes
+# (~/.config/tuicc/sessions/<N>.toml). Editable from inside tuicc too
+# (NAME action on a slot) — doing it that way writes back here for you.
+# An empty value falls back to "Slot <N>".
+name_1 = "Slot 1"
+name_2 = "Slot 2"
+name_3 = "Slot 3"
+
 [[power_menu.action]]
 # shell_true = true only if command needs real shell syntax (pipes,
 # ;, &&, $VARS) \u2014 otherwise it runs as plain arguments, no shell

@@ -30,8 +30,8 @@ def test_quick_actions_handler_registered():
 
 
 def test_sessions_handlers_registered():
-    assert ACTION_HANDLERS["session_mode"] is sessions.handle_mode
-    assert ACTION_HANDLERS["session_slot"] is sessions.handle_slot
+    assert ACTION_HANDLERS["session_row"] is sessions.handle_row
+    assert ACTION_HANDLERS["session_action"] is sessions.handle_action
 
 
 def test_base_handlers_still_present():

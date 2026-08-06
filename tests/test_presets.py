@@ -16,9 +16,11 @@ from tuicc.config import (
     available_preset_numbers,
     set_active_preset,
     set_theme_color,
+    set_session_name,
     get_raw_theme_values,
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
+    _build_session_names,
 )
 from tuicc.layout import Layout, ModuleBox
 
@@ -423,3 +425,115 @@ def test_get_raw_power_menu_actions_missing_section_returns_empty_list(tmp_path,
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
     assert get_raw_power_menu_actions() == []
+
+
+# ---------- _build_session_names ----------
+
+def test_build_session_names_uses_configured_values():
+    user_data = {"sessions": {"name_1": "Work", "name_2": "Gaming", "name_3": "Slot 3"}}
+
+    assert _build_session_names(user_data) == {1: "Work", 2: "Gaming", 3: "Slot 3"}
+
+
+def test_build_session_names_missing_section_falls_back_to_slot_n():
+    # config.toml predating this feature — no [sessions] at all.
+    assert _build_session_names({}) == {1: "Slot 1", 2: "Slot 2", 3: "Slot 3"}
+
+
+def test_build_session_names_missing_individual_key_falls_back_to_slot_n():
+    user_data = {"sessions": {"name_1": "Work"}}
+
+    assert _build_session_names(user_data) == {1: "Work", 2: "Slot 2", 3: "Slot 3"}
+
+
+def test_build_session_names_empty_value_falls_back_to_slot_n():
+    # Clearing a rename back to "" (see apply_naming's docstring) must
+    # redisplay as the default next load, not a literal blank name.
+    user_data = {"sessions": {"name_2": ""}}
+
+    assert _build_session_names(user_data) == {1: "Slot 1", 2: "Slot 2", 3: "Slot 3"}
+
+
+# ---------- set_session_name ----------
+
+def test_set_session_name_rewrites_only_the_target_slot(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[sessions]\n"
+        "# a hand-written comment that must survive\n"
+        'name_1 = "Slot 1"\n'
+        'name_2 = "Slot 2"\n'
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_session_name(2, "Gaming")
+
+    result = config_path.read_text()
+    assert 'name_1 = "Slot 1"\n' in result
+    assert 'name_2 = "Gaming"\n' in result
+    assert "# a hand-written comment that must survive\n" in result
+
+
+def test_set_session_name_appends_missing_key_within_existing_section(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[sessions]\n"
+        'name_1 = "Slot 1"\n'
+        "\n"
+        "[network]\n"
+        'wifi_backend = "iwd"\n'
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_session_name(2, "Gaming")
+
+    result = config_path.read_text()
+    assert 'name_1 = "Slot 1"\n' in result
+    assert 'name_2 = "Gaming"\n' in result
+    # Landed inside [sessions], not accidentally inside [network] below it.
+    sessions_pos = result.index("[sessions]")
+    network_pos = result.index("[network]")
+    name_2_pos = result.index('name_2 = "Gaming"')
+    assert sessions_pos < name_2_pos < network_pos
+    assert 'wifi_backend = "iwd"\n' in result
+
+
+def test_set_session_name_appends_missing_key_when_section_is_last_in_file(tmp_path, monkeypatch):
+    # No subsequent "[" line to bound the insertion point against —
+    # section_end must fall back to end-of-file, not lose the line.
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[sessions]\nname_1 = "Slot 1"\n')
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_session_name(2, "Gaming")
+
+    assert config_path.read_text() == '[sessions]\nname_1 = "Slot 1"\nname_2 = "Gaming"\n'
+
+
+def test_set_session_name_appends_a_brand_new_section_when_missing_entirely(tmp_path, monkeypatch):
+    # The exact upgrade case set_session_name's docstring calls out —
+    # an existing user's config.toml predating [sessions] entirely.
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[layout]\n"
+        "preset = 1\n"
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_session_name(1, "Work")
+
+    result = config_path.read_text()
+    assert "[sessions]\n" in result
+    assert 'name_1 = "Work"\n' in result
+    assert "preset = 1\n" in result  # untouched
+
+
+def test_set_session_name_can_write_an_empty_value(tmp_path, monkeypatch):
+    # Clearing a custom name back to the default (see apply_naming).
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[sessions]\nname_1 = "Work"\n')
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_session_name(1, "")
+
+    assert 'name_1 = ""\n' in config_path.read_text()

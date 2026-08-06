@@ -46,6 +46,13 @@ PACKAGED_PRESETS_DIR = PACKAGE_DIR / "presets"
 USER_CONFIG_PATH = Path.home() / ".config" / "tuicc" / "config.toml"
 USER_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "presets"
 
+# Must match modules/sessions.py's own SLOT_COUNT — duplicated rather
+# than imported, since config.py sits below modules/ in the dependency
+# order (modules import from config, never the reverse). Session slot
+# count isn't exposed as configurable today, same as it wasn't before
+# per-slot names existed.
+SESSION_SLOT_COUNT = 3
+
 
 @dataclass
 class Config:
@@ -70,6 +77,7 @@ class Config:
     bluetooth_backend_name: str
     power_menu_actions: list
     global_shortcuts: dict
+    session_names: dict
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -228,9 +236,20 @@ def _patch_config_line(section: str, key: str, replacement_line: str) -> None:
     strip every comment in a file the user hand-edits (see this
     module's docstring on why presets are separate per-number files in
     the first place — this is where that same constraint has to be
-    worked around instead of just avoided). Shared by set_active_preset
-    and set_theme_color, the two places in the codebase that patch
-    config.toml directly rather than regenerating it.
+    worked around instead of just avoided). Shared by set_active_preset,
+    set_theme_color, and set_session_name — the places in the codebase
+    that patch config.toml directly rather than regenerating it.
+
+    If `key` isn't found inside `[section]`, it's appended to the end
+    of that section instead of silently doing nothing — needed for
+    set_session_name, where [sessions] (added well after [layout]/
+    [theme] existed) may simply not be in an existing user's
+    config.toml yet. If `[section]` itself isn't found at all, a new
+    section is appended at the end of the file. set_active_preset/
+    set_theme_color never actually exercise this path in practice —
+    [layout]/[theme] are sections load_config() already requires just
+    to start up, so a config that loads successfully always has both —
+    but it's not worth a separate function just to special-case that.
 
     Atomic write (tmp + replace), same pattern as save_new_preset/
     session.py's save_session.
@@ -238,14 +257,28 @@ def _patch_config_line(section: str, key: str, replacement_line: str) -> None:
     lines = USER_CONFIG_PATH.read_text().splitlines(keepends=True)
 
     in_section = False
+    section_found = False
+    section_end = len(lines)
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("["):
+            if in_section:
+                section_end = i
             in_section = (stripped == f"[{section}]")
+            if in_section:
+                section_found = True
             continue
         if in_section and re.match(rf"^{re.escape(key)}\s*=", stripped):
             lines[i] = replacement_line
             break
+    else:
+        if section_found:
+            lines.insert(section_end, replacement_line)
+        else:
+            if lines and not lines[-1].endswith("\n"):
+                lines.append("\n")
+            lines.append(f"\n[{section}]\n")
+            lines.append(replacement_line)
 
     tmp_path = USER_CONFIG_PATH.with_name(USER_CONFIG_PATH.name + ".tmp")
     tmp_path.write_text("".join(lines))
@@ -265,6 +298,15 @@ def set_theme_color(role: str, value: str) -> None:
     hand-editing config.toml directly).
     """
     _patch_config_line("theme", role, f'{role} = "{value}"\n')
+
+
+def set_session_name(slot: int, value: str) -> None:
+    """Switches config.toml's [sessions] name_<slot> over to value —
+    the sessions module's rename action. value may be empty (clearing
+    a custom name back to the "Slot <N>" default — see load_config's
+    session_names).
+    """
+    _patch_config_line("sessions", f"name_{slot}", f'name_{slot} = "{value}"\n')
 
 
 def get_raw_theme_values() -> dict:
@@ -313,6 +355,24 @@ def get_raw_power_menu_actions() -> list[dict]:
         return load_toml(USER_CONFIG_PATH)["power_menu"]["action"]
     except (FileNotFoundError, KeyError):
         return []
+
+
+def _build_session_names(user_data: dict) -> dict:
+    """{1: name, 2: name, 3: name} — falsy (missing key entirely, or an
+    empty string from clearing a rename back out) both fall back to
+    "Slot <N>". [sessions] itself may not exist at all in a config.toml
+    predating this feature, so .get() at every level, same "missing key
+    -> sane default, never a crash" treatment fullscreen_only gets in
+    load_config() below. A separate function (not inlined into
+    load_config) purely so it's testable without a full config.toml
+    fixture, same reasoning resolve_color()/resolve_key() are their own
+    functions instead of being written inline where they're used.
+    """
+    sessions_data = user_data.get("sessions", {})
+    return {
+        n: sessions_data.get(f"name_{n}") or f"Slot {n}"
+        for n in range(1, SESSION_SLOT_COUNT + 1)
+    }
 
 
 def load_config() -> Config:
@@ -388,6 +448,8 @@ def load_config() -> Config:
         used_by[key_code] = item_id
         global_shortcuts[key_code] = {"target_kind": "power_action", "item_id": item_id}
 
+    session_names = _build_session_names(user_data)
+
     clock_time_format = user_data["clock"]["time_format"]
     clock_date_format = user_data["clock"]["date_format"]
     terminal_apps = set(user_data["title_condense"]["terminal_apps"])
@@ -419,4 +481,5 @@ def load_config() -> Config:
         bluetooth_backend_name=bluetooth_backend_name,
         power_menu_actions=power_menu_actions,
         global_shortcuts=global_shortcuts,
+        session_names=session_names,
     )

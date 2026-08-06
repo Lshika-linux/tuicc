@@ -20,6 +20,7 @@ from tuicc.config import (
     available_preset_numbers,
     set_active_preset,
     set_theme_color,
+    set_session_name,
     get_raw_theme_values,
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
@@ -41,12 +42,15 @@ from tuicc.navigation import (
     first_item_in_module,
     next_item_across_modules,
     prev_item_across_modules,
+    same_row_neighbor,
+    module_of_item,
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
 from tuicc.render_utils import draw_status_line
 from tuicc.theme_setup import setup_theme, reassign_theme_pairs
 from tuicc import resize_mode, help_mode, pending_moves
 from tuicc.modules import launcher as launcher_mode
+from tuicc.modules import sessions as sessions_mode
 
 
 def main(stdscr):
@@ -195,14 +199,29 @@ def main(stdscr):
         help_mode.enter(help_state)
 
     def do_apply_reselect():
-        # See ActionContext.reselect_region_id's docstring — consumed
-        # once, right after any dispatch/confirm site that might have
-        # set it (currently only sessions.py's "load" branch). Looks up
-        # a real region NavItem instead of hardcoding an id-prefix
-        # convention here, since which module actually owns "region"
-        # items (sidebar vs sidebar_compact) is a preset/config choice,
-        # not something main.py should assume.
+        # See ActionContext.reselect_region_id/reselect_item_id's
+        # docstrings — both consumed once, right after any dispatch/
+        # confirm site that might have set either.
         nonlocal selected_id, active_module, focus_id
+        if action_ctx.reselect_item_id is not None:
+            # Direct set, no lookup against `ordered` — deliberately:
+            # `ordered` here still reflects nav_items() from BEFORE the
+            # handler that set this ran (it's computed once at the top
+            # of the frame, dispatch happens after), so the id this
+            # names typically isn't in it yet. module_of_item's own
+            # "modulename:id" convention is all that's needed to derive
+            # active_module from a plain string, no real NavItem
+            # required — next frame's nav_items() recomputes for real
+            # and the normal "is selected_id still valid" check finds
+            # it there, same as any other selection.
+            selected_id = action_ctx.reselect_item_id
+            active_module = selected_id.split(":")[0]
+            action_ctx.reselect_item_id = None
+            return
+        # Looks up a real region NavItem instead of hardcoding an
+        # id-prefix convention here, since which module actually owns
+        # "region" items (sidebar vs sidebar_compact) is a preset/
+        # config choice, not something main.py should assume.
         if action_ctx.reselect_region_id is None:
             return
         region_item = next(
@@ -302,6 +321,22 @@ def main(stdscr):
                     # session restore completed, for the rest of that
                     # same tuicc toggle.
                     focus_id = resolved_target_regions[-1]
+
+            # A session slot's level-2 (expanded) state is meant to be
+            # left only by Escape or picking an action — never silently
+            # by navigating elsewhere while it's still open. Checked
+            # here, once per frame, rather than patched into every
+            # individual place active_module can change (Tab/Shift+Tab
+            # rolling out, Left/Right, ambient typing into the
+            # launcher, F1/F2/F6, ...) — active_module already reflects
+            # whatever the previous frame's keypress did by the time
+            # this runs, so one check here reliably catches all of
+            # them. No selected_id/focus_id fixup needed alongside it:
+            # whatever changed active_module away from "sessions" also
+            # already moved selected_id off of any sessions:action:*
+            # id via its own resolve_selection call.
+            if active_module != "sessions" and sessions_mode.is_expanded():
+                sessions_mode.collapse()
 
             ctx = RenderContext(
                 state=state,
@@ -409,6 +444,25 @@ def main(stdscr):
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
+                continue
+
+            if sessions_mode.is_naming():
+                # Same shape as help_state's color editor just below —
+                # a narrow key-capture hijack, not a full modal like
+                # help_state.active/resize.active. The early `continue`
+                # here is what keeps Tab/other keys from leaking through
+                # to the normal dispatch chain mid-rename (handle_naming_key
+                # itself just ignores anything outside backspace/Escape/
+                # printable-ASCII, so a stray Tab is silently a no-op,
+                # not a navigation change).
+                if key == cfg.keybinds["confirm"]:
+                    result = sessions_mode.apply_naming()
+                    if result is not None:
+                        slot, new_name = result
+                        cfg.session_names[slot] = new_name or f"Slot {slot}"
+                        set_session_name(slot, new_name)
+                else:
+                    sessions_mode.handle_naming_key(key)
                 continue
 
             if help_state.active:
@@ -590,34 +644,80 @@ def main(stdscr):
                     provider.dismiss_self()
 
             elif key in next_item_keys and ordered:
-                # next_item_across_modules keeps walking forward past
-                # module boundaries until it finds one with an actual
-                # item — a single next-module lookup isn't enough, since
-                # modules with zero nav items (launcher, preview, clock)
-                # are common, not a rare edge case. See its docstring:
-                # found live, this used to leave Tab permanently stuck
-                # the moment selection reached Power Menu's last item.
-                next_item = next_item_across_modules(ordered, module_names, active_module, selected_id)
+                if sessions_mode.is_expanded():
+                    # Level 2 is a deliberate exception to the app-wide
+                    # "Tab never wraps within a module, it rolls into
+                    # the next one" rule — see same_row_neighbor's
+                    # wrap param docstring. Escape/picking an action
+                    # are the only ways out (see the dedicated Escape
+                    # branch and the per-frame auto-collapse check
+                    # above), so Tab/Shift+Tab/Left/Right all just
+                    # cycle LOAD/SAVE/DEL/NAME in place instead.
+                    next_item = same_row_neighbor(ordered, selected_id, direction=1, wrap=True)
+                else:
+                    # next_item_across_modules keeps walking forward past
+                    # module boundaries until it finds one with an actual
+                    # item — a single next-module lookup isn't enough, since
+                    # modules with zero nav items (launcher, preview, clock)
+                    # are common, not a rare edge case. See its docstring:
+                    # found live, this used to leave Tab permanently stuck
+                    # the moment selection reached Power Menu's last item.
+                    next_item = next_item_across_modules(ordered, module_names, active_module, selected_id)
                 if next_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
             elif key in prev_item_keys and ordered:
-                prev_item = prev_item_across_modules(ordered, module_names, active_module, selected_id)
+                if sessions_mode.is_expanded():
+                    prev_item = same_row_neighbor(ordered, selected_id, direction=-1, wrap=True)
+                else:
+                    prev_item = prev_item_across_modules(ordered, module_names, active_module, selected_id)
+                    if (
+                        prev_item is not None
+                        and active_module != "sessions"
+                        and module_of_item(prev_item) == "sessions"
+                    ):
+                        # Sessions is a deliberate exception to
+                        # prev_item_across_modules' usual "rolling
+                        # backward lands on the module's LAST item"
+                        # feel (right for most modules — see its
+                        # docstring) — always slot 1 instead, regardless
+                        # of which direction you entered from. Without
+                        # this, Shift+Tab-ing in from whatever module
+                        # follows Sessions lands on slot 3, one Tab away
+                        # from immediately rolling back out again —
+                        # found live, reported as "annoying".
+                        prev_item = first_item_in_module(ordered, "sessions")
                 if prev_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(prev_item, focus_id)
             elif key in module_next_keys:
-                next_name = next_module_name(module_names, active_module)
-                if next_name is not None:
-                    active_module = next_name
-                    first_item = first_item_in_module(ordered, active_module)
-                    if first_item is not None:
-                        selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
+                # same_row_neighbor first: a module with multiple items
+                # on one row (e.g. sessions.py's expanded LOAD/SAVE/DEL/
+                # NAME) gets to step across them before Right falls back
+                # to its usual jump-to-next-module meaning — see its own
+                # docstring. None for the overwhelmingly common single-
+                # column module, so this is a no-op there. wrap=True for
+                # the same reason as next_item_keys above — level 2 never
+                # falls through to a module jump on Left/Right either.
+                neighbor = same_row_neighbor(ordered, selected_id, direction=1, wrap=sessions_mode.is_expanded())
+                if neighbor is not None:
+                    selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
+                else:
+                    next_name = next_module_name(module_names, active_module)
+                    if next_name is not None:
+                        active_module = next_name
+                        first_item = first_item_in_module(ordered, active_module)
+                        if first_item is not None:
+                            selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
             elif key in module_prev_keys:
-                prev_name = prev_module_name(module_names, active_module)
-                if prev_name is not None:
-                    active_module = prev_name
-                    first_item = first_item_in_module(ordered, active_module)
-                    if first_item is not None:
-                        selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
+                neighbor = same_row_neighbor(ordered, selected_id, direction=-1, wrap=sessions_mode.is_expanded())
+                if neighbor is not None:
+                    selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
+                else:
+                    prev_name = prev_module_name(module_names, active_module)
+                    if prev_name is not None:
+                        active_module = prev_name
+                        first_item = first_item_in_module(ordered, active_module)
+                        if first_item is not None:
+                            selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
             elif key == cfg.keybinds["spawn_box"]:
                 do_spawn_picker()
             elif key == cfg.keybinds["resize"] and active_module is not None:
@@ -634,6 +734,25 @@ def main(stdscr):
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
                 active_module = "launcher"
+            elif key == 27 and sessions_mode.is_expanded():
+                # Escape collapses an expanded session slot back to
+                # browsing all three rows, same "one level at a time"
+                # idea as resize_mode's browsing/editing split — but
+                # unlike that split, this needs no dedicated hijack
+                # tier above: Tab/other-module navigation already works
+                # unchanged while expanded (nav_items() alone decides
+                # what's navigable), so only Escape itself needs
+                # special-casing, right here, ahead of the plain
+                # top-level Escape (dismiss) below. Reselect the row
+                # directly (see collapse()'s docstring) for the same
+                # reason do_apply_reselect's reselect_item_id branch
+                # exists — the id this had selected a moment ago
+                # (an action within the slot) is about to vanish from
+                # nav_items() the instant collapse() runs.
+                collapsed_slot = sessions_mode.collapse()
+                if collapsed_slot is not None:
+                    selected_id = f"sessions:row:{collapsed_slot}"
+                    active_module = "sessions"
             elif key == 27:  # Escape, no active input claim: dismiss at top level
                 if cfg.return_to_origin and origin_region_id is not None:
                     provider.focus_region(origin_region_id)

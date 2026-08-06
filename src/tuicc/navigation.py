@@ -79,6 +79,56 @@ def module_of_item(item: NavItem) -> str:
     return item.id.split(":")[0]
 
 
+def same_row_neighbor(
+    items: list[NavItem], selected_id: str | None, direction: int, wrap: bool = False,
+) -> NavItem | None:
+    """The next item to the left (direction=-1) or right (direction=+1)
+    of the currently-selected one, within the SAME module and sharing
+    its exact row (rect's y) — lets Left/Right step across a module's
+    own horizontal list of items (e.g. sessions.py's LOAD/SAVE/DEL/NAME
+    row) before module_next_keys/module_prev_keys fall back to their
+    usual "jump to the next/previous module" behavior. None if there's
+    no current selection, or no other item shares both this item's
+    module and row (the overwhelmingly common case — most modules lay
+    items out in a single column, one per row, where this is always a
+    no-op and Left/Right behave exactly as before).
+
+    NOT the spatial nearest-neighbor search this module's own docstring
+    describes removing — that was unconstrained 2D search across the
+    WHOLE layout, unpredictable specifically because of overlapping
+    floating windows in the preview. This is narrower and doesn't share
+    that problem: same module, same exact row, nothing else even
+    considered, so there's no "which of several equally-near neighbors"
+    ambiguity to get wrong.
+
+    wrap=True cycles back to the row's other end past either boundary
+    instead of returning None there — opt-in, not the default: most
+    same-row lists still want to fall through to the normal jump-to-
+    next-module behavior at the row's edge, matching every other
+    module's Left/Right. sessions.py's level-2 (an expanded slot) is a
+    deliberate exception — Tab/Shift+Tab/Left/Right should all just
+    cycle LOAD/SAVE/DEL/NAME in place there, the same way resize_mode's
+    editing level is already a deliberate exception to normal
+    navigation — see main.py's call sites for exactly when it's passed.
+    """
+    if selected_id is None:
+        return None
+    current = next((item for item in items if item.id == selected_id), None)
+    if current is None:
+        return None
+    module = module_of_item(current)
+    row_items = sorted(
+        (item for item in items if module_of_item(item) == module and item.rect[1] == current.rect[1]),
+        key=lambda item: item.rect[0],
+    )
+    index = row_items.index(current) + direction
+    if wrap:
+        return row_items[index % len(row_items)]
+    if 0 <= index < len(row_items):
+        return row_items[index]
+    return None
+
+
 def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | None:
     for item in items:
         if module_of_item(item) == module_name:

@@ -73,6 +73,24 @@ class ActionContext:
     # back to None once consumed — a single-use signal, same "read once,
     # reset" idiom as main.py's own expect_focus_reclaim.
     reselect_region_id: str | None = None
+    # A handler sets this to an exact NavItem id to ask main.py to move
+    # selection there directly, no lookup against the current frame's
+    # (possibly already-stale) nav item list needed — unlike
+    # reselect_region_id above, which searches for a region-kind item
+    # matching a property (since the exact sidebar item id isn't known
+    # to a handler outside sidebar.py/sidebar_compact.py), this is for
+    # a handler that already knows precisely which id it wants,
+    # typically its own module's. sessions.py's "expand a row" handler
+    # sets this to that slot's first action — needed because expanding
+    # changes what sessions.py's own nav_items() reports on the very
+    # next frame, which would otherwise make the just-selected row id
+    # vanish from the list and trip main.py's "selection no longer
+    # valid" recovery (a region-kind fallback search, meant for real
+    # external focus changes) into jumping to the sidebar instead —
+    # found live. None (the default) means no request; main.py clears
+    # it back to None once consumed, same single-use idiom as
+    # reselect_region_id/expect_focus_reclaim.
+    reselect_item_id: str | None = None
 
 
 def spawn_detached(cmd, shell_true=False, log_path=None, env=None):

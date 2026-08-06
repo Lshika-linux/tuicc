@@ -19,6 +19,7 @@ from tuicc.navigation import (
     prev_item_in_module,
     next_item_across_modules,
     prev_item_across_modules,
+    same_row_neighbor,
 )
 
 
@@ -411,3 +412,109 @@ def test_resolve_selection_non_region_item_keeps_focus_id_unchanged():
     assert selected_id == "preview:window-5"
     assert active_module == "preview"
     assert focus_id == "1"
+
+
+# ---------- same_row_neighbor ----------
+# The fix for main.py's Left/Right (module_next_keys/module_prev_keys)
+# jumping to a whole different module the instant you try to step
+# across a module's own horizontal row of items (e.g. sessions.py's
+# expanded LOAD/SAVE/DEL/NAME) — found live. Left/Right try this first;
+# None (the overwhelmingly common case for a single-column module)
+# means they fall back to their usual jump-to-module behavior,
+# unaffected.
+
+def _row_item(module, name, x):
+    return NavItem(id=f"{module}:{name}", rect=(x, 0.5, 0.05, 0.02))
+
+
+def test_same_row_neighbor_moves_right_to_the_next_item_on_the_row():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+    c = _row_item("sessions", "del", 0.3)
+
+    result = same_row_neighbor([a, b, c], selected_id="sessions:load", direction=1)
+
+    assert result is b
+
+
+def test_same_row_neighbor_moves_left_to_the_previous_item_on_the_row():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+    c = _row_item("sessions", "del", 0.3)
+
+    result = same_row_neighbor([a, b, c], selected_id="sessions:del", direction=-1)
+
+    assert result is b
+
+
+def test_same_row_neighbor_returns_none_past_the_last_item():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+
+    assert same_row_neighbor([a, b], selected_id="sessions:save", direction=1) is None
+
+
+def test_same_row_neighbor_returns_none_past_the_first_item():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+
+    assert same_row_neighbor([a, b], selected_id="sessions:load", direction=-1) is None
+
+
+def test_same_row_neighbor_ignores_items_from_a_different_module():
+    # Same y, different module — must NOT treat these as row siblings,
+    # even though they're geometrically on the same screen row.
+    a = _row_item("sessions", "load", 0.1)
+    other = _row_item("clock", "time", 0.9)
+
+    assert same_row_neighbor([a, other], selected_id="sessions:load", direction=1) is None
+
+
+def test_same_row_neighbor_ignores_items_from_a_different_row():
+    # Same module, different y — a normal single-column module (every
+    # item on its own row) must see this as a no-op, not a match.
+    a = NavItem(id="sidebar:1", rect=(0.0, 0.0, 0.1, 0.05))
+    b = NavItem(id="sidebar:2", rect=(0.0, 0.1, 0.1, 0.05))
+
+    assert same_row_neighbor([a, b], selected_id="sidebar:1", direction=1) is None
+
+
+def test_same_row_neighbor_no_selection_returns_none():
+    a = _row_item("sessions", "load", 0.1)
+
+    assert same_row_neighbor([a], selected_id=None, direction=1) is None
+
+
+def test_same_row_neighbor_unknown_selected_id_returns_none():
+    a = _row_item("sessions", "load", 0.1)
+
+    assert same_row_neighbor([a], selected_id="sessions:missing", direction=1) is None
+
+
+# ---------- same_row_neighbor: wrap ----------
+
+def test_same_row_neighbor_wrap_past_the_last_item_returns_the_first():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+    c = _row_item("sessions", "del", 0.3)
+
+    result = same_row_neighbor([a, b, c], selected_id="sessions:del", direction=1, wrap=True)
+
+    assert result is a
+
+
+def test_same_row_neighbor_wrap_past_the_first_item_returns_the_last():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+    c = _row_item("sessions", "del", 0.3)
+
+    result = same_row_neighbor([a, b, c], selected_id="sessions:load", direction=-1, wrap=True)
+
+    assert result is c
+
+
+def test_same_row_neighbor_wrap_false_by_default_still_returns_none_at_the_edge():
+    a = _row_item("sessions", "load", 0.1)
+    b = _row_item("sessions", "save", 0.2)
+
+    assert same_row_neighbor([a, b], selected_id="sessions:save", direction=1) is None
