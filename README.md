@@ -9,7 +9,7 @@ app launcher, wifi/bluetooth connectivity, and a power menu.
 Built on a small core that only translates window-manager state into a
 generic model, with everything else as swappable modules.
 
-This is an early project of mine — the beauty is that it's fairly simple to run on any WM, as long as you're able to write your own WM provider: the only part of the code that talks directly to your WM and translates it into tuicc's data.
+This is an early project of mine — the beauty is that it's possible to run on any tiling WM, as long as you're able to write your own WM provider: the only part of the code that talks directly to your WM and translates it into tuicc's data.
 
 ![tuicc showing a workspace with overlapping floating windows](./screenshot.png)
 
