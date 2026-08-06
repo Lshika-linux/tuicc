@@ -285,6 +285,17 @@ chmod +x "$TOGGLE_DST"
 
 # --- 8. Build the WM config block (used for both printing and writing) -----
 
+# One `for_window [criteria] action` line PER action, not one line with
+# actions comma-chained — verified live (swayfx 0.5.3/sway 1.11.0):
+# `for_window [crit] floating enable, fullscreen enable` as a single
+# chained rule reports every action as "success" but the window ends
+# up NOT fullscreen and NOT floating-sized (small default box) when it
+# actually maps — splitting into separate for_window rules per action,
+# same criteria repeated, reliably produces the correct end state.
+# Whether this is swayfx-specific or affects vanilla sway/i3 too is
+# unconfirmed (flag for the testing log if you're on either) — the
+# split form costs nothing extra either way, so it's the default now
+# regardless of WM.
 if [ "$FULLSCREEN_ONLY" = "true" ]; then
     # move+resize before fullscreen enable, not just floating enable +
     # fullscreen enable: fullscreen_mode gets dropped transiently on
@@ -297,28 +308,26 @@ if [ "$FULLSCREEN_ONLY" = "true" ]; then
     # full output up front means the gap loses only the border/always-
     # on-top treatment, not its size — found live testing this exact
     # transition on i3.
-    FLOAT_RULE="floating enable, move position 0 0, resize set 100 ppt 100 ppt, fullscreen enable"
+    FLOAT_ACTIONS=("floating enable" "move position 0 0" "resize set 100 ppt 100 ppt" "fullscreen enable")
 else
-    FLOAT_RULE="floating enable"
+    FLOAT_ACTIONS=("floating enable")
 fi
 
 if [ "$WM" = "sway" ]; then
     WM_CONFIG_PATH="$HOME/.config/sway/config"
-    BLOCK=$(cat <<EOF
-# tuicc (added by install.sh)
-for_window [app_id="$APP_ID"] $FLOAT_RULE
-for_window [class="$APP_ID"] $FLOAT_RULE
-bindsym $KEYBIND exec $TOGGLE_DST
-EOF
-)
+    BLOCK="# tuicc (added by install.sh)"$'\n'
+    for action in "${FLOAT_ACTIONS[@]}"; do
+        BLOCK="${BLOCK}for_window [app_id=\"$APP_ID\"] $action"$'\n'
+        BLOCK="${BLOCK}for_window [class=\"$APP_ID\"] $action"$'\n'
+    done
+    BLOCK="${BLOCK}bindsym $KEYBIND exec $TOGGLE_DST"
 else
     WM_CONFIG_PATH="$HOME/.config/i3/config"
-    BLOCK=$(cat <<EOF
-# tuicc (added by install.sh)
-for_window [class="$APP_ID"] $FLOAT_RULE
-bindsym $KEYBIND exec --no-startup-id $TOGGLE_DST
-EOF
-)
+    BLOCK="# tuicc (added by install.sh)"$'\n'
+    for action in "${FLOAT_ACTIONS[@]}"; do
+        BLOCK="${BLOCK}for_window [class=\"$APP_ID\"] $action"$'\n'
+    done
+    BLOCK="${BLOCK}bindsym $KEYBIND exec --no-startup-id $TOGGLE_DST"
 fi
 
 echo

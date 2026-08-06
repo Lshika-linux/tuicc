@@ -200,9 +200,21 @@ it, then:
 
 ```
 # ~/.config/sway/config
-for_window [app_id="tuicc_scratch"] floating enable, move position 0 0, resize set 100 ppt 100 ppt, fullscreen enable
+for_window [app_id="tuicc_scratch"] floating enable
+for_window [app_id="tuicc_scratch"] move position 0 0
+for_window [app_id="tuicc_scratch"] resize set 100 ppt 100 ppt
+for_window [app_id="tuicc_scratch"] fullscreen enable
 bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
 ```
+
+One `for_window` line per action, deliberately not one line with
+actions comma-chained — verified live (swayfx 0.5.3/sway 1.11.0):
+chaining `floating enable, fullscreen enable` (etc.) into a single rule
+reports every action as successful, but the window ends up neither
+floating-sized nor fullscreen once it actually maps. Splitting into
+separate rules, same criteria repeated, reliably produces the correct
+end state; costs nothing extra if your WM doesn't have this quirk, so
+it's the recommended form regardless.
 
 Don't add a static `for_window ... move scratchpad` rule alongside
 this — the script does the scratchpad move/show itself, and a static
@@ -215,17 +227,17 @@ value at runtime (see its own docstring) and re-asserts `fullscreen
 enable` on every show/focus, since sway drops a container back to
 plain floating the instant any new window is mapped anywhere in the
 session, even briefly on tuicc's own workspace before it's moved
-elsewhere. The `move position 0 0, resize set 100 ppt 100 ppt` part
-matters for that same gap: it pins tuicc's *underlying* floating
+elsewhere. The `move position 0 0`/`resize set 100 ppt 100 ppt` lines
+matter for that same gap: they pin tuicc's *underlying* floating
 geometry to the full output up front, so the brief drop out of
 fullscreen loses only the border/always-on-top treatment, not its
-size — without it, tuicc pops down to whatever size sway defaults a
+size — without them, tuicc pops down to whatever size sway defaults a
 new floating window to (usually a small centered box) and back, a much
 more jarring flicker (found live testing this exact transition on i3).
 Plain floating is a deliberate tweak, not the default — use plain
-`floating enable` (no `move position`/`resize set`/`fullscreen enable`)
-and set `fullscreen_only = false` in config.toml if you'd rather have
-tuicc float at its own natural size.
+`floating enable` (drop the `move position`/`resize set`/`fullscreen
+enable` lines) and set `fullscreen_only = false` in config.toml if
+you'd rather have tuicc float at its own natural size.
 
 If you'd rather not use the toggle script, a plain three-line summon
 still works, just with separate implicit show/hide instead of one
@@ -246,7 +258,10 @@ invocation):
 
 ```
 # ~/.config/i3/config
-for_window [class="tuicc_scratch"] floating enable, move position 0 0, resize set 100 ppt 100 ppt, fullscreen enable
+for_window [class="tuicc_scratch"] floating enable
+for_window [class="tuicc_scratch"] move position 0 0
+for_window [class="tuicc_scratch"] resize set 100 ppt 100 ppt
+for_window [class="tuicc_scratch"] fullscreen enable
 bindsym $mod+Tab exec --no-startup-id ~/scripts_i3/tuicc_toggle.py
 ```
 
