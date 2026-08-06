@@ -6,6 +6,7 @@ is needed.
 import subprocess
 from types import SimpleNamespace
 
+import tuicc.actions as actions_module
 from tuicc.actions import (
     BASE_HANDLERS,
     ActionContext,
@@ -160,6 +161,65 @@ def test_spawn_detached_log_path_redirects_stdout_and_stderr(monkeypatch, tmp_pa
     assert log_path.parent.is_dir()  # created on demand, same as SESSIONS_DIR
     assert kwargs["stdout"].name == str(log_path)
     assert kwargs["stdout"] is kwargs["stderr"]  # same fd, chronological interleave
+
+
+# ---------- spawn_detached: env ----------
+
+def test_spawn_detached_no_env_passes_none_to_popen(monkeypatch):
+    # env=None to Popen means "inherit the current process's
+    # environment exactly," identical to every call site before this
+    # parameter existed — confirms zero behavior change by default.
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+
+    spawn_detached("kitty")
+
+    _, kwargs = calls[0]
+    assert kwargs["env"] is None
+
+
+def test_spawn_detached_env_is_layered_over_current_environment(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    monkeypatch.setattr(actions_module.os, "environ", {"PATH": "/usr/bin", "HOME": "/home/rafi"})
+
+    spawn_detached("obsidian", env={"NODE_PATH": "/nix/store/.../node_modules"})
+
+    _, kwargs = calls[0]
+    assert kwargs["env"] == {
+        "PATH": "/usr/bin",
+        "HOME": "/home/rafi",
+        "NODE_PATH": "/nix/store/.../node_modules",
+    }
+
+
+def test_spawn_detached_captured_env_cannot_override_always_live_keys(monkeypatch):
+    # A session saved today and loaded after a relogin/reboot must not
+    # carry yesterday's now-nonexistent WAYLAND_DISPLAY into the
+    # respawned process — the live value always wins.
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    monkeypatch.setattr(actions_module.os, "environ", {"WAYLAND_DISPLAY": "wayland-1"})
+
+    spawn_detached("obsidian", env={"WAYLAND_DISPLAY": "wayland-STALE", "NODE_PATH": "/x"})
+
+    _, kwargs = calls[0]
+    assert kwargs["env"]["WAYLAND_DISPLAY"] == "wayland-1"
+    assert kwargs["env"]["NODE_PATH"] == "/x"
+
+
+def test_spawn_detached_always_live_key_absent_from_current_env_is_dropped(monkeypatch):
+    # Captured env has SWAYSOCK (saved on sway); this session is i3, no
+    # SWAYSOCK in the current environment at all — must not leak the
+    # stale sway value through, since there's no live one to prefer.
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    monkeypatch.setattr(actions_module.os, "environ", {"PATH": "/usr/bin"})
+
+    spawn_detached("obsidian", env={"SWAYSOCK": "/run/sway-STALE.sock"})
+
+    _, kwargs = calls[0]
+    assert "SWAYSOCK" not in kwargs["env"]
 
 
 # ---------- dispatch_action ----------

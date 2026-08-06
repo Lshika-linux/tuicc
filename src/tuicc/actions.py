@@ -28,9 +28,28 @@ and none of them should have to agree on a shared schema just because
 this file needs to read a few of those keys back out.
 """
 
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
+
+# Env vars that identify *this* WM session specifically — always taken
+# from the current os.environ, never from a saved/captured env dict,
+# even when that dict happens to set them. A session saved today and
+# loaded after a relogin/reboot would otherwise carry yesterday's
+# WAYLAND_DISPLAY/SWAYSOCK/etc. straight into the respawned process,
+# pointing at a socket that no longer exists — a launch failure with a
+# totally different, more confusing cause than the one the captured
+# env is there to fix. See spawn_detached()'s env parameter.
+_ALWAYS_LIVE_ENV_KEYS = frozenset({
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "I3SOCK",
+    "SWAYSOCK",
+    "XAUTHORITY",
+})
 
 
 @dataclass
@@ -45,7 +64,7 @@ class ActionContext:
     restore_queue: list = field(default_factory=list)
 
 
-def spawn_detached(cmd, shell_true=False, log_path=None):
+def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
     """Run cmd as a detached background process that survives tuicc
     exiting right after this call.
 
@@ -72,14 +91,29 @@ def spawn_detached(cmd, shell_true=False, log_path=None):
     stderr going to DEVNULL exactly as before. When given, the spawned
     process's stdout+stderr are captured there instead — real
     diagnostic data for "this saved command silently didn't produce a
-    window," found live to matter a lot for session-restore specifically:
-    a relaunched app that needs environment/cwd context its captured
-    cmdline alone doesn't carry (common on NixOS, where a wrapper script
-    normally sets LD_LIBRARY_PATH/GDK paths etc. before exec'ing into
-    the raw binary /proc/<pid>/cmdline actually captures) can crash on
-    startup with a message that, discarded into DEVNULL, looks
-    identical to "never started at all" from the outside — no window,
-    no error, no way to tell those two failure modes apart without this.
+    window." Confirmed live, not just theorized: a saved Obsidian
+    session entry's captured cmdline (`electron <asar path>`, from
+    /proc/<pid>/cmdline) fails with `Error: Cannot find module
+    'electron'` when run exactly as captured — the real launcher is a
+    wrapper script that sets up environment (NixOS packages Electron
+    apps this way) before exec'ing into that same binary, and
+    /proc/<pid>/cmdline only ever captures argv *after* that exec, so
+    the wrapper's env setup is invisible to it. Discarded into DEVNULL,
+    that crash looked identical to "never started at all" from the
+    outside — no window, no error, no way to tell those two failure
+    modes apart without this.
+
+    env=None (the default) inherits tuicc's own environment exactly as
+    subprocess.Popen always has. When given (session.py's captured
+    /proc/<pid>/environ snapshot, see read_environ()), it's layered on
+    top of a copy of the current environment — captured values win,
+    since the whole point is restoring app-specific setup a plain
+    relaunch wouldn't have — *except* for _ALWAYS_LIVE_ENV_KEYS
+    (WAYLAND_DISPLAY, DISPLAY, XDG_RUNTIME_DIR, etc.), which always come
+    from the current environment regardless of what the snapshot says:
+    a session saved today and loaded after a relogin/reboot would
+    otherwise carry yesterday's now-nonexistent socket paths straight
+    into the respawned process.
     """
     if shell_true:
         popen_cmd = cmd
@@ -87,6 +121,15 @@ def spawn_detached(cmd, shell_true=False, log_path=None):
         popen_cmd = shlex.split(cmd)
     else:
         popen_cmd = cmd
+
+    popen_env = None
+    if env is not None:
+        popen_env = {**os.environ, **env}
+        for key in _ALWAYS_LIVE_ENV_KEYS:
+            if key in os.environ:
+                popen_env[key] = os.environ[key]
+            else:
+                popen_env.pop(key, None)
 
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +143,7 @@ def spawn_detached(cmd, shell_true=False, log_path=None):
         stderr=stderr,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
+        env=popen_env,
     )
     if log_path is not None:
         stdout.close()

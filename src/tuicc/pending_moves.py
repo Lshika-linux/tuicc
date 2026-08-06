@@ -180,10 +180,18 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     the case where a saved cmdline can crash on launch for reasons its
     own argv gives no hint of, and a match that never happens looks
     identical from the outside whether the process never started or
-    started and immediately died. Found live: an Obsidian entry that
-    silently never produced a window, saved cmdline being just
-    `electron <asar path>` with none of the environment a NixOS wrapper
-    script would normally set up first.
+    started and immediately died. Confirmed live, not just theorized:
+    a saved Obsidian entry's cmdline (`electron <asar path>`), relaunched
+    exactly as captured, crashes with `Cannot find module 'electron'` —
+    the real launcher is a wrapper script (NixOS packages Electron apps
+    this way) that sets up environment before exec'ing into that same
+    binary, invisible to /proc/<pid>/cmdline since it only ever captures
+    argv *after* that exec. session_entry.get("env") (session.py's
+    captured /proc/<pid>/environ snapshot, see capture_window()) is
+    threaded through for exactly this — None for entries saved before
+    this existed, or where the environ read failed, which
+    spawn_detached() treats as "just use the current environment,"
+    same as before.
     """
     if not restore_queue:
         return
@@ -191,7 +199,10 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
         return
     session_entry = restore_queue.pop(0)
     log_path = SPAWN_LOG_DIR / f"restore_{session_entry['app_id']}_{int(time.time())}.log"
-    pid = spawn_detached(session_entry["cmdline"], shell_true=False, log_path=log_path)
+    pid = spawn_detached(
+        session_entry["cmdline"], shell_true=False, log_path=log_path,
+        env=session_entry.get("env"),
+    )
     # See Provider.no_focus_next_window()'s docstring — asked for right
     # after the pid is known, well before the restored window has had a
     # chance to map and steal focus/fullscreen from tuicc.
