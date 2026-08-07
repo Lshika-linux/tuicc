@@ -101,7 +101,30 @@ instant summon (warm process, warm caches) without any daemon.
   launch uses `kitty --app-id tuicc_scratch`), mark via criteria
   (`[app_id=…] mark --add …`) instead of the focused-window assumption
   — kills the documented timing race. Focus-based marking stays as
-  fallback for plain-terminal launches.
+  fallback for plain-terminal launches. Confirmed live (found
+  post-v0.1.0-work, real machine): this fallback race isn't a rare
+  rapid-multi-launch edge case — a single ordinary launch mismarked an
+  unrelated app (still holding focus a moment) as tuicc itself,
+  silently hiding it everywhere. `self_app_id` (set + documented
+  prominently now — see defaults/config.toml's own comment, README's
+  "Summoning tuicc", the wiki's Writing-a-WM-Provider page) fixes this
+  deterministically for anyone who sets it; the fallback itself is
+  unchanged. **Backlog, not v0.1.0-blocking, explicitly deferred by the
+  user pending a real report:** a non-blocking retry (defer the
+  fallback's mark_self() call into the main loop, re-checking each
+  frame whether the currently-focused window has stayed the same for
+  several consecutive frames before committing, instead of one
+  snapshot at startup) was designed and considered. Rejected for now —
+  not because it's wrong, but because it only ever improves the
+  fallback's odds probabilistically (self_app_id already fixes it for
+  free, deterministically), adds real state-machine complexity to
+  main.py's loop, and has at least one plausible way to perform *worse*
+  than today's immediate snapshot: waiting longer gives more real time
+  for something else to transiently steal focus mid-check (a
+  notification, a hover-focus blip), whereas grabbing a snapshot fast
+  is less exposed to that specific interference window. Revisit only
+  if someone hits this without `self_app_id` set and a fix is
+  genuinely wanted, not preemptively.
 - **Real quit = Ctrl+C.** No quit menu entry, no quit keybind — it's a
   terminal, that's the idiom. To quit a hidden tuicc: summon, Ctrl+C.
   Document one line: "config changes apply after restart: summon,
