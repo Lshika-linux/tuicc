@@ -50,3 +50,13 @@ class RenderContext:
     # through main.py-computed values" pattern focus_id already uses
     # for preview.py, not sidebar.py reaching into sessions.py directly.
     session_preview: dict | None = None
+    # {(toggle_index, state_index): curses_color_pair} for every
+    # [[control.toggle.state]] with an explicit `color` — built once at
+    # startup by theme_setup.assign_control_toggle_pairs(), not
+    # per-frame (curses.init_pair() is a one-time setup call, same
+    # reasoning theme_pairs above is built once and passed through, not
+    # rebuilt in the render loop). A state with no `color` configured
+    # is simply absent here; modules/control.py falls back to a theme
+    # default for it, same "look it up, fall back if missing" pattern
+    # _connection_dot already uses.
+    control_colors: dict = field(default_factory=dict)

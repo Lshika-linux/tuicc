@@ -24,16 +24,24 @@ into that domain's own last_error, and the cached snapshot itself
 becomes None (not []) for that round, so a module rendering it can
 tell "genuinely nothing there" (a real []) apart from "couldn't check"
 (None + last_error) — see modules/connectivity.py's _build_rows for
-where that distinction actually reaches the screen. Action failures
-(e.g. a connect() call raising) are NOT yet surfaced this way — still
-a bare `except Exception: pass`, same as before this refactor. Known,
-documented gap, not silently "fixed" with more complexity than this
-pass needs: VISION.md's own concrete no-silent-failure example
-("no wifi networks... D-Bus is down") is specifically about polling,
-and action pending state already gets cleared either way (see
-request_action), so a failed action doesn't hang a spinner forever —
-it just doesn't yet explain *why* it failed. Revisit if that turns out
-to matter in practice.
+where that distinction actually reaches the screen.
+
+Action failures (e.g. a connect() call raising) get the same
+treatment, in a separate `_action_errors` dict (get_action_error()) —
+this WAS left as a known, deliberately deferred gap when R3 first
+landed ("revisit if that turns out to matter in practice"), and it did:
+found live building R5's control module — a toggle's command failing
+fast (gammastep exiting immediately for lack of a GeoClue2 provider,
+on this session's own test machine) produced zero visible feedback,
+the toggle just silently stayed in its old state. _action_errors is
+its own dict, not reused from poll's `_errors` above, because _run()
+always re-polls every domain in the same loop iteration right after
+processing that iteration's actions (see the `actions or now -
+last_poll > ...` check below) — writing an action error into the same
+slot poll() writes to would get silently clobbered by that very poll's
+own (likely successful) result before any caller read it. Cleared at
+the start of every new action attempt for the same domain, not by a
+subsequent poll.
 """
 
 import threading
@@ -72,6 +80,15 @@ class StatusWorker:
         # not a silent-seeming [].
         self._snapshots = {name: None for name in self._domains}
         self._errors = {name: None for name in self._domains}
+        # A domain's last REQUESTED ACTION's error, kept separate from
+        # _errors (poll errors) above — found live matters in practice
+        # (see this class's own module docstring): _run() always
+        # re-polls every domain in the same loop iteration right after
+        # processing actions, so writing an action failure into the
+        # same _errors slot would get silently overwritten by that
+        # very poll's own (likely successful) result before a caller
+        # ever got a chance to read it.
+        self._action_errors = {name: None for name in self._domains}
 
         self._action_queue = []
         self._pending = set()  # {(domain_name, key)}
@@ -118,6 +135,18 @@ class StatusWorker:
         with self._lock:
             return self._errors[domain_name]
 
+    def get_action_error(self, domain_name):
+        """The exception message from domain_name's last REQUESTED
+        ACTION, or None if it last succeeded (or no action has been
+        requested yet). Cleared at the start of every new action
+        attempt for that domain (see _run()) — not by a subsequent
+        successful poll, unlike get_error() above; a poll and an
+        action are different things that just happen to share a
+        _run() iteration.
+        """
+        with self._lock:
+            return self._action_errors[domain_name]
+
     def is_pending(self, domain_name, key):
         with self._lock:
             return (domain_name, key) in self._pending
@@ -162,16 +191,16 @@ class StatusWorker:
 
             for domain_name, action_name, arg, pending_key in actions:
                 domain = self._domains.get(domain_name)
+                with self._lock:
+                    self._action_errors[domain_name] = None
                 try:
                     if domain is not None:
                         action = domain.actions.get(action_name)
                         if action is not None:
                             action(arg)
-                except Exception:
-                    # See this module's own docstring: action failures
-                    # aren't surfaced via last_error yet, a known,
-                    # documented gap, not this pass's scope.
-                    pass
+                except Exception as e:
+                    with self._lock:
+                        self._action_errors[domain_name] = str(e) or type(e).__name__
                 finally:
                     with self._lock:
                         self._pending.discard((domain_name, pending_key))

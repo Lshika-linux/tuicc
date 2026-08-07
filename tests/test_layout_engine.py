@@ -53,6 +53,7 @@ def test_real_preset_1_loads_and_every_box_is_within_bounds():
     boxes = compute_boxes(layout, term_width=100, term_height=40)
     assert set(boxes.keys()) == {
         "sidebar", "connectivity", "power_menu", "launcher", "sessions", "preview", "clock",
+        "control",
     }
     for x, y, w, h in boxes.values():
         assert 0 <= x <= 100

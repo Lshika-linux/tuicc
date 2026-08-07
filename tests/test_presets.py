@@ -21,6 +21,7 @@ from tuicc.config import (
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
     _build_session_names,
+    _build_control_toggles,
 )
 from tuicc.layout import Layout, ModuleBox
 
@@ -537,3 +538,102 @@ def test_set_session_name_can_write_an_empty_value(tmp_path, monkeypatch):
     set_session_name(1, "")
 
     assert 'name_1 = ""\n' in config_path.read_text()
+
+
+# ---------- _build_control_toggles ----------
+
+def test_build_control_toggles_missing_section_falls_back_to_empty_list():
+    # The packaged default ships every [[control.toggle]] commented
+    # out — a fresh install's user_data genuinely has no "control" key
+    # at all, not an oversight to guard against.
+    assert _build_control_toggles({}) == []
+
+
+def test_build_control_toggles_parses_a_2_state_toggle():
+    user_data = {
+        "control": {
+            "toggle": [{
+                "label": "Night Light",
+                "shell_true": False,
+                "state": [
+                    {"name": "on", "status_command": "pgrep -x gammastep", "command": "gammastep"},
+                    {"name": "off", "command": "pkill -x gammastep"},
+                ],
+            }],
+        },
+    }
+
+    result = _build_control_toggles(user_data)
+
+    assert result == [{
+        "label": "Night Light",
+        "shell_true": False,
+        "states": [
+            {"name": "on", "status_command": "pgrep -x gammastep", "command": "gammastep", "color": None},
+            {"name": "off", "status_command": None, "command": "pkill -x gammastep", "color": None},
+        ],
+    }]
+
+
+def test_build_control_toggles_parses_an_n_state_cycle_with_colors():
+    # Found live with the user: a 3-way cycle (Performance Mode) is the
+    # exact same contract as a 2-state toggle, just more states —
+    # advancing is (index + 1) % len(states) regardless of N.
+    user_data = {
+        "control": {
+            "toggle": [{
+                "label": "Performance Mode",
+                "shell_true": True,
+                "state": [
+                    {"name": "power-saver", "status_command": "a", "command": "set a", "color": "blue"},
+                    {"name": "balanced", "status_command": "b", "command": "set b", "color": "white"},
+                    {"name": "performance", "command": "set c", "color": "red"},
+                ],
+            }],
+        },
+    }
+
+    result = _build_control_toggles(user_data)
+
+    assert [s["name"] for s in result[0]["states"]] == ["power-saver", "balanced", "performance"]
+    assert [s["color"] for s in result[0]["states"]] == [4, 7, 1]  # NAMED_COLORS via resolve_color()
+
+
+def test_build_control_toggles_shell_true_defaults_to_false():
+    user_data = {
+        "control": {
+            "toggle": [{
+                "label": "X",
+                "state": [
+                    {"name": "on", "status_command": "a", "command": "b"},
+                    {"name": "off", "command": "c"},
+                ],
+            }],
+        },
+    }
+
+    assert _build_control_toggles(user_data)[0]["shell_true"] is False
+
+
+def test_build_control_toggles_rejects_a_single_state_entry():
+    user_data = {"control": {"toggle": [{"label": "X", "state": [{"name": "on", "command": "c"}]}]}}
+
+    with pytest.raises(ValueError):
+        _build_control_toggles(user_data)
+
+
+def test_build_control_toggles_rejects_a_missing_status_command_on_a_non_last_state():
+    user_data = {
+        "control": {
+            "toggle": [{
+                "label": "X",
+                "state": [
+                    {"name": "on", "command": "b"},  # missing status_command, not the last state
+                    {"name": "off", "command": "c"},
+                ],
+            }],
+        },
+    }
+
+    with pytest.raises(ValueError):
+        _build_control_toggles(user_data)

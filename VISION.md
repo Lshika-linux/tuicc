@@ -244,11 +244,67 @@ Hibernation hook landed as `pause()`/`resume()` on `StatusWorker` —
 exist and work, but nothing calls them from `main.py`'s dismiss/
 resummon path yet, per "architecture now, implementation later" above.
 
-Action failures (e.g. a `connect()` call raising) are still a bare
-`except Exception: pass` — not yet surfaced via `last_error` the way
-poll failures are. Known, documented gap (see `status_worker.py`'s own
-module docstring for the reasoning), not blocking — revisit if it
-turns out to matter in practice.
+Action failures (e.g. a `connect()` call raising) were left as a known,
+documented gap here — "revisit if it turns out to matter in practice."
+It did: found live building R5's control module (a toggle's command
+failing fast — `gammastep` exiting immediately for lack of a
+configured GeoClue2 provider — produced zero visible feedback), fixed
+as part of that same pass, not deferred further. `StatusWorker` now
+tracks a domain's action errors separately from its poll errors
+(`get_action_error()`, its own dict — poll and action errors can't
+share a slot, since `_run()` always re-polls every domain in the same
+loop iteration right after processing that iteration's actions, which
+would silently clobber an action error the instant that poll
+succeeds). For control.toggle specifically, `control.py`'s
+`run_state_command` also had to solve a second problem past
+`StatusWorker`'s own fix: a `[[control.toggle]]` command runs detached
+(`spawn_detached`, fire-and-forget — some, like the packaged Idle
+Inhibit example, are meant to run forever), so a fast, silent failure
+doesn't raise a catchable Python exception at all, `StatusWorker`'s fix
+alone can't see it. Solved with a brief (300ms) non-blocking wait right
+after spawning — long enough to catch a command that's already exited
+by then (the common "missing dependency"/"bad args" case, exactly
+what `gammastep` hit), short enough not to meaningfully delay a
+legitimate long-runner past its first two poll cycles. `modules/
+control.py` surfaces the result two ways: the row's dot/label switches
+to a dedicated `[ERROR]` state (outranking a plain poll error — the
+last thing the user *did* is more relevant than the last thing that
+was merely *observed*), and the failed command's captured combined
+stdout+stderr is appended to the sidebar preview panel — split into
+one `preview_text` entry per physical line, not one entry holding an
+embedded `\n`: found live in the same pass, a raw `\n` inside a single
+`draw_centered_lines` (`render_utils.py`) entry makes curses jump to
+column 0 of the next *real terminal row* on that newline, escaping the
+preview box's own x-position entirely, rather than wrapping within it.
+
+Verified live end-to-end, this session's own test machine (gammastep
+genuinely installed but never configured — exactly the state a fresh
+install of the packaged Night Light example would be in): pressing
+Enter on Night Light with no GeoClue2 provider set up produces —
+
+```
+Control
+● Airplane Mode [off]
+⚠ Night Light [ERROR]
+● Mic Mute [off]
+...
+```
+
+— and the preview panel shows the toggle's own gammastep invocation
+right alongside its full, real, three-line stderr, each on its own
+correctly-centered row:
+
+```
+> Night Light: off → on <
+$ gammastep
+⚠ Error: GeoClue2 provider is not installed!
+⚠ Error: Failed to start provider: geoclue2
+⚠ Error: Latitude and longitude must be set.
+```
+
+Nothing about this is control.toggle-specific in principle — any
+`[[control.toggle]]` command that fails fast, for any reason, surfaces
+the exact same way.
 
 ### R4 — Connectivity v2: D-Bus agent pattern
 The hardest, most-unlocking piece — land it late, with infrastructure
@@ -266,29 +322,66 @@ Backends stay behind grown-but-compatible ABCs.
 ### R5 — Control + Media modules
 Two domains, two backend packages (do NOT merge them — same lesson as
 the iwd/bluez split):
-- **`audio/`** — routing & volume via PipeWire: `wpctl` backend
+- **`audio/`** — done. Routing & volume via PipeWire: `wpctl` backend
   (status/list sinks, set-default, set-volume, set-mute), `pactl`
   fallback backend, registry pattern as in connectivity. Pure parsing
-  functions + recorded fixtures.
-- **`media/`** — playback via MPRIS (`org.mpris.MediaPlayer2.*`,
-  jeepney, plain request-response — simpler than iwd). Metadata,
-  PlaybackStatus, PlayPause/Next/Previous. Multiple players: show the
-  active one (Playing wins), Tab to others.
+  functions + recorded fixtures. Not yet wired into StatusWorker
+  domains or a slider UI — that's the remaining part of the **control**
+  module below.
+- **`brightness.py`** — done. `brightnessctl`-backed, a single plain
+  module (not a registry) since there's exactly one reasonable tool for
+  this, unlike wifi/bluetooth/audio which genuinely have several. Same
+  not-yet-wired-into-a-slider status as audio/ above.
+- **`media/`** — NOT started. Playback via MPRIS
+  (`org.mpris.MediaPlayer2.*`, jeepney, plain request-response —
+  simpler than iwd). Metadata, PlaybackStatus, PlayPause/Next/Previous.
+  Multiple players: show the active one (Playing wins), Tab to others.
 
 Two modules:
-- **control** — toggle grid + volume/brightness sliders. Toggles are a
-  *contract, not features*: `[[control.toggle]]` with `label`,
-  `status_command` (exit 0 = on), `on_command`, `off_command`; zero
-  code per toggle; ship commented examples (tailscale, makoctl DND,
-  idle-inhibit, gammastep, power profile, EasyEffects). Brightness via
-  `brightnessctl` backend. Slider interaction: Enter grabs, ←→ adjust,
-  Enter/Esc release (arrows are free — Tab is canonical navigation).
-  Visual rule: ONE box, uniform dense rows (dot + label, the
-  `_connection_dot` convention) — not one framed box per feature.
-- **media** — now-playing line + transport + **output switching lives
-  here** (not in control): "music plays — route it to headphones" is
-  one flow. Volume stays in control (system property, not player
-  property).
+- **control** — toggle grid (done) + volume/brightness sliders (not
+  started). Toggles are a *contract, not features*, done as
+  `[[control.toggle]]` — but the shape shipped is NOT what this section
+  originally sketched (`status_command`/`on_command`/`off_command`,
+  strictly binary). Found live while designing it with the user: a
+  binary on/off switch and an N-way cycle (Performance Mode's
+  power-saver/balanced/performance) are the exact same mechanism —
+  advancing is `(index + 1) % len(states)` regardless of N — so the
+  shipped contract unified both into one: `label` + `shell_true` +
+  2-or-more `[[control.toggle.state]]` blocks (`name`/`status_command`/
+  `command`/optional `color`). Each state's `status_command` (exit 0 =
+  "currently this state") is checked in declaration order, first match
+  wins; only the LAST state may omit it (implied by elimination if
+  nothing earlier matched — a sound conclusion from exhaustive
+  checking, not a guess). `color` reuses `theme.resolve_color()` and is
+  rendered via a second, independent round of `curses.init_pair()`
+  calls (`theme_setup.assign_control_toggle_pairs()`), separate from
+  `[theme]`'s own pair range so the two can't collide. Backend logic
+  lives in `control.py` (`probe_state`/`find_current_state`/
+  `next_state_name`/`run_state_command`, all pure or thin subprocess
+  wrappers, fixture-tested) — `modules/control.py` is pure UI glue over
+  it, zero per-toggle code. Six shipped, commented-out examples —
+  Airplane Mode, Night Light, Mic Mute, Idle Inhibit, Do Not Disturb,
+  Performance Mode — chosen after actually researching what real
+  quick-settings menus (GNOME/KDE) ship, not the original placeholder
+  list this section used to name (tailscale/EasyEffects were considered
+  and deliberately dropped as too personal/niche; a "Dark Mode" example
+  was considered and dropped as unreliable on a bare sway/i3 session —
+  no single command reflects both GTK's and Qt's actual state). One
+  `StatusWorker` `Domain` per toggle entry (`toggle:{i}`), not one
+  shared domain — same granular-error-surfacing reasoning as the wifi/
+  bluetooth split. Sliders (volume via `audio/`, brightness via
+  `brightness.py`) are NOT built yet: still needs Domain wiring for
+  both backends, the actual slider draw/grab UI, and — per this
+  section's original interaction spec (Enter grabs, ←→ adjust, Enter/
+  Esc releases, arrows free since Tab is canonical navigation) — a 4th
+  `input_claim` (R2) consumer, since slider grab/release is a clean fit
+  for that mechanism unlike resize_mode's own deferred case. Visual
+  rule for the whole module: ONE box, uniform dense rows (dot + label,
+  the `_connection_dot` convention) — not one framed box per feature.
+- **media** — NOT started. now-playing line + transport +
+  **output switching lives here** (not in control): "music plays —
+  route it to headphones" is one flow. Volume stays in control (system
+  property, not player property).
 
 Both feed off StatusWorker (polling, action queue, pending blink).
 

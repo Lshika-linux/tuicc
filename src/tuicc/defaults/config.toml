@@ -235,3 +235,118 @@ command = "systemctl poweroff"
 confirm = true
 confirm_text = "Shut down now?"
 shell_true = false
+
+# [[control.toggle]] — arbitrary user commands as a toggle grid. Zero
+# code per toggle: label + shell_true, and 2+ [[control.toggle.state]]
+# blocks (name/status_command/command/color). A plain on/off switch is
+# just the 2-state case; a multi-way cycle (see Performance Mode below)
+# is the exact same contract with more states — Enter always advances
+# to the next one, wrapping back to the first after the last.
+#
+# status_command's exit code (0 = "currently in this state") is checked
+# in declaration order, first match wins — every state needs one
+# EXCEPT the last, which may omit it: if none of the earlier states
+# matched, the current state must be whichever one is left, not a
+# guess. color is optional (same "inherit" / named / "#hex" / [R,G,B]
+# values as [theme] above) — omit it to use the module's default dot
+# color for that state.
+#
+# All commented out below — none of these run until you uncomment one
+# AND have the underlying tool installed. Several assume genuinely
+# arbitrary tools (tailscale, EasyEffects, ...) that most users won't
+# have; these six were picked as broadly-applicable examples, not a
+# "recommended defaults" list.
+
+# [[control.toggle]]
+# label = "Airplane Mode"
+# shell_true = true
+#
+#   [[control.toggle.state]]
+#   name = "on"
+#   status_command = "rfkill list | grep -q 'Soft blocked: yes'"
+#   command = "rfkill block all"
+#
+#   [[control.toggle.state]]
+#   name = "off"
+#   command = "rfkill unblock all"
+
+# [[control.toggle]]
+# label = "Night Light"
+# shell_true = false
+#
+#   [[control.toggle.state]]
+#   name = "on"
+#   status_command = "pgrep -x gammastep"
+#   command = "gammastep"
+#
+#   [[control.toggle.state]]
+#   name = "off"
+#   command = "pkill -x gammastep"
+
+# [[control.toggle]]
+# label = "Mic Mute"
+# shell_true = true
+#
+#   [[control.toggle.state]]
+#   name = "on"
+#   status_command = "pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes"
+#   command = "pactl set-source-mute @DEFAULT_SOURCE@ 1"
+#
+#   [[control.toggle.state]]
+#   name = "off"
+#   command = "pactl set-source-mute @DEFAULT_SOURCE@ 0"
+
+# [[control.toggle]]
+# label = "Idle Inhibit"
+# shell_true = false
+#
+#   [[control.toggle.state]]
+#   name = "on"
+#   status_command = "pgrep -f tuicc-idle-inhibit"
+#   command = "systemd-inhibit --what=idle:sleep --who=tuicc-idle-inhibit --why=user-toggle --mode=block sleep infinity"
+#
+#   [[control.toggle.state]]
+#   name = "off"
+#   command = "pkill -f tuicc-idle-inhibit"
+
+# [[control.toggle]]
+# label = "Do Not Disturb"
+# shell_true = true
+#
+#   [[control.toggle.state]]
+#   name = "on"
+#   status_command = "makoctl mode | grep -q do-not-disturb"
+#   command = "makoctl mode -a do-not-disturb"
+#
+#   [[control.toggle.state]]
+#   name = "off"
+#   command = "makoctl mode -r do-not-disturb"
+#
+# # mako is sway/wlroots-only — no i3/X11 equivalent exists. On dunst,
+# # swap the three commands above for:
+# #   status_command = "dunstctl is-paused | grep -q true"
+# #   on command      = "dunstctl set-paused true"
+# #   off command     = "dunstctl set-paused false"
+# # On swaync: "swaync-client -dn" (on) / "swaync-client -df" (off) —
+# # check your version's exact status flag, it's changed across releases.
+
+# [[control.toggle]]
+# label = "Performance Mode"
+# shell_true = true
+#
+#   [[control.toggle.state]]
+#   name = "power-saver"
+#   status_command = "[ \"$(powerprofilesctl get)\" = power-saver ]"
+#   command = "powerprofilesctl set power-saver"
+#   color = "blue"
+#
+#   [[control.toggle.state]]
+#   name = "balanced"
+#   status_command = "[ \"$(powerprofilesctl get)\" = balanced ]"
+#   command = "powerprofilesctl set balanced"
+#   color = "white"
+#
+#   [[control.toggle.state]]
+#   name = "performance"
+#   command = "powerprofilesctl set performance"
+#   color = "red"

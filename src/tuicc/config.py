@@ -78,6 +78,7 @@ class Config:
     power_menu_actions: list
     global_shortcuts: dict
     session_names: dict
+    control_toggles: list
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -375,6 +376,66 @@ def _build_session_names(user_data: dict) -> dict:
     }
 
 
+def _build_control_toggles(user_data: dict) -> list:
+    """[[control.toggle]] -> a list of {"label", "shell_true", "states"}
+    dicts, each "states" entry {"name", "status_command", "command",
+    "color"}. .get("control", {}).get("toggle", []) rather than direct
+    indexing (unlike quick_actions/power_menu above): the packaged
+    default ships every example commented out, so a fresh install's
+    control.toggle is legitimately absent, not an oversight to guard
+    against — direct indexing would KeyError on the very install this
+    feature ships to by default.
+
+    A 2-state entry ("off"/"on") and a 3+-state one ("power-saver"/
+    "balanced"/"performance") are the exact same shape here — see
+    VISION.md's R5 section for why this ended up unified into one
+    contract instead of a separate binary "toggle" + N-state "cycle".
+    Advancing through states is `(current_index + 1) % len(states)`
+    regardless of how many there are.
+
+    Every state but the LAST must have its own status_command (exit
+    0 = "currently in this state", checked in declaration order, first
+    match wins) — the last state's is optional: if every earlier
+    state's probe came back false, the current state must be whichever
+    one is left, a sound conclusion from exhaustive checking, not a
+    guess. A non-last state missing status_command, or any state
+    missing name/command, is a real config mistake -> raise, not a
+    silently invented default (this file's own long-standing
+    no-silent-fallback rule, see CONTRIBUTING.md).
+    """
+    toggles = []
+    for toggle_data in user_data.get("control", {}).get("toggle", []):
+        label = toggle_data["label"]
+        state_list = toggle_data["state"]
+        if len(state_list) < 2:
+            raise ValueError(
+                f"control.toggle {label!r} has {len(state_list)} state(s) — "
+                f"needs at least 2 (an on/off toggle is the 2-state case)"
+            )
+        states = []
+        for i, state_data in enumerate(state_list):
+            is_last = i == len(state_list) - 1
+            status_command = state_data.get("status_command")
+            if status_command is None and not is_last:
+                raise ValueError(
+                    f"control.toggle {label!r} state {state_data.get('name')!r} "
+                    f"is missing status_command — only the LAST state may omit it "
+                    f"(implied by elimination if no earlier state matches)"
+                )
+            states.append({
+                "name": state_data["name"],
+                "status_command": status_command,
+                "command": state_data["command"],
+                "color": resolve_color(state_data["color"]) if "color" in state_data else None,
+            })
+        toggles.append({
+            "label": label,
+            "shell_true": toggle_data.get("shell_true", False),
+            "states": states,
+        })
+    return toggles
+
+
 def load_config() -> Config:
     ensure_user_config_exists()
     ensure_all_packaged_presets_exist()
@@ -458,6 +519,7 @@ def load_config() -> Config:
     vim_mode = user_data["navigation"]["vim_mode"]
     wifi_backend_name = user_data["network"]["wifi_backend"]
     bluetooth_backend_name = user_data["network"]["bluetooth_backend"]
+    control_toggles = _build_control_toggles(user_data)
 
     return Config(
         layout=layout,
@@ -482,4 +544,5 @@ def load_config() -> Config:
         power_menu_actions=power_menu_actions,
         global_shortcuts=global_shortcuts,
         session_names=session_names,
+        control_toggles=control_toggles,
     )

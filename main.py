@@ -31,6 +31,7 @@ from tuicc.actions import ActionContext, spawn_detached, handle_pending_confirm,
 from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
 from tuicc.status_worker import StatusWorker, Domain
+from tuicc import control
 from tuicc.layout import ModuleBox
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
@@ -47,7 +48,7 @@ from tuicc.navigation import (
 )
 from tuicc.render import draw_all, collect_nav_items, ACTION_HANDLERS, MODULES
 from tuicc.render_utils import draw_status_line
-from tuicc.theme_setup import setup_theme, reassign_theme_pairs
+from tuicc.theme_setup import setup_theme, reassign_theme_pairs, assign_control_toggle_pairs
 from tuicc import resize_mode, help_mode, pending_moves
 from tuicc.modules import launcher as launcher_mode
 from tuicc.modules import sessions as sessions_mode
@@ -61,6 +62,11 @@ def main(stdscr):
 
     cfg = load_config()
     theme_pairs = setup_theme(cfg.theme)
+    # Second, independent round of curses pairs for [[control.toggle]]
+    # states with an explicit `color` — must start one past whatever
+    # theme_pairs already claimed so the two ranges never collide. See
+    # assign_control_toggle_pairs' own docstring.
+    control_colors = assign_control_toggle_pairs(cfg.control_toggles, len(theme_pairs) + 1)
     provider = build_provider(cfg.provider_name)
     provider.mark_self(cfg.self_app_id)
 
@@ -71,7 +77,7 @@ def main(stdscr):
     # against this exact same instance as they land, not a separate
     # worker each. See RenderContext.status's own docstring for why the
     # ctx field this feeds is named `status`, not `connectivity`.
-    status_worker = StatusWorker([
+    domains = [
         Domain(
             name="wifi",
             poll=wifi_backend.get_networks,
@@ -93,7 +99,29 @@ def main(stdscr):
                 "disconnect": bluetooth_backend.disconnect,
             },
         ),
-    ])
+    ]
+    # One Domain per [[control.toggle]] entry, not one shared domain
+    # for all of them — same granular-error-surfacing reasoning as the
+    # wifi/bluetooth split: one toggle's status_command erroring (a
+    # missing binary, say) shouldn't blank out every other toggle's
+    # state too. poll() returns the current state's name (a plain str,
+    # not a list — StatusWorker.get()/snapshots are generic, no
+    # per-domain shape requirement). "advance" is the only action —
+    # modules/control.py computes which state name comes next (Enter
+    # always advances, wrapping) and passes it as request_action's arg;
+    # this domain doesn't need to know current state itself, just how
+    # to enter whichever one it's told to.
+    for i, toggle in enumerate(cfg.control_toggles):
+        domains.append(Domain(
+            name=f"toggle:{i}",
+            poll=lambda toggle=toggle: control.find_current_state(toggle["states"], toggle["shell_true"]),
+            actions={
+                "advance": lambda target_name, toggle=toggle: control.run_state_command(
+                    toggle["states"], target_name, toggle["shell_true"]
+                ),
+            },
+        ))
+    status_worker = StatusWorker(domains)
     status_worker.start()
 
     action_ctx = ActionContext(provider=provider, status=status_worker)
@@ -402,6 +430,7 @@ def main(stdscr):
                 bluetooth_error=status_worker.get_error("bluetooth"),
                 status=status_worker,
                 session_preview=sessions_mode.expanded_preview(),
+                control_colors=control_colors,
             )
 
             items = collect_nav_items(cfg.layout, boxes, ctx)
