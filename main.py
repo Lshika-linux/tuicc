@@ -30,6 +30,8 @@ from tuicc.context import RenderContext
 from tuicc.actions import ActionContext, spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
+from tuicc.audio.registry import build_audio_backend
+from tuicc.media.mpris import MprisBackend
 from tuicc.status_worker import StatusWorker, Domain
 from tuicc import control
 from tuicc.layout import ModuleBox
@@ -52,6 +54,7 @@ from tuicc.theme_setup import setup_theme, reassign_theme_pairs, assign_control_
 from tuicc import resize_mode, help_mode, pending_moves
 from tuicc.modules import launcher as launcher_mode
 from tuicc.modules import sessions as sessions_mode
+from tuicc.modules import media as media_mode
 
 
 def main(stdscr):
@@ -72,6 +75,8 @@ def main(stdscr):
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
+    audio_backend = build_audio_backend(cfg.audio_backend_name)
+    media_backend = MprisBackend()
     # One shared worker/thread for every domain — wifi/bluetooth today,
     # audio/brightness/control-toggle domains (VISION.md's R5) register
     # against this exact same instance as they land, not a separate
@@ -98,6 +103,39 @@ def main(stdscr):
                 "connect": bluetooth_backend.connect,
                 "disconnect": bluetooth_backend.disconnect,
             },
+        ),
+        Domain(
+            name="audio",
+            poll=audio_backend.get_sinks,
+            actions={
+                # Only what modules/media.py's output switching needs
+                # (VISION.md's R5: "route it to headphones" reuses this
+                # exact method) — set_volume/set_mute are control.py's
+                # own future slider work, not wired here yet.
+                "set_default_sink": audio_backend.set_default_sink,
+            },
+            # Shorter than the 5s shared default (see Domain.poll_interval's
+            # own docstring) — found live: the default sink can change
+            # out from under tuicc entirely on its own (WirePlumber
+            # auto-switches to a newly connected bluetooth device,
+            # tuicc never touches request_action for that), so this is
+            # the one domain where the ONLY way to notice a real change
+            # promptly is polling itself, not an action-triggered re-poll.
+            poll_interval=1,
+        ),
+        Domain(
+            name="media",
+            poll=media_backend.get_players,
+            actions={
+                "play_pause": media_backend.play_pause,
+                "next": media_backend.next,
+                "previous": media_backend.previous,
+            },
+            # Same reasoning as "audio" above — a track changing
+            # mid-playback is also entirely outside tuicc's own control
+            # flow, felt "stuck" at the 5s shared default when tested
+            # live.
+            poll_interval=1,
         ),
     ]
     # One Domain per [[control.toggle]] entry, not one shared domain
@@ -307,6 +345,20 @@ def main(stdscr):
             selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
         action_ctx.reselect_region_id = None
 
+    def any_two_level_module_expanded():
+        # sessions.py and media.py each own a two-level browsing/
+        # expanded session (see media.py's own module docstring for
+        # why it needed the same model sessions.py established) — Tab/
+        # Shift+Tab/Left/Right's wrap behavior needs to know if EITHER
+        # is currently expanded, not just sessions specifically. A
+        # small helper here instead of repeating "sessions_mode.
+        # is_expanded() or media_mode.is_expanded()" at every call
+        # site — only one of the two can plausibly be expanded at once
+        # in practice (each is scoped to its own module, and leaving a
+        # module auto-collapses it, see the per-frame check above), but
+        # the OR is what actually stays correct if that ever changes.
+        return sessions_mode.is_expanded() or media_mode.is_expanded()
+
     # No `break` anywhere below this point — tuicc's lifecycle model
     # (VISION.md section 2) is a persistent process the WM shows/hides;
     # every former "exit" site now calls provider.dismiss_self() and
@@ -316,9 +368,18 @@ def main(stdscr):
     # daemon thread just getting killed mid-poll.
     try:
         while True:
+            # Third tier between the two below: media.py's now-playing
+            # marquee scroll advances one character every
+            # MARQUEE_STEP_SECONDS of wall-clock time regardless — but
+            # the idle 1000ms redraw cadence below meant it only ever
+            # got REDRAWN once a second, turning a smooth 1-character
+            # slide into a visible ~3-character jump. Found live.
+            marquee_active = media_mode.has_scrolling_content(status_worker.get("media"))
             stdscr.timeout(
                 50 if (moves.entries or action_ctx.restore_queue or status_worker.has_pending()
-                       or resize_message is not None) else 1000
+                       or resize_message is not None)
+                else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
+                else 1000
             )
             stdscr.erase()
 
@@ -412,6 +473,11 @@ def main(stdscr):
             # id via its own resolve_selection call.
             if active_module != "sessions" and sessions_mode.is_expanded():
                 sessions_mode.collapse()
+            # Same idea, media.py's own now-playing row expand/collapse
+            # — see media.py's module docstring for why it needed this
+            # same two-level model sessions.py established.
+            if active_module != "media" and media_mode.is_expanded():
+                media_mode.collapse()
 
             ctx = RenderContext(
                 state=state,
@@ -751,7 +817,7 @@ def main(stdscr):
                     provider.dismiss_self()
 
             elif key in next_item_keys and ordered:
-                if sessions_mode.is_expanded():
+                if any_two_level_module_expanded():
                     # Level 2 is a deliberate exception to the app-wide
                     # "Tab never wraps within a module, it rolls into
                     # the next one" rule — see same_row_neighbor's
@@ -759,7 +825,8 @@ def main(stdscr):
                     # are the only ways out (see the dedicated Escape
                     # branch and the per-frame auto-collapse check
                     # above), so Tab/Shift+Tab/Left/Right all just
-                    # cycle LOAD/SAVE/DEL/NAME in place instead.
+                    # cycle LOAD/SAVE/DEL/NAME (or media.py's
+                    # </PAUSE/PLAY/>>) in place instead.
                     next_item = same_row_neighbor(ordered, selected_id, direction=1, wrap=True)
                 else:
                     # next_item_across_modules keeps walking forward past
@@ -773,7 +840,7 @@ def main(stdscr):
                 if next_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
             elif key in prev_item_keys and ordered:
-                if sessions_mode.is_expanded():
+                if any_two_level_module_expanded():
                     prev_item = same_row_neighbor(ordered, selected_id, direction=-1, wrap=True)
                 else:
                     prev_item = prev_item_across_modules(ordered, module_names, active_module, selected_id)
@@ -804,7 +871,7 @@ def main(stdscr):
                 # column module, so this is a no-op there. wrap=True for
                 # the same reason as next_item_keys above — level 2 never
                 # falls through to a module jump on Left/Right either.
-                neighbor = same_row_neighbor(ordered, selected_id, direction=1, wrap=sessions_mode.is_expanded())
+                neighbor = same_row_neighbor(ordered, selected_id, direction=1, wrap=any_two_level_module_expanded())
                 if neighbor is not None:
                     selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
                 else:
@@ -815,7 +882,7 @@ def main(stdscr):
                         if first_item is not None:
                             selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
             elif key in module_prev_keys:
-                neighbor = same_row_neighbor(ordered, selected_id, direction=-1, wrap=sessions_mode.is_expanded())
+                neighbor = same_row_neighbor(ordered, selected_id, direction=-1, wrap=any_two_level_module_expanded())
                 if neighbor is not None:
                     selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
                 else:
@@ -862,6 +929,15 @@ def main(stdscr):
                 if collapsed_slot is not None:
                     selected_id = f"sessions:row:{collapsed_slot}"
                     active_module = "sessions"
+            elif key == 27 and media_mode.is_expanded():
+                # Same idea as sessions.py's own Escape-collapse branch
+                # above, mirrored for media.py's now-playing rows — see
+                # media.py's module docstring for why it needed the
+                # same two-level model.
+                collapsed_bus_name = media_mode.collapse()
+                if collapsed_bus_name is not None:
+                    selected_id = f"media:{collapsed_bus_name}:row"
+                    active_module = "media"
             elif key == 27:  # Escape, no active input claim: dismiss at top level
                 if cfg.return_to_origin and origin_region_id is not None:
                     provider.focus_region(origin_region_id)

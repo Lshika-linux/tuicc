@@ -21,6 +21,7 @@ from tuicc.modules import (
     power_menu,
     sessions,
     control,
+    media,
 )
 from tuicc.actions import BASE_HANDLERS
 
@@ -36,6 +37,7 @@ MODULES = {
     "power_menu": power_menu.draw,
     "sessions": sessions.draw,
     "control": control.draw,
+    "media": media.draw,
 }
 
 NAV_PROVIDERS = {
@@ -49,6 +51,7 @@ NAV_PROVIDERS = {
     "power_menu": power_menu.nav_items,
     "sessions": sessions.nav_items,
     "control": control.nav_items,
+    "media": media.nav_items,
 }
 
 ACTION_HANDLERS = dict(BASE_HANDLERS)
@@ -57,6 +60,7 @@ ACTION_HANDLERS[power_menu.TARGET_KIND] = power_menu.handle
 ACTION_HANDLERS[control.TARGET_KIND] = control.handle
 ACTION_HANDLERS.update(connectivity.HANDLERS)
 ACTION_HANDLERS.update(sessions.HANDLERS)
+ACTION_HANDLERS.update(media.HANDLERS)
 
 def draw_all(stdscr, layout, boxes, ctx):
     for module_box in layout.boxes:

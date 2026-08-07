@@ -1,0 +1,466 @@
+"""Media module: now-playing (one row per detected MPRIS player) +
+transport controls + output switching (reuses audio/'s
+set_default_sink — "music plays, route it to headphones" is one flow,
+volume itself stays modules/control.py's concern, a system property,
+not a player one).
+
+Now-playing rows use the same two-level browsing/expanded model
+sessions.py established (see that module's own docstring for the full
+reasoning) — found live with the user: three always-active transport
+NavItems per row, positioned near the box's right edge, interacted
+badly with `tab_order`'s default "columns_first" ordering (sorts by
+x first) — a row visually near the top of the box could still land
+navigationally near the bottom of the whole app's Tab sequence, since
+their x was large even though their y was small. Collapsing to ONE
+NavItem per row at level 1 (like every other row-based module) sidesteps
+that entirely; the three actions only become separate NavItems once
+that specific player is expanded (Enter), same trade sessions.py makes.
+
+Unlike sessions.py's three fixed, always-existing slots, the player
+list is genuinely dynamic (a player can quit, appear, or reorder
+between polls) — `_expanded_bus_name` tracks the expanded player by its
+stable D-Bus identity, not a list position, and self-corrects
+(_reconcile_expanded_state) if that player disappears while expanded,
+rather than leaving a dangling reference is_expanded() would keep
+reporting forever.
+
+---
+IMPORTANT: Each module owns both how it draws itself and where its own
+focusable items are — the core never guesses a module's internal
+layout.
+"""
+
+import curses
+import time
+from urllib.parse import urlparse
+
+from tuicc.navigation import NavItem
+from tuicc.render_utils import draw_box_outline
+
+MARQUEE_STEP_SECONDS = 0.3
+
+_expanded_bus_name = None  # str | None — which player's actions are showing, if any
+
+
+def _pending_blink_style(theme):
+    """Same idiom as connectivity.py's/control.py's own copies —
+    duplicated rather than imported, each module stays self-contained.
+    """
+    blink_on = int(time.time() * 2) % 2 == 0
+    if blink_on:
+        return theme.get("selected", 0), curses.A_BOLD
+    return theme.get("text", 0), curses.A_DIM
+
+
+def _source_label(player) -> str:
+    """The short "where is this playing from" tag — found live, asked
+    for after the user tested the module: a browser's current domain
+    (e.g. "youtube.com") when a real URL is available (MPRIS's own
+    xesam:url — already fetched for exactly this), otherwise the app's
+    own DesktopEntry (shorter/more uniform than Identity, e.g.
+    "firefox" not "Mozilla firefox"), or Identity itself as the last
+    resort if even DesktopEntry is missing.
+
+    One exception, found live testing with Spotify: native apps can
+    tag their own metadata with a URL pointing at their OWN web
+    player (Spotify's xesam:url is an open.spotify.com track link) —
+    that's not "you're browsing this site" the way a real browser
+    tab's URL is, so showing "[open.spotify.com]" for the desktop app
+    is misleading. Detected by the app's own desktop_entry showing up
+    inside the domain (desktop_entry="spotify" in "open.spotify.com");
+    when that matches, prefer Identity over the domain — and over
+    DesktopEntry too, since Identity is usually the nicer-cased name
+    ("Spotify" vs "spotify") in exactly this case, unlike Firefox's
+    "Mozilla firefox" which is why the no-URL fallback below still
+    prefers DesktopEntry first.
+    """
+    if player.url:
+        netloc = urlparse(player.url).netloc
+        if netloc:
+            domain = netloc.removeprefix("www.")
+            own_domain = player.desktop_entry and player.desktop_entry.lower() in domain.lower()
+            if own_domain:
+                return player.identity or player.desktop_entry
+            return domain
+    return player.desktop_entry or player.identity
+
+
+def _body_label(player) -> str:
+    """The artist/title part alone, without the "[source]" prefix —
+    split out from _player_label so draw() can keep the source prefix
+    fixed/always-visible and marquee-scroll ONLY this part (found live:
+    scrolling the whole "[domain] artist - title" string as one blob
+    meant the source tag itself would scroll out of view along with
+    everything else, exactly the opposite of "always visible").
+    """
+    if player.artist and player.title:
+        return f"{player.artist} - {player.title}"
+    if player.title:
+        return player.title
+    return player.identity
+
+
+def _player_label(player) -> str:
+    """The whole single-string label (source prefix + body) — kept as
+    a convenience for callers that don't need draw()'s own prefix/body
+    split (nothing in this module uses it that way anymore, but it's a
+    reasonable, still-tested utility on its own).
+    """
+    body = _body_label(player)
+    if body == player.identity and not player.title:
+        # Nothing else worth saying beyond which app/site this is —
+        # showing it again in brackets right after would just repeat
+        # itself ("[Mozilla firefox] Mozilla firefox").
+        return body
+    source = _source_label(player)
+    return f"[{source}] {body}" if source else body
+
+
+def marquee_text(text: str, width: int, now: float) -> str:
+    """text as-is if it already fits width. Otherwise a width-wide
+    sliding window into "text + gap" repeated, advancing one character
+    every MARQUEE_STEP_SECONDS of wall-clock time — same "no per-frame
+    state needed, time.time() already is the shared clock" reasoning
+    _pending_blink_style uses, just taking `now` as an explicit
+    parameter instead of calling time.time() internally, so this stays
+    unit-testable without a real clock (draw() passes time.time() in).
+    """
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    gap = "   "
+    looped = text + gap
+    offset = int(now / MARQUEE_STEP_SECONDS) % len(looped)
+    doubled = looped + looped  # a width-wide slice never runs off the end
+    return doubled[offset:offset + width]
+
+
+# A rough "this body text probably won't fit a typical box, so it's
+# probably marquee-scrolling somewhere" length threshold — main.py
+# uses this to decide whether to redraw at MARQUEE_STEP_SECONDS
+# cadence instead of the idle 1s default, found live: without it, the
+# marquee's own per-0.3s-step math was correct, but the render loop
+# only actually redrew once a second while idle, so what should have
+# been a smooth one-character slide visibly jumped ~3 characters at a
+# time instead. Deliberately NOT box-width-aware — main.py's timeout
+# decision happens before boxes are computed for this frame, so an
+# exact fit check isn't available yet; a conservative length guess
+# costs nothing worse than a few unnecessary 0.3s redraws for a body
+# that would have fit anyway.
+MARQUEE_LENGTH_THRESHOLD = 18
+
+
+def has_scrolling_content(players: list | None) -> bool:
+    return any(len(_body_label(p)) > MARQUEE_LENGTH_THRESHOLD for p in (players or []))
+
+
+def is_expanded() -> bool:
+    return _expanded_bus_name is not None
+
+
+def collapse() -> str | None:
+    """Leaves the expanded (level 2) state, back to browsing every
+    player's single row — main.py calls this on Escape while a player
+    is expanded, or when active_module leaves "media" entirely. Returns
+    the bus_name that WAS expanded (None if none was), so the caller
+    can reselect "media:<bus_name>:row" directly — same reason
+    sessions.py's collapse() returns the slot it collapsed (see its own
+    docstring): nav_items() no longer reports the just-selected action
+    id the instant this collapses, which would otherwise trip main.py's
+    stale-selection recovery into jumping to the sidebar.
+    """
+    global _expanded_bus_name
+    bus_name = _expanded_bus_name
+    _expanded_bus_name = None
+    return bus_name
+
+
+def _reconcile_expanded_state(players: list) -> None:
+    """Clears _expanded_bus_name if that player has disappeared from
+    the current snapshot (quit, or a transient poll gap) — without
+    this, is_expanded() would keep reporting True forever for a player
+    that no longer exists anywhere in nav_items()' own output, since
+    nothing else ever resets it except leaving the module or pressing
+    Escape.
+    """
+    global _expanded_bus_name
+    if _expanded_bus_name is None:
+        return
+    if not any(p.bus_name == _expanded_bus_name for p in players):
+        _expanded_bus_name = None
+
+
+def _build_rows(ctx, box_h):
+    """One row per line the box renders, in order — the single source
+    of truth draw() and nav_items() both walk, same reasoning
+    connectivity.py's own _build_rows gives for why this can't drift.
+    """
+    players = ctx.status.get("media") if ctx.status is not None else None
+    media_error = ctx.status.get_error("media") if ctx.status is not None else None
+    sinks = ctx.status.get("audio") if ctx.status is not None else None
+    audio_error = ctx.status.get_error("audio") if ctx.status is not None else None
+
+    _reconcile_expanded_state(players or [])
+
+    rows = [("header", "Now Playing")]
+    if players is None and media_error:
+        rows.append(("error", media_error))
+    elif not players:
+        rows.append(("empty", "(nothing playing)"))
+    else:
+        for player in players:
+            rows.append(("player", player))
+
+    rows.append(("spacer", None))
+    rows.append(("header", "Output"))
+    if sinks is None and audio_error:
+        rows.append(("error", audio_error))
+    elif not sinks:
+        rows.append(("empty", "(no sinks found)"))
+    else:
+        for sink in sinks:
+            rows.append(("output_item", sink))
+
+    return rows
+
+
+def draw(stdscr, box, ctx, module_name):
+    x, y, w, h = box
+    theme = ctx.theme or {}
+
+    is_active = module_name == ctx.active_module
+    outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
+    draw_box_outline(stdscr, y, x, h, w, outer_color, title="Media")
+
+    inner_w = max(w - 4, 0)
+    now = time.time()
+    for i, (kind, payload) in enumerate(_build_rows(ctx, h)):
+        row = y + 1 + i
+        if row >= y + h - 1:
+            break
+
+        if kind == "header":
+            try:
+                stdscr.addstr(row, x + 2, payload, theme.get("accent", 0) | curses.A_BOLD)
+            except curses.error:
+                pass
+
+        elif kind == "error":
+            try:
+                stdscr.addstr(row, x + 2, f"⚠ {payload}"[:max(inner_w, 0)], theme.get("urgent", 0))
+            except curses.error:
+                pass
+
+        elif kind == "empty":
+            try:
+                stdscr.addstr(row, x + 2, payload, theme.get("text", 0) | curses.A_DIM)
+            except curses.error:
+                pass
+
+        elif kind == "player":
+            player = payload
+            is_this_expanded = player.bus_name == _expanded_bus_name
+            # Once ANYTHING is expanded, every row's own info text (dot
+            # + label) goes passive/dimmed — including the expanded
+            # row's own, not just its siblings. Found live, corrected
+            # after an initial attempt highlighted the expanded row's
+            # text instead: "only what's actually controlled should
+            # light up" — once you're inside a row, its own name isn't
+            # what you're navigating anymore, its <</PAUSE/>> controls
+            # are (see their own selected-vs-dimmed treatment below,
+            # same idea one level down: only the ONE truly-focused
+            # control glyph stays bright, not all three).
+            something_expanded = _expanded_bus_name is not None
+            pending = ctx.status is not None and ctx.status.is_pending("media", player.bus_name)
+            dot = "●" if player.playback_status == "Playing" else "○"
+            dot_color = theme.get("accent", 0) if player.playback_status == "Playing" else theme.get("text", 0)
+            if something_expanded:
+                dot_color |= curses.A_DIM
+            if pending:
+                text_color, attr = _pending_blink_style(theme)
+            elif something_expanded:
+                text_color, attr = theme.get("text", 0), curses.A_DIM
+            else:
+                is_row_selected = f"media:{player.bus_name}:row" == ctx.selected_id
+                text_color = theme.get("selected", 0) if is_row_selected else theme.get("text", 0)
+                attr = curses.A_BOLD if is_row_selected else 0
+
+            # "<< ▶ >>" — 7 columns for the cluster itself: "<<" (2) +
+            # gap (1) + play/pause (1) + gap (1) + ">>" (2). Both
+            # internal gaps are exactly 1 column — found live, asked
+            # for after the play/pause glyph shrank to a single
+            # character, which left an uneven 1-vs-2-column gap on
+            # either side of it. right_edge_gap is a SEPARATE 1-column
+            # margin between the whole cluster and the box's own right
+            # border — without it the cluster rendered flush against
+            # the border, found live to look glued-on rather than
+            # deliberately placed.
+            controls_w = 7
+            right_edge_gap = 1
+            glyph_x = x + w - 1 - right_edge_gap - controls_w
+            # label_gap: same idea, 1 column between the label text and
+            # the start of the cluster — computed FROM glyph_x directly
+            # (not a separately-derived formula) so this can't drift out
+            # of sync with where the cluster actually gets drawn below.
+            label_gap = 1
+            label_start_x = x + 4
+            # -2: one column for the dot itself, one more for the gap
+            # between the dot and the label text — found live, the dot
+            # and "[" were rendering flush against each other.
+            available_w = max(glyph_x - label_gap - label_start_x, 0)
+            body = _body_label(player)
+            if body == player.identity and not player.title:
+                prefix = ""
+            else:
+                source = _source_label(player)
+                prefix = f"[{source}] " if source else ""
+            prefix = prefix[:available_w]  # degrade gracefully if even the prefix alone can't fit
+            body_w = max(available_w - len(prefix), 0)
+            label = f"{prefix}{marquee_text(body, body_w, now)}"
+            try:
+                stdscr.addstr(row, x + 2, dot, dot_color)
+                stdscr.addstr(row, label_start_x, label, text_color | attr)
+            except curses.error:
+                pass
+
+            # Unicode, but from the SAME block as the ●/○ status dots
+            # already proven safe on the user's terminal (U+25A0-25FF,
+            # "Geometric Shapes") — not the "Miscellaneous Technical"
+            # block ("⏮"/"⏸"/"⏭") tried first, which rendered
+            # double-width via emoji-font fallback and broke the row's
+            # column alignment (curses' addstr always advances by
+            # exactly 1 column per Python character, regardless of the
+            # glyph's actual drawn width — a mismatch that specific
+            # block is prone to triggering, found live). Fonts
+            # typically ship a whole Unicode block's coverage at once
+            # rather than cherry-picking code points, so a font that
+            # already renders ●/○ narrow is a good bet for ▶/◀/▮ too —
+            # still a bet, not a guarantee, hence asking for live
+            # confirmation rather than assuming. Play/pause are both
+            # exactly ONE character each ("▶"/"■") — found live, no
+            # padding split (space-left vs space-right) ever looks
+            # truly centered when a 1-char glyph sits next to a 2-char
+            # one; the actual fix is making both states the SAME
+            # length, not finding a cleverer split. "<<"/">>" don't
+            # need this treatment since they never change state.
+            play_glyph = "■" if player.playback_status == "Playing" else "▶"
+            prev_selected = f"media:{player.bus_name}:prev" == ctx.selected_id
+            play_selected = f"media:{player.bus_name}:playpause" == ctx.selected_id
+            next_selected = f"media:{player.bus_name}:next" == ctx.selected_id
+            for glyph, gx, is_selected in (
+                ("◀◀", glyph_x, prev_selected),
+                (play_glyph, glyph_x + 3, play_selected),
+                ("▶▶", glyph_x + 5, next_selected),
+            ):
+                if is_this_expanded and is_selected:
+                    # The one truly-focused control — the only thing
+                    # in this whole row allowed to actually stand out.
+                    color, attr = theme.get("selected", 0), curses.A_BOLD
+                else:
+                    # Plain text color, not dimmed — found live, asked
+                    # for specifically for the glyph cluster: the two
+                    # non-focused controls on the expanded row should
+                    # still read clearly, unlike the row's own label
+                    # text (which does stay dimmed — see above).
+                    color, attr = theme.get("text", 0), 0
+                try:
+                    stdscr.addstr(row, gx, glyph, color | attr)
+                except curses.error:
+                    pass
+
+        elif kind == "output_item":
+            sink = payload
+            is_selected = f"media:output:{sink.id}" == ctx.selected_id
+            pending = ctx.status is not None and ctx.status.is_pending("audio", sink.id)
+            if pending:
+                text_color, attr = _pending_blink_style(theme)
+                dot, dot_color = "●", (text_color | attr)
+            else:
+                dot = "●" if sink.is_default else "○"
+                dot_color = theme.get("accent", 0) if sink.is_default else theme.get("text", 0)
+                text_color = theme.get("selected", 0) if is_selected else theme.get("text", 0)
+                attr = curses.A_BOLD if is_selected else 0
+            rest = f" {sink.name}"[:max(inner_w - 1, 0)]
+            try:
+                stdscr.addstr(row, x + 2, dot, dot_color)
+                stdscr.addstr(row, x + 3, rest, text_color | attr)
+            except curses.error:
+                pass
+
+
+def nav_items(box, ctx, module_name) -> list[NavItem]:
+    x, y, w, h = box
+    items = []
+
+    for i, (kind, payload) in enumerate(_build_rows(ctx, h)):
+        row = y + 1 + i
+        if row >= y + h - 1:
+            break
+
+        if kind == "player":
+            player = payload
+            if player.bus_name == _expanded_bus_name:
+                controls_w = 7
+                right_edge_gap = 1  # kept in sync with draw()'s own margin
+                glyph_x = x + w - 1 - right_edge_gap - controls_w
+                if player.can_go_previous:
+                    items.append(NavItem(
+                        id=f"media:{player.bus_name}:prev", rect=(glyph_x, row, 2, 1),
+                        focus_target=player.bus_name, target_kind="media_transport",
+                    ))
+                items.append(NavItem(
+                    id=f"media:{player.bus_name}:playpause", rect=(glyph_x + 3, row, 1, 1),
+                    focus_target=player.bus_name, target_kind="media_transport",
+                ))
+                if player.can_go_next:
+                    items.append(NavItem(
+                        id=f"media:{player.bus_name}:next", rect=(glyph_x + 5, row, 2, 1),
+                        focus_target=player.bus_name, target_kind="media_transport",
+                    ))
+            else:
+                items.append(NavItem(
+                    id=f"media:{player.bus_name}:row", rect=(x + 1, row, w - 2, 1),
+                    focus_target=player.bus_name, target_kind="media_row",
+                ))
+        elif kind == "output_item":
+            sink = payload
+            items.append(NavItem(
+                id=f"media:output:{sink.id}", rect=(x + 1, row, w - 2, 1),
+                focus_target=sink.id, target_kind="media_output",
+            ))
+
+    return items
+
+
+def handle_row(ctx, item, cfg):
+    """Enter on a browsing-level player row expands it — mirrors
+    sessions.py's handle_row exactly, including the reselect_item_id
+    fix-up (see ActionContext's own docstring): nav_items() stops
+    reporting this row's id the instant _expanded_bus_name changes, so
+    without this the stale-selection recovery would jump to the
+    sidebar instead of landing on the newly-revealed actions.
+    """
+    global _expanded_bus_name
+    _expanded_bus_name = item.focus_target  # bus_name
+    ctx.reselect_item_id = f"media:{item.focus_target}:playpause"
+    return False, None
+
+
+def handle_transport(ctx, item, cfg):
+    action = item.id.rsplit(":", 1)[-1]  # "prev" | "playpause" | "next"
+    action_name = {"prev": "previous", "playpause": "play_pause", "next": "next"}[action]
+    ctx.status.request_action("media", action_name, item.focus_target)
+    return False, None
+
+
+def handle_output(ctx, item, cfg):
+    ctx.status.request_action("audio", "set_default_sink", item.focus_target)
+    return False, None
+
+
+HANDLERS = {
+    "media_row": handle_row,
+    "media_transport": handle_transport,
+    "media_output": handle_output,
+}

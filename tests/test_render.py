@@ -6,7 +6,7 @@ one dict but forgotten in the other).
 """
 
 from tuicc.render import MODULES, NAV_PROVIDERS, ACTION_HANDLERS
-from tuicc.modules import power_menu, quick_actions, sessions, control
+from tuicc.modules import power_menu, quick_actions, sessions, control, media
 
 
 def test_every_module_has_both_draw_and_nav_items():
@@ -16,7 +16,7 @@ def test_every_module_has_both_draw_and_nav_items():
 def test_expected_modules_are_registered():
     expected = {
         "sidebar", "sidebar_compact", "preview", "quick_actions", "clock", "launcher",
-        "connectivity", "power_menu", "sessions", "control",
+        "connectivity", "power_menu", "sessions", "control", "media",
     }
     assert set(MODULES.keys()) == expected
 
@@ -36,6 +36,12 @@ def test_control_toggle_handler_registered():
 def test_sessions_handlers_registered():
     assert ACTION_HANDLERS["session_row"] is sessions.handle_row
     assert ACTION_HANDLERS["session_action"] is sessions.handle_action
+
+
+def test_media_handlers_registered():
+    assert ACTION_HANDLERS["media_row"] is media.handle_row
+    assert ACTION_HANDLERS["media_transport"] is media.handle_transport
+    assert ACTION_HANDLERS["media_output"] is media.handle_output
 
 
 def test_base_handlers_still_present():
