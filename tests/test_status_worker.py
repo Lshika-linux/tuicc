@@ -227,3 +227,43 @@ def test_resumed_worker_polls_again():
         assert worker.get("wifi") == ["net1"]
     finally:
         worker.stop()
+
+
+# ---------- request_action: pending_key ----------
+# Found live building R5's audio/ backend — set_volume(sink_id, percent)
+# needs two pieces of data, but "is THIS SINK being adjusted" (the
+# pending identity the UI actually cares about) has to stay just
+# sink_id, not the whole (sink_id, percent) tuple, which would never
+# match a second, different volume request for the same sink still in
+# flight.
+
+def test_pending_key_defaults_to_arg_when_omitted():
+    # Backward compatible — every existing wifi/bluetooth call site
+    # never passes pending_key, and must keep working exactly as before.
+    worker = StatusWorker([_domain("wifi")])
+    worker.request_action("wifi", "connect", "Home")
+    assert worker.is_pending("wifi", "Home") is True
+
+
+def test_pending_key_tracks_separately_from_arg_when_given():
+    worker = StatusWorker([_domain("audio")])
+    worker.request_action("audio", "set_volume", ("sink1", 80), pending_key="sink1")
+    assert worker.is_pending("audio", "sink1") is True
+    # The full tuple itself is not what's tracked.
+    assert worker.is_pending("audio", ("sink1", 80)) is False
+
+
+def test_action_with_pending_key_receives_the_full_arg_and_clears_correctly():
+    calls = []
+    worker = StatusWorker(
+        [_domain("audio", actions={"set_volume": lambda arg: calls.append(arg)})],
+        poll_interval=999,
+    )
+    worker.start()
+    try:
+        worker.request_action("audio", "set_volume", ("sink1", 80), pending_key="sink1")
+        _wait_until(lambda: calls == [("sink1", 80)])
+        assert calls == [("sink1", 80)]
+        assert worker.is_pending("audio", "sink1") is False
+    finally:
+        worker.stop()

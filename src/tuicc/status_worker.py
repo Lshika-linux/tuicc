@@ -126,10 +126,28 @@ class StatusWorker:
         with self._lock:
             return len(self._pending) > 0
 
-    def request_action(self, domain_name, action_name, arg=None):
+    def request_action(self, domain_name, action_name, arg=None, pending_key=None):
+        """arg is whatever the registered action callable needs — for
+        wifi/bluetooth that's always been a single id (ssid/device_id),
+        but a domain whose action needs more than one piece of data
+        (audio's set_volume(sink_id, percent), found live building
+        R5's audio/ backend) can pass a tuple/whatever shape its own
+        Domain.actions callable expects to unpack.
+
+        pending_key is what is_pending()/has_pending() actually track
+        — defaults to arg itself (unchanged behavior for every
+        existing caller, wifi/bluetooth's own id-is-both-things case).
+        Pass it explicitly when arg isn't a sensible pending identity
+        on its own — audio's set_volume wants "is THIS SINK being
+        adjusted" (sink_id alone), not "is this exact (sink_id,
+        percent) tuple pending" (which would never match a second,
+        different volume request for the same sink still in flight).
+        """
+        if pending_key is None:
+            pending_key = arg
         with self._lock:
-            self._action_queue.append((domain_name, action_name, arg))
-            self._pending.add((domain_name, arg))
+            self._action_queue.append((domain_name, action_name, arg, pending_key))
+            self._pending.add((domain_name, pending_key))
 
     def _run(self):
         last_poll = 0
@@ -142,7 +160,7 @@ class StatusWorker:
                 actions = self._action_queue[:]
                 self._action_queue.clear()
 
-            for domain_name, action_name, arg in actions:
+            for domain_name, action_name, arg, pending_key in actions:
                 domain = self._domains.get(domain_name)
                 try:
                     if domain is not None:
@@ -156,7 +174,7 @@ class StatusWorker:
                     pass
                 finally:
                     with self._lock:
-                        self._pending.discard((domain_name, arg))
+                        self._pending.discard((domain_name, pending_key))
 
             now = time.monotonic()
             if actions or now - last_poll > self._poll_interval:
