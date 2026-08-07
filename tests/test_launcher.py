@@ -217,6 +217,41 @@ def test_handle_typing_key_unhandled_key_leaves_state_unchanged():
     assert (state.search_query, state.search_selected_index, state.typing_mode) == ("fire", 1, True)
 
 
+# ---------- handle_typing_key: return value (still_claiming) ----------
+# VISION.md's R2 input_claim shape — main.py's dispatch reads this
+# return value directly to decide whether to release the claim,
+# instead of re-checking state.typing_mode afterward.
+
+def test_handle_typing_key_returns_false_on_escape():
+    state = LauncherState(typing_mode=True, search_query="firefo")
+
+    assert handle_typing_key(state, 27, _cfg) is False
+
+
+def test_handle_typing_key_returns_false_on_backspace_at_empty_query():
+    state = LauncherState(typing_mode=True, search_query="")
+
+    assert handle_typing_key(state, 127, _cfg) is False
+
+
+def test_handle_typing_key_returns_true_on_backspace_with_remaining_text():
+    state = LauncherState(typing_mode=True, search_query="firefox")
+
+    assert handle_typing_key(state, 127, _cfg) is True
+
+
+def test_handle_typing_key_returns_true_on_printable_char():
+    state = LauncherState(typing_mode=True, search_query="fire")
+
+    assert handle_typing_key(state, ord("x"), _cfg) is True
+
+
+def test_handle_typing_key_returns_true_on_unhandled_key():
+    state = LauncherState(typing_mode=True, search_query="fire")
+
+    assert handle_typing_key(state, 999999, _cfg) is True
+
+
 # ---------- enter_typing_mode / exit_typing_mode ----------
 
 def test_enter_typing_mode_saves_previous_selection():

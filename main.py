@@ -107,6 +107,26 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
+    # VISION.md's R2 (input claim): which module currently owns raw
+    # keystrokes, generalizing what used to be launcher.typing_mode
+    # checked directly. None means no one has stolen input — an
+    # unbound printable key auto-claims for the launcher (ambient
+    # "type anywhere" is sugar for that auto-claim), same as before.
+    # Three consumers so far: "launcher" (typing/search), "help_colors"
+    # (help_mode's inline color editor), "sessions_naming" (sessions.py's
+    # rename field) — all genuine text-input claims, the shape R2 was
+    # designed for. resize_mode's own two-level browsing/editing session
+    # (resize.active/resize.editing) is deliberately NOT migrated onto
+    # this — it isn't a text-input claim at all (arrow-key resize
+    # deltas, move_toggle, delete_box, F1/F3/F4/F6 reachable from either
+    # level), a structurally different kind of hijack; see VISION.md's
+    # R2 section for why that'd be a bigger, separate pass. Each
+    # consumer's own module-level state (LauncherState.typing_mode,
+    # HelpState.color_editing, sessions.py's _naming_slot) is untouched
+    # by this — this variable is kept in sync with it at every entry/
+    # exit point below, not a replacement for it.
+    input_claim = None
+
     # True from the moment dismiss_self() is called until the next real
     # keypress arrives (a keypress can only reach tuicc's own terminal
     # while it's focused, the same assumption ambient typing already
@@ -447,13 +467,14 @@ def main(stdscr):
                     provider.dismiss_self()
                 continue
 
-            if sessions_mode.is_naming():
-                # Same shape as help_state's color editor just below —
-                # a narrow key-capture hijack, not a full modal like
-                # help_state.active/resize.active. The early `continue`
-                # here is what keeps Tab/other keys from leaking through
-                # to the normal dispatch chain mid-rename (handle_naming_key
-                # itself just ignores anything outside backspace/Escape/
+            if input_claim == "sessions_naming":
+                # Second consumer of R2's input_claim (see its own
+                # comment near where it's declared) — a narrow key-
+                # capture hijack, not a full modal like help_state.active/
+                # resize.active. The early `continue` here is what keeps
+                # Tab/other keys from leaking through to the normal
+                # dispatch chain mid-rename (handle_naming_key itself
+                # just ignores anything outside backspace/Escape/
                 # printable-ASCII, so a stray Tab is silently a no-op,
                 # not a navigation change).
                 if key == cfg.keybinds["confirm"]:
@@ -462,8 +483,32 @@ def main(stdscr):
                         slot, new_name = result
                         cfg.session_names[slot] = new_name or f"Slot {slot}"
                         set_session_name(slot, new_name)
-                else:
-                    sessions_mode.handle_naming_key(key)
+                        input_claim = None
+                elif not sessions_mode.handle_naming_key(key):
+                    input_claim = None
+                continue
+
+            if input_claim == "help_colors":
+                # Third consumer — extracted out of help_state.active's
+                # own dispatch below into its own early tier for the
+                # same reason sessions_naming is: it's a text-input
+                # claim (type a color, Enter applies, Escape cancels),
+                # not part of the page-selection/menu navigation
+                # help_state.active otherwise handles. input_claim only
+                # clears on a SUCCESSFUL apply — an invalid color value
+                # (apply_color_edit returns None, state.color_error set
+                # for display) keeps editing open so the user can just
+                # fix it and retry, same as before this migration.
+                if key == cfg.keybinds["confirm"]:
+                    result = help_mode.apply_color_edit(help_state)
+                    if result is not None:
+                        role, color, typed_value = result
+                        cfg.theme[role] = color
+                        theme_pairs = reassign_theme_pairs(cfg.theme)
+                        set_theme_color(role, typed_value)
+                        input_claim = None
+                elif not help_mode.type_color_key(help_state, key):
+                    input_claim = None
                 continue
 
             if help_state.active:
@@ -474,23 +519,13 @@ def main(stdscr):
                     continue
 
                 if help_state.page == "colors":
-                    if help_state.color_editing:
-                        if key == cfg.keybinds["confirm"]:
-                            result = help_mode.apply_color_edit(help_state)
-                            if result is not None:
-                                role, color, typed_value = result
-                                cfg.theme[role] = color
-                                theme_pairs = reassign_theme_pairs(cfg.theme)
-                                set_theme_color(role, typed_value)
-                        else:
-                            help_mode.type_color_key(help_state, key)
-                        continue
                     if key == cfg.keybinds["up"]:
                         help_mode.move_color_index(help_state, -1)
                     elif key == cfg.keybinds["down"]:
                         help_mode.move_color_index(help_state, 1)
                     elif key == cfg.keybinds["confirm"]:
                         help_mode.start_color_edit(help_state, get_raw_theme_values())
+                        input_claim = "help_colors"
                     elif key == 27:  # Escape
                         help_state.page = None
                     continue
@@ -499,7 +534,7 @@ def main(stdscr):
                     help_state.page = None
                 continue
 
-            if launcher.typing_mode:
+            if input_claim == "launcher":
                 if key == cfg.keybinds["confirm"]:
                     selected = launcher_mode.resolve_selected(launcher)
                     if selected is not None:
@@ -529,15 +564,20 @@ def main(stdscr):
                             known_ids, pid, app_id_hint, time.monotonic(),
                         )
                         launcher_mode.exit_typing_mode(launcher)
+                        input_claim = None
                         selected_id = launcher.saved_selected_id
                         active_module = launcher.saved_active_module
                     # selected is None (no search results): nothing happens,
                     # typing_mode stays True — not an implicit cancel.
-                else:
-                    launcher_mode.handle_typing_key(launcher, key, cfg)
-                    if not launcher.typing_mode:
-                        selected_id = launcher.saved_selected_id
-                        active_module = launcher.saved_active_module
+                elif not launcher_mode.handle_typing_key(launcher, key, cfg):
+                    # handle_typing_key exited on its own (Escape, or
+                    # Backspace on an empty query) — release the claim
+                    # the same way the confirm branch above does
+                    # explicitly, and restore the pre-typing selection
+                    # the same way a successful confirm does too.
+                    input_claim = None
+                    selected_id = launcher.saved_selected_id
+                    active_module = launcher.saved_active_module
                 continue
 
             if spawn_picker.active:
@@ -640,6 +680,14 @@ def main(stdscr):
                 # as the global-shortcut tier above.
                 should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
                 do_apply_reselect()
+                # sessions.py's "name" action calls start_naming() on
+                # itself (module-owned state, same as _expanded_slot) —
+                # this is where main.py notices and claims input on its
+                # behalf, mirroring how help_state's own "confirm" branch
+                # sets input_claim = "help_colors" right next to its own
+                # start_color_edit() call above.
+                if sessions_mode.is_naming():
+                    input_claim = "sessions_naming"
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
@@ -731,9 +779,11 @@ def main(stdscr):
                 do_enter_help()
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module)
+                input_claim = "launcher"
                 active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
+                input_claim = "launcher"
                 active_module = "launcher"
             elif key == 27 and sessions_mode.is_expanded():
                 # Escape collapses an expanded session slot back to

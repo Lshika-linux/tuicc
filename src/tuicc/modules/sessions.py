@@ -124,22 +124,28 @@ def start_naming(slot: int, current_name: str) -> None:
     _name_input = current_name
 
 
-def handle_naming_key(key: int) -> None:
+def handle_naming_key(key: int) -> bool:
     """Same shape as help_mode.handle_color_input_key/launcher.py's
     handle_typing_key — Enter isn't handled here (applying the name
     needs cfg state this function doesn't have), so the caller checks
     for confirm before falling back to this for everything else.
+
+    Returns still_claiming (False only on Escape) — see
+    launcher.py's handle_typing_key docstring for why main.py's
+    dispatch reads this directly now instead of re-checking
+    is_naming() afterward.
     """
     global _naming_slot, _name_input
     if key == 27:  # Escape: cancel, discard the in-progress edit
         _naming_slot = None
         _name_input = ""
-        return
+        return False
     if key in (curses.KEY_BACKSPACE, 127, 8):
         _name_input = _name_input[:-1]
-        return
+        return True
     if 32 <= key <= 126:
         _name_input += chr(key)
+    return True
 
 
 def apply_naming() -> tuple[int, str] | None:

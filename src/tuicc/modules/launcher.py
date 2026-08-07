@@ -199,20 +199,29 @@ def exit_typing_mode(state: LauncherState) -> None:
     state.search_selected_index = 0
 
 
-def handle_typing_key(state: LauncherState, key, cfg) -> None:
+def handle_typing_key(state: LauncherState, key, cfg) -> bool:
     """Mutates state for the launcher's typing-mode editing keys
     (Escape, Backspace, Left/Right, printable characters). Does NOT
     handle the confirm key — resolving and launching a command needs
     main.py's loop state (known window ids, target region, a
     timestamp) that this module deliberately doesn't have, same
     reasoning as resolve_selected(). Escape and Backspace-on-empty-
-    query call exit_typing_mode themselves; the caller only needs to
-    check state.typing_mode afterward to know whether to restore its
-    saved selection, same as it does for a successful confirm.
+    query call exit_typing_mode themselves.
+
+    Returns still_claiming (True unless this call just exited typing
+    mode) — VISION.md's R2 input_claim shape. main.py's dispatch reads
+    this directly instead of re-checking state.typing_mode afterward
+    (a stale-flag "peek" the input_claim mechanism used at first, found
+    live to be exactly the kind of indirection R2 was meant to avoid —
+    see main.py's own comment at its "launcher" input_claim site). The
+    caller still needs to check state.typing_mode itself once, after
+    this returns, to know whether to restore its saved selection — same
+    as it does for a successful confirm, which this function has no
+    part in.
     """
     if key == 27:  # Escape
         exit_typing_mode(state)
-        return
+        return False
 
     if key in (curses.KEY_BACKSPACE, 127, 8):
         if state.search_query:
@@ -220,19 +229,22 @@ def handle_typing_key(state: LauncherState, key, cfg) -> None:
             state.search_selected_index = 0
         else:
             exit_typing_mode(state)
-        return
+            return False
+        return True
 
     if key == cfg.keybinds["left"]:
         state.search_selected_index = max(state.search_selected_index - 1, 0)
-        return
+        return True
 
     if key == cfg.keybinds["right"]:
         state.search_selected_index += 1
-        return
+        return True
 
     if 32 <= key <= 126:
         state.search_query += chr(key)
         state.search_selected_index = 0
+
+    return True
 
 
 def _build_window(results, sel, avail_w):

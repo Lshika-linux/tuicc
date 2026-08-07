@@ -332,6 +332,32 @@ def test_handle_naming_key_escape_cancels():
     sessions_module.handle_naming_key(27)
 
     assert sessions_module.is_naming() is False
+
+
+# ---------- handle_naming_key: return value (still_claiming) ----------
+# VISION.md's R2 input_claim shape — main.py's dispatch reads this
+# return value directly to decide whether to release the claim,
+# instead of re-checking is_naming() afterward.
+
+def test_handle_naming_key_returns_true_on_printable_char():
+    _reset_module_state()
+    sessions_module.start_naming(1, "Wor")
+
+    assert sessions_module.handle_naming_key(ord("k")) is True
+
+
+def test_handle_naming_key_returns_true_on_backspace():
+    _reset_module_state()
+    sessions_module.start_naming(1, "Work")
+
+    assert sessions_module.handle_naming_key(127) is True
+
+
+def test_handle_naming_key_returns_false_on_escape():
+    _reset_module_state()
+    sessions_module.start_naming(1, "Work")
+
+    assert sessions_module.handle_naming_key(27) is False
     assert sessions_module._name_input == ""
 
 

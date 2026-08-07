@@ -187,7 +187,29 @@ raw keys via `handle_input(key) -> still_claiming` (the generalized
 `handle_typing_key` shape, pure function). Escape releases the claim.
 Pure refactor first: launcher-only, behavior identical, **all 23
 existing launcher tests stay green unchanged** — that's the acceptance
-criterion. Connectivity v2 becomes the second consumer.
+criterion (done). Connectivity v2 becomes the second consumer, per the
+original plan — but sessions.py's rename field and help_mode's color
+editor turned out to be nearer-term second/third consumers, both
+text-input cases matching handle_typing_key's own shape exactly
+(planned, not yet landed as of this writing).
+
+**Backlog, not v0.1.0-blocking:** resize_mode.py as a further, fourth
+consumer — its own `handle_input(key) -> still_claiming` interpreting
+resize's browsing/editing dispatch internally, moving the ~80-100
+lines of inline `resize.active`/`resize.editing` dispatch out of
+main.py into resize_mode.py, where it arguably belongs (module owns
+its own behavior; main.py owns *when* to call it). Architecturally
+sound, but a bigger lift than the two above, for two concrete reasons:
+resize's dispatch today reaches into a lot of main.py-level state
+(`active_module`, `cfg.layout.boxes`, the `resize_message`/
+`resize_message_until` toast, the `do_save_layout`/`do_cycle_preset`
+closures, computed `boxes` for direction deltas) that
+`handle_typing_key`'s plain `(state, key, cfg)` signature never
+needed; and F1/F3/F4/F6 working from *either* level of the resize
+session means some keys have to stay reachable across whatever claim
+boundary gets drawn — a plain `still_claiming` bool may not be a rich
+enough return shape for that. R2's own acceptance criterion (above)
+doesn't require this — revisit after v0.1.0, as its own scoped pass.
 
 ### R3 — StatusWorker (generalize ConnectivityWorker)
 Extract the pattern (thread, action queue, pending set, cached

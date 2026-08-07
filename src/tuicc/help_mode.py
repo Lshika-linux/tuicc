@@ -328,12 +328,18 @@ def start_color_edit(state: HelpState, raw_theme_values: dict) -> None:
     state.color_error = None
 
 
-def type_color_key(state: HelpState, key: int) -> None:
+def type_color_key(state: HelpState, key: int) -> bool:
+    """Returns still_claiming (== still_editing) — see
+    launcher.py's handle_typing_key docstring for why main.py's
+    dispatch reads this directly now instead of re-checking
+    state.color_editing afterward.
+    """
     state.color_input, still_editing = handle_color_input_key(key, state.color_input)
     state.color_editing = still_editing
     if not still_editing:
         state.color_input = ""
         state.color_error = None
+    return still_editing
 
 
 def apply_color_edit(state: HelpState) -> tuple[str, int, str] | None:

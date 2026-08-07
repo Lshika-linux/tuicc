@@ -316,6 +316,23 @@ def test_type_color_key_escape_exits_editing():
     assert state.color_input == ""
 
 
+# ---------- type_color_key: return value (still_claiming) ----------
+# VISION.md's R2 input_claim shape — main.py's dispatch reads this
+# return value directly to decide whether to release the claim,
+# instead of re-checking state.color_editing afterward.
+
+def test_type_color_key_returns_true_while_still_editing():
+    state = HelpState(color_editing=True, color_input="cya")
+
+    assert type_color_key(state, ord("n")) is True
+
+
+def test_type_color_key_returns_false_on_escape():
+    state = HelpState(color_editing=True, color_input="cya")
+
+    assert type_color_key(state, 27) is False
+
+
 def test_apply_color_edit_success_returns_role_color_and_typed_value():
     state = HelpState(color_index=COLOR_ROLES.index("accent"), color_editing=True, color_input=" cyan ")
 
