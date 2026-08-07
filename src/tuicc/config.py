@@ -75,6 +75,7 @@ class Config:
     vim_mode: bool
     wifi_backend_name: str
     bluetooth_backend_name: str
+    audio_backend_name: str
     power_menu_actions: list
     global_shortcuts: dict
     session_names: dict
@@ -519,6 +520,15 @@ def load_config() -> Config:
     vim_mode = user_data["navigation"]["vim_mode"]
     wifi_backend_name = user_data["network"]["wifi_backend"]
     bluetooth_backend_name = user_data["network"]["bluetooth_backend"]
+    # .get() with a fallback, not direct indexing like [network]'s own
+    # wifi_backend/bluetooth_backend above — [audio] is new (R5), an
+    # existing config.toml predating it genuinely lacks the section
+    # entirely, and load_config() must not hard-crash on every launch
+    # for every config seeded before this landed. "wpctl" matches the
+    # packaged default and audio/wpctl.py's own stated primary-backend
+    # reasoning (PipeWire/WirePlumber is what every current sway/i3
+    # desktop actually runs).
+    audio_backend_name = user_data.get("audio", {}).get("audio_backend", "wpctl")
     control_toggles = _build_control_toggles(user_data)
 
     return Config(
@@ -541,6 +551,7 @@ def load_config() -> Config:
         vim_mode=vim_mode,
         wifi_backend_name=wifi_backend_name,
         bluetooth_backend_name=bluetooth_backend_name,
+        audio_backend_name=audio_backend_name,
         power_menu_actions=power_menu_actions,
         global_shortcuts=global_shortcuts,
         session_names=session_names,

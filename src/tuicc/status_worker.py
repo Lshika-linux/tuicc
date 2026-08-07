@@ -66,12 +66,27 @@ class Domain:
     name: str
     poll: Callable[[], list]
     actions: dict = field(default_factory=dict)
+    # None (the default) means "use StatusWorker's own shared
+    # poll_interval" — most domains (wifi/bluetooth scans,
+    # control.toggle status checks) are genuinely fine refreshing every
+    # few seconds. A domain can override with its own, shorter value
+    # when that's not true — found live: audio (default sink can change
+    # out from under tuicc — WirePlumber auto-switches to a newly
+    # connected bluetooth device on its own, tuicc didn't initiate it —
+    # see main.py's own audio/media Domain construction) and media
+    # (a song changing mid-playback) both felt "stuck" at the 5s shared
+    # default, reported directly by the user testing it live.
+    poll_interval: float | None = None
 
 
 class StatusWorker:
     def __init__(self, domains: list[Domain], poll_interval=5):
         self._domains = {domain.name: domain for domain in domains}
-        self._poll_interval = poll_interval
+        self._poll_interval = poll_interval  # shared default — see Domain.poll_interval's own docstring
+        # Per-domain, not one shared value — a domain with its own
+        # (shorter) poll_interval becomes due on its own schedule,
+        # independent of every other domain's.
+        self._last_poll = {name: 0.0 for name in self._domains}
 
         self._lock = threading.Lock()
         # None (not []) until the first poll actually completes, same
@@ -179,7 +194,6 @@ class StatusWorker:
             self._pending.add((domain_name, pending_key))
 
     def _run(self):
-        last_poll = 0
         while not self._stop.is_set():
             if self._paused.is_set():
                 time.sleep(0.2)
@@ -188,6 +202,8 @@ class StatusWorker:
             with self._lock:
                 actions = self._action_queue[:]
                 self._action_queue.clear()
+
+            acted_domain_names = {domain_name for domain_name, _, _, _ in actions}
 
             for domain_name, action_name, arg, pending_key in actions:
                 domain = self._domains.get(domain_name)
@@ -205,20 +221,33 @@ class StatusWorker:
                     with self._lock:
                         self._pending.discard((domain_name, pending_key))
 
+            # Per-domain due check, not one shared "poll everything or
+            # nothing" gate — a domain just acted on is always re-polled
+            # immediately (so an action's real effect gets confirmed
+            # promptly, same reasoning as before), everything else
+            # becomes due on its OWN poll_interval (Domain.poll_interval
+            # if set, else this worker's shared default).
             now = time.monotonic()
-            if actions or now - last_poll > self._poll_interval:
+            due = {
+                name: domain for name, domain in self._domains.items()
+                if name in acted_domain_names
+                or now - self._last_poll[name] > (
+                    domain.poll_interval if domain.poll_interval is not None else self._poll_interval
+                )
+            }
+            if due:
                 results = {}
                 errors = {}
-                for name, domain in self._domains.items():
+                for name, domain in due.items():
                     try:
                         results[name] = domain.poll()
                         errors[name] = None
                     except Exception as e:
                         results[name] = None
                         errors[name] = str(e) or type(e).__name__
+                    self._last_poll[name] = now
                 with self._lock:
                     self._snapshots.update(results)
                     self._errors.update(errors)
-                last_poll = now
 
             time.sleep(0.2)

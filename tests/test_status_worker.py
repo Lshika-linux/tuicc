@@ -19,8 +19,8 @@ import time
 from tuicc.status_worker import StatusWorker, Domain
 
 
-def _domain(name, poll=None, actions=None):
-    return Domain(name=name, poll=poll or (lambda: []), actions=actions or {})
+def _domain(name, poll=None, actions=None, poll_interval=None):
+    return Domain(name=name, poll=poll or (lambda: []), actions=actions or {}, poll_interval=poll_interval)
 
 
 def _wait_until(predicate, timeout=2.0, interval=0.01):
@@ -166,11 +166,11 @@ def test_action_clears_pending_once_processed():
         worker.stop()
 
 
-def test_action_exception_is_swallowed_not_raised_and_still_clears_pending():
-    # Known, documented gap (see status_worker.py's own module
-    # docstring): action failures aren't surfaced via last_error yet,
-    # unlike poll failures — but they must not crash the worker thread
-    # or leave a pending spinner stuck forever either.
+def test_action_exception_does_not_crash_the_worker_and_still_clears_pending():
+    # An action failure must never crash the worker thread or leave a
+    # pending spinner stuck forever, whether or not anyone's watching
+    # get_action_error() for it (see the dedicated action-error tests
+    # below for that part — this test is just "the thread survives").
     def _raise(arg):
         raise RuntimeError("connect failed")
 
@@ -194,6 +194,151 @@ def test_unregistered_action_name_is_a_noop_not_a_crash():
         worker.request_action("wifi", "connect", "Home")
         _wait_until(lambda: not worker.is_pending("wifi", "Home"))  # must not raise / hang
         assert worker.is_pending("wifi", "Home") is False
+    finally:
+        worker.stop()
+
+
+# ---------- get_action_error() ----------
+# No direct tests existed for this before — found while touching this
+# file for the per-domain poll_interval tests below, closing a real gap
+# (the mechanism itself was built earlier, for the live gammastep bug,
+# but only ever exercised indirectly through other tests).
+
+def test_get_action_error_is_none_before_any_action():
+    worker = StatusWorker([_domain("wifi")])
+    assert worker.get_action_error("wifi") is None
+
+
+def test_get_action_error_set_after_a_failing_action():
+    def _raise(arg):
+        raise RuntimeError("connect failed")
+
+    worker = StatusWorker([_domain("wifi", actions={"connect": _raise})], poll_interval=999)
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error("wifi") is not None)
+        assert worker.get_action_error("wifi") == "connect failed"
+    finally:
+        worker.stop()
+
+
+def test_get_action_error_cleared_by_a_subsequent_successful_action():
+    calls = {"n": 0}
+
+    def _flaky(arg):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("connect failed")
+
+    worker = StatusWorker([_domain("wifi", actions={"connect": _flaky})], poll_interval=999)
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error("wifi") is not None)
+
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error("wifi") is None)
+        assert worker.get_action_error("wifi") is None
+    finally:
+        worker.stop()
+
+
+def test_get_action_error_is_per_domain():
+    def _raise(arg):
+        raise RuntimeError("connect failed")
+
+    worker = StatusWorker(
+        [_domain("wifi", actions={"connect": _raise}), _domain("bluetooth")],
+        poll_interval=999,
+    )
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error("wifi") is not None)
+        assert worker.get_action_error("bluetooth") is None
+    finally:
+        worker.stop()
+
+
+def test_get_action_error_survives_a_successful_poll_on_the_same_domain():
+    # The core reasoning from status_worker.py's own module docstring:
+    # _run() always re-polls every due domain in the same loop
+    # iteration right after processing actions, so an action error
+    # sharing a slot with poll's own _errors would get silently
+    # clobbered by that very poll's own (likely successful) result
+    # before any caller read it.
+    def _raise(arg):
+        raise RuntimeError("connect failed")
+
+    worker = StatusWorker(
+        [_domain("wifi", poll=lambda: ["net1"], actions={"connect": _raise})],
+        poll_interval=0,  # always due, exercises the "clobbered by poll" risk on every tick
+    )
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error("wifi") is not None)
+        time.sleep(0.5)  # several more poll ticks worth of runway
+        assert worker.get_action_error("wifi") == "connect failed"
+        assert worker.get_error("wifi") is None  # poll itself never failed
+    finally:
+        worker.stop()
+
+
+# ---------- Domain.poll_interval: per-domain due checks ----------
+
+def test_domain_with_no_poll_interval_uses_the_shared_default():
+    worker = StatusWorker([_domain("wifi", poll=lambda: ["net1"])], poll_interval=999)
+    worker.start()
+    try:
+        _wait_until(lambda: worker.get("wifi") is not None)  # the first poll always runs immediately
+        assert worker.get("wifi") == ["net1"]
+    finally:
+        worker.stop()
+
+
+def test_domain_with_a_short_poll_interval_refreshes_independently_of_the_shared_default():
+    call_count = {"n": 0}
+
+    def _poll():
+        call_count["n"] += 1
+        return [call_count["n"]]
+
+    worker = StatusWorker(
+        [
+            _domain("wifi", poll=lambda: ["static"]),  # shared default (999s) — effectively never refreshes again
+            _domain("media", poll=_poll, poll_interval=0.1),
+        ],
+        poll_interval=999,
+    )
+    worker.start()
+    try:
+        _wait_until(lambda: call_count["n"] >= 3, timeout=2.0)
+        assert call_count["n"] >= 3  # "media" kept refreshing on its own short interval
+        assert worker.get("wifi") == ["static"]  # "wifi" only got its one initial poll
+    finally:
+        worker.stop()
+
+
+def test_acting_on_a_domain_forces_an_immediate_repoll_regardless_of_its_own_interval():
+    poll_calls = []
+
+    def _poll():
+        poll_calls.append(len(poll_calls))
+        return poll_calls
+
+    worker = StatusWorker(
+        [_domain("media", poll=_poll, actions={"noop": lambda arg: None}, poll_interval=999)],
+    )
+    worker.start()
+    try:
+        _wait_until(lambda: worker.get("media") is not None)
+        calls_after_first_poll = len(poll_calls)
+
+        worker.request_action("media", "noop", None)
+        _wait_until(lambda: len(poll_calls) > calls_after_first_poll)
+        assert len(poll_calls) > calls_after_first_poll  # re-polled despite the 999s interval
     finally:
         worker.stop()
 
