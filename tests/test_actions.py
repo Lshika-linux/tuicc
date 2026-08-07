@@ -47,7 +47,7 @@ class _FakeProvider:
 
 def test_region_handler_calls_focus_region():
     provider = _FakeProvider()
-    ctx = ActionContext(provider=provider, connectivity=None)
+    ctx = ActionContext(provider=provider, status=None)
     item = SimpleNamespace(focus_target="workspace-3")
 
     should_exit, pending = BASE_HANDLERS["region"](ctx, item, cfg=None)
@@ -59,7 +59,7 @@ def test_region_handler_calls_focus_region():
 
 def test_window_handler_calls_focus_window():
     provider = _FakeProvider()
-    ctx = ActionContext(provider=provider, connectivity=None)
+    ctx = ActionContext(provider=provider, status=None)
     item = SimpleNamespace(focus_target="window-42")
 
     should_exit, pending = BASE_HANDLERS["window"](ctx, item, cfg=None)
@@ -227,7 +227,7 @@ def test_spawn_detached_always_live_key_absent_from_current_env_is_dropped(monke
 
 def test_dispatch_action_runs_the_matching_handler():
     provider = _FakeProvider()
-    ctx = ActionContext(provider=provider, connectivity=None)
+    ctx = ActionContext(provider=provider, status=None)
     item = SimpleNamespace(target_kind="region", focus_target="workspace-3")
 
     should_dismiss, pending = dispatch_action(ctx, BASE_HANDLERS, item, cfg=None)
@@ -238,7 +238,7 @@ def test_dispatch_action_runs_the_matching_handler():
 
 
 def test_dispatch_action_unknown_target_kind_returns_false_none():
-    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
     item = SimpleNamespace(target_kind="nonexistent_kind")
 
     should_dismiss, pending = dispatch_action(ctx, BASE_HANDLERS, item, cfg=None)
@@ -247,7 +247,7 @@ def test_dispatch_action_unknown_target_kind_returns_false_none():
 
 
 def test_dispatch_action_propagates_pending_from_handler():
-    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
     item = SimpleNamespace(target_kind="confirm_kind")
     handlers = {"confirm_kind": lambda ctx, item, cfg: (False, {"command": "rm -rf /", "shell_true": False})}
 
@@ -262,7 +262,7 @@ def test_dispatch_action_propagates_pending_from_handler():
 def test_handle_pending_confirm_yes_command_shaped_spawns_it(monkeypatch):
     calls = []
     monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
-    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
     pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
 
     should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("y"), _cfg)
@@ -272,7 +272,7 @@ def test_handle_pending_confirm_yes_command_shaped_spawns_it(monkeypatch):
 
 
 def test_handle_pending_confirm_yes_restore_shaped_extends_restore_queue():
-    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
     pending = {
         "restore_entries": [{"cmdline": ["kitty"]}],
         "dismiss_after_confirm": False,
@@ -291,7 +291,7 @@ def test_handle_pending_confirm_yes_restore_shaped_sets_reselect_region_id():
     # path in sessions.py's handle_action.
     provider = _FakeProvider()
     provider.focused_region_id = "1"
-    ctx = ActionContext(provider=provider, connectivity=None)
+    ctx = ActionContext(provider=provider, status=None)
     pending = {
         "restore_entries": [{"cmdline": ["kitty"]}],
         "dismiss_after_confirm": False,
@@ -308,7 +308,7 @@ def test_handle_pending_confirm_yes_restore_shaped_with_kill_regions_closes_matc
         SimpleNamespace(id="1", windows=[SimpleNamespace(id="w1"), SimpleNamespace(id="w2")]),
         SimpleNamespace(id="2", windows=[SimpleNamespace(id="w3")]),
     ]
-    ctx = ActionContext(provider=provider, connectivity=None)
+    ctx = ActionContext(provider=provider, status=None)
     pending = {
         "restore_entries": [{"cmdline": ["kitty"]}],
         "kill_regions": ["1"],
@@ -323,7 +323,7 @@ def test_handle_pending_confirm_yes_restore_shaped_with_kill_regions_closes_matc
 def test_handle_pending_confirm_no_discards_without_running_anything(monkeypatch):
     calls = []
     monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
-    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
     pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
 
     should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("n"), _cfg)
@@ -333,7 +333,7 @@ def test_handle_pending_confirm_no_discards_without_running_anything(monkeypatch
 
 
 def test_handle_pending_confirm_other_key_leaves_dialog_open_unchanged():
-    ctx = ActionContext(provider=_FakeProvider(), connectivity=None)
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
     pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
 
     should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("x"), _cfg)

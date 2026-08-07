@@ -55,12 +55,16 @@ _ALWAYS_LIVE_ENV_KEYS = frozenset({
 @dataclass
 class ActionContext:
     provider: object
-    connectivity: object
+    # The shared status_worker.StatusWorker instance — see
+    # RenderContext.status's own docstring for why it's named `status`,
+    # not `connectivity`, despite wifi/bluetooth handlers being its
+    # first consumers here.
+    status: object
     # Session entries (from session.py's load_session) waiting to be
     # spawned — a handler appends to this, main.py's loop drains it
     # over time (staggered, not all at once — see main.py's restore
     # processing). Shared mutable resource a handler can act on,
-    # same shape as connectivity above.
+    # same shape as status above.
     restore_queue: list = field(default_factory=list)
     # A handler sets this to a region id to ask main.py to move
     # selection to that region's sidebar item right after this action

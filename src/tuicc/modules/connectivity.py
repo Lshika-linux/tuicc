@@ -1,7 +1,7 @@
 """Connectivity module: wifi networks and bluetooth devices, in two
 sections of one box. Enter connects to the selected item — actual
 connect/disconnect happens on the StatusWorker's background thread
-(ctx.connectivity), never blocking the render loop.
+(ctx.status), never blocking the render loop.
 
 ---
 IMPORTANT: draw() and nav_items() must agree on exactly which row
@@ -166,7 +166,7 @@ def draw(stdscr, box, ctx, module_name):
             name_width = max(inner_w - 3 - len(bars), 0)
             name = network.ssid[:name_width].ljust(name_width)
 
-            pending = ctx.connectivity is not None and ctx.connectivity.is_pending("wifi", network.ssid)
+            pending = ctx.status is not None and ctx.status.is_pending("wifi", network.ssid)
             if pending:
                 text_color, attr = _pending_blink_style(theme)
                 dot, dot_color = ("\u25cf" if network.connected else "\u25cb"), (text_color | attr)
@@ -191,7 +191,7 @@ def draw(stdscr, box, ctx, module_name):
             is_selected = f"connectivity:bt:{device.id}" == ctx.selected_id
             battery = f" {device.battery}%" if device.battery is not None else ""
 
-            pending = ctx.connectivity is not None and ctx.connectivity.is_pending("bluetooth", device.id)
+            pending = ctx.status is not None and ctx.status.is_pending("bluetooth", device.id)
             if pending:
                 text_color, attr = _pending_blink_style(theme)
                 dot, dot_color = ("\u25cf" if device.connected else "\u25cb"), (text_color | attr)
@@ -246,12 +246,12 @@ def handle_wifi(ctx, item, cfg):
     confirm silently re-issued a redundant connect instead of
     disconnecting).
     """
-    networks = ctx.connectivity.get("wifi") or []
+    networks = ctx.status.get("wifi") or []
     network = next((n for n in networks if n.ssid == item.focus_target), None)
     if network is not None and network.connected:
-        ctx.connectivity.request_action("wifi", "disconnect", item.focus_target)
+        ctx.status.request_action("wifi", "disconnect", item.focus_target)
     else:
-        ctx.connectivity.request_action("wifi", "connect", item.focus_target)
+        ctx.status.request_action("wifi", "connect", item.focus_target)
     return False, None
 
 
@@ -261,12 +261,12 @@ def handle_bluetooth(ctx, item, cfg):
     did nothing, since only connect() was ever called regardless of
     current state.
     """
-    devices = ctx.connectivity.get("bluetooth") or []
+    devices = ctx.status.get("bluetooth") or []
     device = next((d for d in devices if d.id == item.focus_target), None)
     if device is not None and device.connected:
-        ctx.connectivity.request_action("bluetooth", "disconnect", item.focus_target)
+        ctx.status.request_action("bluetooth", "disconnect", item.focus_target)
     else:
-        ctx.connectivity.request_action("bluetooth", "connect", item.focus_target)
+        ctx.status.request_action("bluetooth", "connect", item.focus_target)
     return False, None
 
 

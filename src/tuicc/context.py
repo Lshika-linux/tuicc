@@ -31,7 +31,15 @@ class RenderContext:
     bluetooth_devices: list | None = field(default_factory=list)
     wifi_error: str | None = None
     bluetooth_error: str | None = None
-    connectivity: object = None
+    # The shared status_worker.StatusWorker instance — named `status`,
+    # not `connectivity`, despite wifi/bluetooth being its first two
+    # domains: audio/brightness/control-toggle domains (VISION.md's
+    # R5) register against this exact same worker, one thread for
+    # everything, not a separate one per module. ActionContext.status
+    # (actions.py) is the same object, same name, for handlers — same
+    # "two same-named, different-typed ctx objects" split every other
+    # per-frame/per-action value in tuicc already uses.
+    status: object = None
     selected_item: object = None
     # {target_region: [app_id, ...]} for whichever session slot is
     # currently expanded in the Sessions module (None if none is, or

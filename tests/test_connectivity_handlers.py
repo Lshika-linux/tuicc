@@ -35,7 +35,7 @@ class _FakeConnectivity:
 
 def test_handle_wifi_connects_when_not_connected():
     connectivity = _FakeConnectivity(wifi_networks=[WifiNetwork(ssid="Home", connected=False)])
-    ctx = ActionContext(provider=None, connectivity=connectivity)
+    ctx = ActionContext(provider=None, status=connectivity)
     item = SimpleNamespace(focus_target="Home")
 
     handle_wifi(ctx, item, cfg=None)
@@ -49,7 +49,7 @@ def test_handle_wifi_disconnects_when_already_connected():
     # already-connected network and pressing confirm should disconnect
     # it, not silently re-issue a connect.
     connectivity = _FakeConnectivity(wifi_networks=[WifiNetwork(ssid="Home", connected=True)])
-    ctx = ActionContext(provider=None, connectivity=connectivity)
+    ctx = ActionContext(provider=None, status=connectivity)
     item = SimpleNamespace(focus_target="Home")
 
     handle_wifi(ctx, item, cfg=None)
@@ -62,7 +62,7 @@ def test_handle_wifi_disconnects_when_already_connected():
 
 def test_handle_bluetooth_connects_when_not_connected():
     connectivity = _FakeConnectivity(bluetooth_devices=[BluetoothDevice(id="AA", name="Speaker", connected=False)])
-    ctx = ActionContext(provider=None, connectivity=connectivity)
+    ctx = ActionContext(provider=None, status=connectivity)
     item = SimpleNamespace(focus_target="AA")
 
     handle_bluetooth(ctx, item, cfg=None)
@@ -73,7 +73,7 @@ def test_handle_bluetooth_connects_when_not_connected():
 
 def test_handle_bluetooth_disconnects_when_already_connected():
     connectivity = _FakeConnectivity(bluetooth_devices=[BluetoothDevice(id="AA", name="Speaker", connected=True)])
-    ctx = ActionContext(provider=None, connectivity=connectivity)
+    ctx = ActionContext(provider=None, status=connectivity)
     item = SimpleNamespace(focus_target="AA")
 
     handle_bluetooth(ctx, item, cfg=None)

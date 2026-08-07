@@ -66,7 +66,12 @@ def main(stdscr):
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
-    connectivity = StatusWorker([
+    # One shared worker/thread for every domain — wifi/bluetooth today,
+    # audio/brightness/control-toggle domains (VISION.md's R5) register
+    # against this exact same instance as they land, not a separate
+    # worker each. See RenderContext.status's own docstring for why the
+    # ctx field this feeds is named `status`, not `connectivity`.
+    status_worker = StatusWorker([
         Domain(
             name="wifi",
             poll=wifi_backend.get_networks,
@@ -89,9 +94,9 @@ def main(stdscr):
             },
         ),
     ])
-    connectivity.start()
+    status_worker.start()
 
-    action_ctx = ActionContext(provider=provider, connectivity=connectivity)
+    action_ctx = ActionContext(provider=provider, status=status_worker)
 
     # Only used by resize mode's box-editing tier for resize/move math —
     # normal navigation (below) no longer does spatial movement, so it
@@ -284,7 +289,7 @@ def main(stdscr):
     try:
         while True:
             stdscr.timeout(
-                50 if (moves.entries or action_ctx.restore_queue or connectivity.has_pending()
+                50 if (moves.entries or action_ctx.restore_queue or status_worker.has_pending()
                        or resize_message is not None) else 1000
             )
             stdscr.erase()
@@ -391,11 +396,11 @@ def main(stdscr):
                 typing_mode=launcher.typing_mode,
                 search_query=launcher.search_query,
                 search_selected_index=launcher.search_selected_index,
-                wifi_networks=connectivity.get("wifi"),
-                bluetooth_devices=connectivity.get("bluetooth"),
-                wifi_error=connectivity.get_error("wifi"),
-                bluetooth_error=connectivity.get_error("bluetooth"),
-                connectivity=connectivity,
+                wifi_networks=status_worker.get("wifi"),
+                bluetooth_devices=status_worker.get("bluetooth"),
+                wifi_error=status_worker.get_error("wifi"),
+                bluetooth_error=status_worker.get_error("bluetooth"),
+                status=status_worker,
                 session_preview=sessions_mode.expanded_preview(),
             )
 
@@ -834,7 +839,7 @@ def main(stdscr):
                 dismissed = True
                 provider.dismiss_self()
     finally:
-        connectivity.stop()
+        status_worker.stop()
 
 
 if __name__ == "__main__":
