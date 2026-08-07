@@ -133,8 +133,13 @@ def test_run_state_command_spawns_the_matching_states_command(monkeypatch):
         control, "_run_detached_detecting_quick_failure",
         lambda command, shell_true: calls.append((command, shell_true)),
     )
+    # Confirmed on the very first check — no need to actually sleep/loop.
+    monkeypatch.setattr(control, "find_current_state", lambda states, shell_true: "off")
 
-    states = [{"name": "on", "command": "gammastep"}, {"name": "off", "command": "pkill -x gammastep"}]
+    states = [
+        {"name": "on", "status_command": "p", "command": "gammastep"},
+        {"name": "off", "status_command": None, "command": "pkill -x gammastep"},
+    ]
     control.run_state_command(states, "off", shell_true=False)
 
     assert calls == [("pkill -x gammastep", False)]
@@ -144,6 +149,68 @@ def test_run_state_command_raises_for_an_unknown_state_name():
     states = [{"name": "on", "command": "x"}]
     with pytest.raises(ValueError):
         control.run_state_command(states, "nonexistent", shell_true=False)
+
+
+# ---------- run_state_command's confirmation wait ----------
+# Found live: pending/blink (StatusWorker) is tied directly to how long
+# this function takes to return — it used to return the instant the
+# command was spawned, well before status_command could confirm the
+# real effect, making the module look "frozen" in between.
+
+def test_run_state_command_returns_as_soon_as_confirmed(monkeypatch):
+    monkeypatch.setattr(control, "_run_detached_detecting_quick_failure", lambda command, shell_true: None)
+    calls = []
+
+    def _find_current_state(states, shell_true):
+        calls.append(1)
+        return "off"  # confirmed on the very first check
+
+    monkeypatch.setattr(control, "find_current_state", _find_current_state)
+    states = [{"name": "on", "status_command": "p", "command": "a"},
+              {"name": "off", "status_command": None, "command": "b"}]
+
+    control.run_state_command(states, "off", shell_true=False, confirm_timeout=5.0)
+
+    assert len(calls) == 1  # didn't keep polling once already confirmed
+
+
+def test_run_state_command_keeps_polling_until_confirmed(monkeypatch):
+    monkeypatch.setattr(control, "_run_detached_detecting_quick_failure", lambda command, shell_true: None)
+    results = iter(["on", "on", "off"])  # takes 3 checks to actually converge
+    monkeypatch.setattr(control, "find_current_state", lambda states, shell_true: next(results))
+    states = [{"name": "on", "status_command": "p", "command": "a"},
+              {"name": "off", "status_command": None, "command": "b"}]
+
+    control.run_state_command(states, "off", shell_true=False, confirm_timeout=5.0)
+
+    assert next(results, "exhausted") == "exhausted"  # all 3 were consumed
+
+
+def test_run_state_command_gives_up_after_confirm_timeout(monkeypatch):
+    monkeypatch.setattr(control, "_run_detached_detecting_quick_failure", lambda command, shell_true: None)
+    # Never confirms — must not hang forever, just stop after the budget.
+    monkeypatch.setattr(control, "find_current_state", lambda states, shell_true: "on")
+    states = [{"name": "on", "status_command": "p", "command": "a"},
+              {"name": "off", "status_command": None, "command": "b"}]
+
+    control.run_state_command(states, "off", shell_true=False, confirm_timeout=0.25)  # returns, doesn't raise
+
+
+def test_run_state_command_stops_immediately_if_status_matches_nothing(monkeypatch):
+    monkeypatch.setattr(control, "_run_detached_detecting_quick_failure", lambda command, shell_true: None)
+    calls = []
+
+    def _find_current_state(states, shell_true):
+        calls.append(1)
+        raise RuntimeError("status_command output matched none of the configured states")
+
+    monkeypatch.setattr(control, "find_current_state", _find_current_state)
+    states = [{"name": "a", "status_command": "p1", "command": "x"},
+              {"name": "b", "status_command": "p2", "command": "y"}]
+
+    control.run_state_command(states, "b", shell_true=False, confirm_timeout=5.0)
+
+    assert len(calls) == 1  # gave up right away, didn't keep polling for the full 5s budget
 
 
 # ---------- _run_detached_detecting_quick_failure ----------

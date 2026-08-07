@@ -32,6 +32,13 @@ from tuicc.actions import spawn_detached
 # own docstring for why this exists at all.
 QUICK_FAILURE_WINDOW_SECONDS = 0.3
 
+# How long run_state_command additionally polls for the target state to
+# actually be confirmed via status_command, after the quick-failure
+# window above already passed — see run_state_command's own docstring
+# for why this exists (StatusWorker's pending/blink indicator is tied
+# directly to how long this whole function takes to return).
+CONFIRM_TIMEOUT_SECONDS = 2.0
+
 
 def probe_state(status_command: str, shell_true: bool) -> bool:
     """Runs status_command, True if it exited 0 ("currently in this
@@ -141,13 +148,40 @@ def _run_detached_detecting_quick_failure(
         output_path.unlink(missing_ok=True)
 
 
-def run_state_command(states: list[dict], target_name: str, shell_true: bool) -> None:
+def run_state_command(
+    states: list[dict], target_name: str, shell_true: bool, confirm_timeout: float = CONFIRM_TIMEOUT_SECONDS
+) -> None:
     """Spawns target_name's command detached, briefly checking for a
-    fast failure — see _run_detached_detecting_quick_failure's own
-    docstring.
+    fast failure (_run_detached_detecting_quick_failure), then polls
+    find_current_state() until it actually reports target_name (or
+    confirm_timeout elapses).
+
+    This function's return is what clears StatusWorker's `pending`
+    flag for this toggle (see status_worker.py's _run() — pending is
+    discarded right when the requested action() call returns) — found
+    live, mattering in practice: without this wait, pending cleared
+    the instant the command was merely SPAWNED, well before its real
+    effect was necessarily visible via status_command, leaving the
+    blink stop well ahead of the row actually showing the new state
+    (and, since main.py's redraw cadence is itself tied to
+    has_pending(), the whole module visibly stalling in between —
+    reported as "the module feels slow"). Bounded by confirm_timeout so
+    a toggle that genuinely never converges (a command that silently
+    no-ops, say) doesn't block every future toggle press behind it
+    forever — StatusWorker's action queue is processed sequentially,
+    one at a time.
     """
     for state in states:
-        if state["name"] == target_name:
-            _run_detached_detecting_quick_failure(state["command"], shell_true)
-            return
+        if state["name"] != target_name:
+            continue
+        _run_detached_detecting_quick_failure(state["command"], shell_true)
+        deadline = time.monotonic() + confirm_timeout
+        while time.monotonic() < deadline:
+            try:
+                if find_current_state(states, shell_true) == target_name:
+                    return
+            except RuntimeError:
+                return  # status matches no configured state at all - not this function's job to keep retrying
+            time.sleep(0.1)
+        return  # timed out without confirmation - not necessarily a failure, just stop waiting
     raise ValueError(f"no state named {target_name!r} in {[s['name'] for s in states]}")

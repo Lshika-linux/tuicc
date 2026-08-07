@@ -164,14 +164,28 @@ class I3Provider(Provider):
             return
         # KNOWN LIMITATION (fallback only, when no self_app_id is
         # configured): this assumes tuicc's own window is the one
-        # currently focused at call time. Launching several instances in
-        # rapid, back-to-back succession (not normal keypress-paced usage)
-        # can race — a not-yet-focused instance could mark a DIFFERENT
-        # instance's window as "itself". The PID suffix above prevents
-        # mark collisions, not this timing assumption; fixing it would
-        # need identifying "my own window" independent of focus timing
-        # (e.g. matching the hosting terminal's PID), which is real
-        # complexity for a scenario nobody hits under normal use.
+        # currently focused at call time. NOT just a rapid-back-to-back-
+        # launch edge case — confirmed live on sway (single ordinary
+        # launch, one instance, keybind-paced): a slow-to-yield-focus
+        # app (VS Code) still held focus for a moment when tuicc
+        # started, so tuicc marked THAT window as itself instead. It
+        # then silently vanished from tuicc's own sidebar/window lists
+        # — no error, no crash — until the stray mark was found (via
+        # `swaymsg -t get_tree`, `i3-msg -t get_tree` here) and removed
+        # by hand. Same underlying mechanism on i3 (X11 focus timing is
+        # just as racy as sway/Wayland's). The PID suffix above
+        # prevents mark *collisions*, not this timing assumption; a fix
+        # would need identifying "my own window" independent of focus
+        # timing. A `[pid=...]` for_window rule (the same trick
+        # no_focus_next_window uses) does NOT generalize here the same
+        # way: that pid comes from spawn_detached()'s own return value
+        # (the process that owns the resulting window), but mark_self()
+        # runs from *inside* tuicc, typically wrapped in a terminal
+        # (`kitty -e python main.py`) — os.getpid() here is Python's
+        # own pid, a child of the terminal, not the terminal's own pid
+        # that i3's window `pid` field actually reports. Set
+        # self_app_id instead; it sidesteps this category of bug
+        # entirely (see defaults/config.toml's own comment on it).
         self.conn.command(f"mark --add {mark}")
 
     def dismiss_self(self) -> None:

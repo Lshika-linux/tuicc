@@ -176,6 +176,21 @@ for_window [app_id="tuicc_scratch"] fullscreen enable
 bindsym $mod+Tab exec ~/scripts_sway/tuicc_toggle.py
 ```
 
+**`[wm] self_app_id` in `config.toml` must match the `app_id`/`class`
+above exactly** (`"tuicc_scratch"` here) — this isn't cosmetic. Without
+it, tuicc falls back to marking "whatever window currently has focus"
+as itself, so it can filter its own window out of its sidebar/window
+list; if some other window still happens to hold focus for a moment
+when tuicc starts (a real, reproduced case: a slow-to-yield-focus app
+like VS Code, launched via a keybind), tuicc marks THAT window as
+itself instead, and it silently vanishes from every list tuicc shows
+from then on — until you find and remove the stray `_tuicc_self_<pid>`
+mark by hand (`swaymsg '[con_mark="_tuicc_self_<pid>"] unmark
+"_tuicc_self_<pid>"'`, from `swaymsg -t get_tree`'s output) and set
+`self_app_id` to stop it recurring. `install.sh` sets both sides of
+this correctly for you; a hand-written launcher (like the one below)
+must set it yourself.
+
 [`contrib/sway/tuicc_toggle.py`](contrib/sway/tuicc_toggle.py) (and
 its i3 counterpart) is the one-keybind toggle script that block calls
 — launches tuicc if it isn't running, dismisses it if focused, brings
