@@ -329,6 +329,26 @@ Nothing about this is control.toggle-specific in principle — any
 `[[control.toggle]]` command that fails fast, for any reason, surfaces
 the exact same way.
 
+**`Domain.poll_interval` (per-domain, not just the shared 5s default):**
+found live, this session, right after the media module's own transport
+controls landed — the user connected bluetooth headphones and reported
+tuicc's output list taking a visible "pause" to reflect it. Root cause
+wasn't tuicc at all: WirePlumber already auto-switches the default
+sink to a newly-connected bluetooth device on its own (confirmed live
+— `wpctl status` showed it as the marked default already, unprompted,
+no `request_action` call from tuicc anywhere in that path) — the
+"pause" was purely `StatusWorker`'s own shared 5s poll cadence being
+the *only* way audio/media, specifically, ever notice a change that
+happens entirely outside tuicc's control flow (nothing to trigger an
+action-driven re-poll, unlike wifi/bluetooth *connect* which tuicc
+itself always initiates). `Domain` gained an optional `poll_interval`
+(`None` = use `StatusWorker`'s own shared default, unchanged behavior
+for wifi/bluetooth/every control.toggle); `main.py`'s `"audio"`/
+`"media"` domains now set `poll_interval=1`. `_run()`'s single shared
+`last_poll` became a per-domain dict — a domain becomes due either on
+its own interval elapsing or (unchanged from before) immediately after
+an action targeting it was just processed.
+
 ### R4 — Connectivity v2: D-Bus agent pattern
 The hardest, most-unlocking piece — land it late, with infrastructure
 proven. Passphrase (iwd) and pairing (BlueZ) are callback-driven: tuicc
@@ -355,10 +375,22 @@ the iwd/bluez split):
   module (not a registry) since there's exactly one reasonable tool for
   this, unlike wifi/bluetooth/audio which genuinely have several. Same
   not-yet-wired-into-a-slider status as audio/ above.
-- **`media/`** — NOT started. Playback via MPRIS
-  (`org.mpris.MediaPlayer2.*`, jeepney, plain request-response —
-  simpler than iwd). Metadata, PlaybackStatus, PlayPause/Next/Previous.
-  Multiple players: show the active one (Playing wins), Tab to others.
+- **`media/`** — done. Playback via MPRIS (`org.mpris.MediaPlayer2.*`,
+  jeepney, plain request-response — confirmed genuinely simpler than
+  iwd, as predicted: no stateful station/adapter lookup first, just
+  `GetAll` + a handful of no-argument methods). `get_players()`
+  enumerates every currently-running MPRIS bus name
+  (`org.freedesktop.DBus.ListNames`, filtered by prefix) rather than
+  assuming a single player the way iwd has one Station — real, live-
+  captured fixture (Firefox playing a YouTube tab) showed Metadata
+  fields are genuinely optional and vary between players (no
+  `mpris:length`/`mpris:artUrl` at all here), so `parse_metadata()`
+  defaults every field rather than trusting any of them present. "show
+  the active one (Playing wins), Tab to others" ended up needing zero
+  special-case logic at all: `modules/media.py` gives every detected
+  player its own row of nav items, and the *existing* Tab-driven
+  navigation already cycles through them like any other list — no
+  separate "switch active player" concept was needed.
 
 Two modules:
 - **control** — toggle grid (done) + volume/brightness sliders (not
@@ -401,10 +433,40 @@ Two modules:
   for that mechanism unlike resize_mode's own deferred case. Visual
   rule for the whole module: ONE box, uniform dense rows (dot + label,
   the `_connection_dot` convention) — not one framed box per feature.
-- **media** — NOT started. now-playing line + transport +
-  **output switching lives here** (not in control): "music plays —
-  route it to headphones" is one flow. Volume stays in control (system
-  property, not player property).
+- **media** — done (now-playing + transport + output switching).
+  **Output switching lives here** (not in control), exactly as
+  planned: "music plays — route it to headphones" is one flow, reusing
+  `audio/`'s own `set_default_sink` — required wiring `audio/` into a
+  real `StatusWorker` `Domain` for the first time (`poll=
+  audio_backend.get_sinks`, `actions={"set_default_sink": ...}` only —
+  `set_volume`/`set_mute` stay unwired, control's own future slider
+  work, not media's concern). One `Domain` each for `"audio"` and
+  `"media"`, config gained a new `[audio] audio_backend = "wpctl"` key
+  (`.get()`-with-default, not direct indexing like `[network]`'s own
+  wifi/bluetooth backend keys — `[audio]` is new, an existing
+  config.toml predating it must not hard-crash on load). Transport
+  controls (prev/play-pause/next) are 1-3 `NavItem`s per player row,
+  positioned at a fixed offset from the row's right edge — prev/next
+  are omitted entirely (not just disabled) when a player's own
+  `CanGoPrevious`/`CanGoNext` says it doesn't support them, a real,
+  common case for single-track web players. Same no-silent-failure
+  treatment as connectivity/control: `None`+`get_error()` renders as a
+  real `⚠` row, distinct from "genuinely nothing playing"/"no sinks
+  found".
+
+**Follow-on, not yet built:** a 2-row CAVA-style frequency bar
+visualizer in the media module, discussed with the user after Phase
+5 landed. Confirmed live feasible: `cava -p <config>` with `[output]
+method = raw`, `data_format = ascii` streams one semicolon-delimited
+line of bar-height integers per frame straight to stdout — genuinely
+different shape from every other backend in this codebase so far
+(continuous streaming subprocess + background reader thread, not a
+periodic poll-and-snapshot), closer to `StatusWorker`'s own
+thread-per-worker pattern than to a `Domain`'s poll() model. Decided:
+mono signal, 2 terminal rows used purely for finer vertical resolution
+per bar column via Unicode block characters (▁▂▃▄▅▆▇█, up to ~16
+levels stacked across 2 rows) — not stereo left/right. Explicitly
+scoped as a later, separate pass, not folded into Phase 4/5.
 
 Both feed off StatusWorker (polling, action queue, pending blink).
 
@@ -439,6 +501,9 @@ the current docs will be wrong.
 3. **R3** StatusWorker (no-silent-failure lands here) — done (not a
    pure refactor in the end, see R3's own section for why)
 4. **R5** control + media (fast visible wins, exercise R3 three times)
+   — done (control's volume/brightness sliders excepted, see R5's own
+   section; a CAVA-style visualizer follow-on also identified, not
+   built)
 5. **R6** system monitor (exercises R3 + fixture discipline)
 6. **R4** connectivity v2 agents (hardest, most infrastructure needed)
 7. **R7** default preset + docs
