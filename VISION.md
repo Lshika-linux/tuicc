@@ -211,15 +211,44 @@ boundary gets drawn — a plain `still_claiming` bool may not be a rich
 enough return shape for that. R2's own acceptance criterion (above)
 doesn't require this — revisit after v0.1.0, as its own scoped pass.
 
-### R3 — StatusWorker (generalize ConnectivityWorker)
+### R3 — StatusWorker (generalize ConnectivityWorker) — done
 Extract the pattern (thread, action queue, pending set, cached
 snapshots, poll interval) into a generic worker; connectivity is client
 #1, control/media/system-monitor follow. **No-silent-failure is
 implemented here:** backend exceptions become per-domain `last_error`
 state rendered by modules; None vs `[]` distinguished in models. Add a
 hibernation hook (stop polling while dismissed) as architecture now,
-implementation later. Pure refactor acceptance: existing connectivity
-tests green.
+implementation later.
+
+**Deviation from the acceptance criterion above, found live while
+building it:** `ConnectivityWorker` does not survive as a thin wrapper
+class around the new `status_worker.StatusWorker`. An early version of
+this refactor kept one — found live it would've been ~8 methods, each
+a 1-line pass-through to the generic worker's own equivalent, nothing
+of its own — the exact same redundancy R2's `input_claim`/old-flag
+duplication turned out to be, caught before landing rather than after
+this time. `ConnectivityWorker` is retired; `main.py` builds a
+`StatusWorker` directly with `"wifi"`/`"bluetooth"` `Domain`s, and
+`modules/connectivity.py` calls its generic API (`get("wifi")`,
+`request_action("wifi", "connect", ssid)`, `is_pending(...)`) instead
+of domain-specific method names. This is NOT a pure refactor the way
+R1/R2 were — `modules/connectivity.py`'s call sites changed, and the
+6 old `ConnectivityWorker` tests were rewritten (not left green
+unchanged) against the new API, same behavioral coverage. Worth it for
+R5/R6: they register their own domains against the same
+`StatusWorker` with zero wrapper boilerplate of their own, rather than
+each needing to decide whether to repeat `ConnectivityWorker`'s
+mistake.
+
+Hibernation hook landed as `pause()`/`resume()` on `StatusWorker` —
+exist and work, but nothing calls them from `main.py`'s dismiss/
+resummon path yet, per "architecture now, implementation later" above.
+
+Action failures (e.g. a `connect()` call raising) are still a bare
+`except Exception: pass` — not yet surfaced via `last_error` the way
+poll failures are. Known, documented gap (see `status_worker.py`'s own
+module docstring for the reasoning), not blocking — revisit if it
+turns out to matter in practice.
 
 ### R4 — Connectivity v2: D-Bus agent pattern
 The hardest, most-unlocking piece — land it late, with infrastructure
@@ -286,10 +315,13 @@ the current docs will be wrong.
 
 ## 5. Phase order
 
-1. **R1** lifecycle (small code, changes UX ground for everything)
-2. **R2** input claim (pure refactor, launcher tests green)
-3. **R3** StatusWorker (pure refactor, connectivity tests green,
-   no-silent-failure lands here)
+1. **R1** lifecycle (small code, changes UX ground for everything) — done
+2. **R2** input claim (pure refactor, launcher tests green) — done
+   (launcher, plus sessions.py's rename field and help_mode's color
+   editor as nearer-term second/third consumers than originally
+   planned; resize_mode deferred, see R2's own section)
+3. **R3** StatusWorker (no-silent-failure lands here) — done (not a
+   pure refactor in the end, see R3's own section for why)
 4. **R5** control + media (fast visible wins, exercise R3 three times)
 5. **R6** system monitor (exercises R3 + fixture discipline)
 6. **R4** connectivity v2 agents (hardest, most infrastructure needed)

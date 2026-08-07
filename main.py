@@ -30,7 +30,7 @@ from tuicc.context import RenderContext
 from tuicc.actions import ActionContext, spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
-from tuicc.connectivity.worker import ConnectivityWorker
+from tuicc.status_worker import StatusWorker, Domain
 from tuicc.layout import ModuleBox
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
@@ -66,7 +66,29 @@ def main(stdscr):
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
-    connectivity = ConnectivityWorker(wifi_backend, bluetooth_backend)
+    connectivity = StatusWorker([
+        Domain(
+            name="wifi",
+            poll=wifi_backend.get_networks,
+            actions={
+                "connect": wifi_backend.connect,
+                # WifiBackend.disconnect() takes no argument (only one
+                # network is ever connected at a time) — the ssid arg
+                # request_action always threads through is unused here,
+                # same as ConnectivityWorker's old wifi_disconnect
+                # dispatch discarded it too.
+                "disconnect": lambda ssid: wifi_backend.disconnect(),
+            },
+        ),
+        Domain(
+            name="bluetooth",
+            poll=bluetooth_backend.get_devices,
+            actions={
+                "connect": bluetooth_backend.connect,
+                "disconnect": bluetooth_backend.disconnect,
+            },
+        ),
+    ])
     connectivity.start()
 
     action_ctx = ActionContext(provider=provider, connectivity=connectivity)
@@ -369,8 +391,10 @@ def main(stdscr):
                 typing_mode=launcher.typing_mode,
                 search_query=launcher.search_query,
                 search_selected_index=launcher.search_selected_index,
-                wifi_networks=connectivity.get_wifi_networks(),
-                bluetooth_devices=connectivity.get_bluetooth_devices(),
+                wifi_networks=connectivity.get("wifi"),
+                bluetooth_devices=connectivity.get("bluetooth"),
+                wifi_error=connectivity.get_error("wifi"),
+                bluetooth_error=connectivity.get_error("bluetooth"),
                 connectivity=connectivity,
                 session_preview=sessions_mode.expanded_preview(),
             )

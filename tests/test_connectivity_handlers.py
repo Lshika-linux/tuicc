@@ -1,5 +1,5 @@
 """Tests for modules/connectivity.py's ACTION_HANDLERS — handle_wifi and
-handle_bluetooth — with a fake ConnectivityWorker so no real D-Bus/
+handle_bluetooth — with a fake StatusWorker so no real D-Bus/
 bluetoothctl I/O is needed.
 """
 
@@ -12,30 +12,23 @@ from tuicc.modules.connectivity import handle_wifi, handle_bluetooth
 
 class _FakeConnectivity:
     def __init__(self, wifi_networks=None, bluetooth_devices=None):
-        self._wifi_networks = wifi_networks or []
-        self._bluetooth_devices = bluetooth_devices or []
+        self._snapshots = {"wifi": wifi_networks or [], "bluetooth": bluetooth_devices or []}
         self.wifi_connect_calls = []
         self.wifi_disconnect_calls = []
         self.bluetooth_connect_calls = []
         self.bluetooth_disconnect_calls = []
 
-    def get_wifi_networks(self):
-        return self._wifi_networks
+    def get(self, domain_name):
+        return self._snapshots[domain_name]
 
-    def get_bluetooth_devices(self):
-        return self._bluetooth_devices
-
-    def request_wifi_connect(self, ssid):
-        self.wifi_connect_calls.append(ssid)
-
-    def request_wifi_disconnect(self, ssid):
-        self.wifi_disconnect_calls.append(ssid)
-
-    def request_bluetooth_connect(self, device_id):
-        self.bluetooth_connect_calls.append(device_id)
-
-    def request_bluetooth_disconnect(self, device_id):
-        self.bluetooth_disconnect_calls.append(device_id)
+    def request_action(self, domain_name, action_name, arg):
+        calls = {
+            ("wifi", "connect"): self.wifi_connect_calls,
+            ("wifi", "disconnect"): self.wifi_disconnect_calls,
+            ("bluetooth", "connect"): self.bluetooth_connect_calls,
+            ("bluetooth", "disconnect"): self.bluetooth_disconnect_calls,
+        }[(domain_name, action_name)]
+        calls.append(arg)
 
 
 # ---------- handle_wifi ----------

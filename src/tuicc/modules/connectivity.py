@@ -1,7 +1,7 @@
 """Connectivity module: wifi networks and bluetooth devices, in two
 sections of one box. Enter connects to the selected item — actual
-connect/disconnect happens on the ConnectivityWorker's background
-thread (ctx.connectivity), never blocking the render loop.
+connect/disconnect happens on the StatusWorker's background thread
+(ctx.connectivity), never blocking the render loop.
 
 ---
 IMPORTANT: draw() and nav_items() must agree on exactly which row
@@ -35,11 +35,11 @@ MAX_WIFI_ROWS = 4
 
 def _build_rows(ctx, box_h):
     """One row per line the box will render, in order. Each row is
-    ("header", label) | ("empty", label) | ("wifi_item", WifiNetwork)
-    | ("bt_item", BluetoothDevice). draw() renders every kind;
-    nav_items() only emits a NavItem for the two *_item kinds — but
-    both walk this exact same list, so their row indices can never
-    drift apart.
+    ("header", label) | ("empty", label) | ("error", message) |
+    ("wifi_item", WifiNetwork) | ("bt_item", BluetoothDevice). draw()
+    renders every kind; nav_items() only emits a NavItem for the two
+    *_item kinds — but both walk this exact same list, so their row
+    indices can never drift apart.
 
     Bluetooth's row budget is reserved first and always shown in
     full — it's usually a short list (a handful of paired devices at
@@ -48,9 +48,18 @@ def _build_rows(ctx, box_h):
     strength) is longer than what fits — so Bluetooth is never pushed
     off-screen by a long wifi scan, and truncation is shown, not
     hidden.
+
+    "error" is distinct from "empty": ctx.wifi_networks/bluetooth_devices
+    being None (StatusWorker's last poll for that domain raised) is not
+    the same as an empty list (nothing found) — see
+    RenderContext.wifi_networks' own docstring. A None with no
+    ctx.wifi_error/bluetooth_error yet (the brief window before the
+    very first poll completes, right after startup) is treated as
+    "empty" rather than "error" — nothing has actually failed yet,
+    there's just nothing to show.
     """
     bt_devices = ctx.bluetooth_devices
-    bt_row_count = len(bt_devices) if bt_devices else 1  # 1 for "(none paired)"
+    bt_row_count = len(bt_devices) if bt_devices else 1  # 1 for "(none paired)"/error
 
     inner_rows = max(box_h - 2, 0)
     reserved_for_bt = 1 + bt_row_count  # header + its rows
@@ -62,7 +71,9 @@ def _build_rows(ctx, box_h):
     rows = [("header", "WiFi")]
 
     wifi_networks = ctx.wifi_networks
-    if not wifi_networks:
+    if wifi_networks is None and ctx.wifi_error:
+        rows.append(("error", ctx.wifi_error))
+    elif not wifi_networks:
         rows.append(("empty", "(none found)"))
     else:
         shown = wifi_networks[:wifi_limit]
@@ -75,7 +86,9 @@ def _build_rows(ctx, box_h):
     rows.append(("spacer", None))
     rows.append(("header", "Bluetooth"))
 
-    if not bt_devices:
+    if bt_devices is None and ctx.bluetooth_error:
+        rows.append(("error", ctx.bluetooth_error))
+    elif not bt_devices:
         rows.append(("empty", "(none paired)"))
     else:
         for device in bt_devices:
@@ -88,7 +101,7 @@ def _pending_blink_style(theme):
     """Blinks between selected and dim twice a second — no per-frame
     state needed, since time.time() is already a shared clock every
     frame reads the same way. Only reached while the main loop is
-    running its fast (50ms) tick, via ConnectivityWorker.has_pending().
+    running its fast (50ms) tick, via StatusWorker.has_pending().
     """
     blink_on = int(time.time() * 2) % 2 == 0
     if blink_on:
@@ -129,6 +142,17 @@ def draw(stdscr, box, ctx, module_name):
             except curses.error:
                 pass
 
+        elif kind == "error":
+            # No-silent-failure (VISION.md, R3): distinct from "empty"
+            # both visually (urgent, same role power_menu's confirm=true
+            # actions and sessions.py's DEL use) and in meaning — the
+            # backend couldn't be reached at all, not "genuinely
+            # nothing there".
+            try:
+                stdscr.addstr(row, x + 2, f"⚠ {payload}"[:max(inner_w, 0)], theme.get("urgent", 0))
+            except curses.error:
+                pass
+
         elif kind == "empty":
             try:
                 stdscr.addstr(row, x + 2, payload, theme.get("text", 0) | curses.A_DIM)
@@ -142,7 +166,7 @@ def draw(stdscr, box, ctx, module_name):
             name_width = max(inner_w - 3 - len(bars), 0)
             name = network.ssid[:name_width].ljust(name_width)
 
-            pending = ctx.connectivity is not None and ctx.connectivity.is_wifi_pending(network.ssid)
+            pending = ctx.connectivity is not None and ctx.connectivity.is_pending("wifi", network.ssid)
             if pending:
                 text_color, attr = _pending_blink_style(theme)
                 dot, dot_color = ("\u25cf" if network.connected else "\u25cb"), (text_color | attr)
@@ -167,7 +191,7 @@ def draw(stdscr, box, ctx, module_name):
             is_selected = f"connectivity:bt:{device.id}" == ctx.selected_id
             battery = f" {device.battery}%" if device.battery is not None else ""
 
-            pending = ctx.connectivity is not None and ctx.connectivity.is_bluetooth_pending(device.id)
+            pending = ctx.connectivity is not None and ctx.connectivity.is_pending("bluetooth", device.id)
             if pending:
                 text_color, attr = _pending_blink_style(theme)
                 dot, dot_color = ("\u25cf" if device.connected else "\u25cb"), (text_color | attr)
@@ -222,12 +246,12 @@ def handle_wifi(ctx, item, cfg):
     confirm silently re-issued a redundant connect instead of
     disconnecting).
     """
-    networks = ctx.connectivity.get_wifi_networks()
+    networks = ctx.connectivity.get("wifi") or []
     network = next((n for n in networks if n.ssid == item.focus_target), None)
     if network is not None and network.connected:
-        ctx.connectivity.request_wifi_disconnect(item.focus_target)
+        ctx.connectivity.request_action("wifi", "disconnect", item.focus_target)
     else:
-        ctx.connectivity.request_wifi_connect(item.focus_target)
+        ctx.connectivity.request_action("wifi", "connect", item.focus_target)
     return False, None
 
 
@@ -237,12 +261,12 @@ def handle_bluetooth(ctx, item, cfg):
     did nothing, since only connect() was ever called regardless of
     current state.
     """
-    devices = ctx.connectivity.get_bluetooth_devices()
+    devices = ctx.connectivity.get("bluetooth") or []
     device = next((d for d in devices if d.id == item.focus_target), None)
     if device is not None and device.connected:
-        ctx.connectivity.request_bluetooth_disconnect(item.focus_target)
+        ctx.connectivity.request_action("bluetooth", "disconnect", item.focus_target)
     else:
-        ctx.connectivity.request_bluetooth_connect(item.focus_target)
+        ctx.connectivity.request_action("bluetooth", "connect", item.focus_target)
     return False, None
 
 

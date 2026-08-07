@@ -22,8 +22,15 @@ class RenderContext:
     typing_mode: bool = False
     search_query: str = ""
     search_selected_index: int = 0
-    wifi_networks: list = field(default_factory=list)
-    bluetooth_devices: list = field(default_factory=list)
+    # None (not just an empty list) is a real value here, not just the
+    # unset default — see status_worker.py's StatusWorker.get() and
+    # modules/connectivity.py's _build_rows: it means the last poll for
+    # that domain errored (or hasn't completed yet), distinct from a
+    # genuinely empty list ("no networks around" vs "couldn't check").
+    wifi_networks: list | None = field(default_factory=list)
+    bluetooth_devices: list | None = field(default_factory=list)
+    wifi_error: str | None = None
+    bluetooth_error: str | None = None
     connectivity: object = None
     selected_item: object = None
     # {target_region: [app_id, ...]} for whichever session slot is
