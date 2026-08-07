@@ -6,7 +6,61 @@ own docstring for this repo's established stance on that).
 
 from types import SimpleNamespace
 
-from tuicc.modules.control import _state_index, _toggle_dot_color, _row_kind, nav_items
+from tuicc.modules.control import (
+    _state_index, _toggle_dot_color, _row_kind, _is_binary, _dot_glyph, _row_suffix, nav_items,
+)
+
+
+# ---------- _is_binary ----------
+
+def test_is_binary_true_for_2_states():
+    assert _is_binary([{"name": "on"}, {"name": "off"}]) is True
+
+
+def test_is_binary_false_for_3_or_more_states():
+    assert _is_binary([{"name": "a"}, {"name": "b"}, {"name": "c"}]) is False
+
+
+# ---------- _dot_glyph ----------
+
+def test_dot_glyph_binary_filled_for_first_declared_state():
+    assert _dot_glyph(is_binary=True, current_name="on", state_index=0) == "●"
+
+
+def test_dot_glyph_binary_outline_for_second_declared_state():
+    assert _dot_glyph(is_binary=True, current_name="off", state_index=1) == "○"
+
+
+def test_dot_glyph_binary_outline_when_state_unknown():
+    assert _dot_glyph(is_binary=True, current_name=None, state_index=None) == "○"
+
+
+def test_dot_glyph_cycle_filled_whenever_a_state_is_known():
+    # N-way cycles keep the old "known vs unknown" rule — color (not
+    # fill) distinguishes which of 3+ states it's actually in.
+    assert _dot_glyph(is_binary=False, current_name="balanced", state_index=1) == "●"
+
+
+def test_dot_glyph_cycle_outline_when_unknown():
+    assert _dot_glyph(is_binary=False, current_name=None, state_index=None) == "○"
+
+
+# ---------- _row_suffix ----------
+
+def test_row_suffix_binary_toggle_has_no_text_suffix():
+    # Found live: the dot alone already says on/off — redundant text
+    # was the whole point of this fix.
+    assert _row_suffix("normal", is_binary=True, current_name="on", error=None) == ""
+    assert _row_suffix("normal", is_binary=True, current_name="off", error=None) == ""
+
+
+def test_row_suffix_cycle_shows_the_state_name():
+    assert _row_suffix("normal", is_binary=False, current_name="balanced", error=None) == " [balanced]"
+
+
+def test_row_suffix_error_kinds_outrank_binary_suppression():
+    assert _row_suffix("action_error", is_binary=True, current_name="on", error=None) == " [ERROR]"
+    assert _row_suffix("poll_error", is_binary=True, current_name=None, error="boom") == " (boom)"
 
 
 # ---------- _row_kind ----------

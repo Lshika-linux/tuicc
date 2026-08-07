@@ -51,6 +51,51 @@ def _toggle_dot_color(ctx, toggle_index: int, state_index: int | None, theme: di
     return ctx.control_colors.get((toggle_index, state_index), theme.get("accent", 0))
 
 
+def _is_binary(states: list[dict]) -> bool:
+    """A plain on/off switch (2 states) can show its state entirely
+    through the dot itself (filled/outline, the _connection_dot
+    convention) — the "[on]"/"[off]" suffix would just repeat
+    information the dot already carries. An N-way cycle (3+ states,
+    e.g. Performance Mode's power-saver/balanced/performance) can't:
+    a single filled dot doesn't distinguish which of 3+ states it is
+    even with a per-state color (found live — the user kept the
+    bracket text for those, only asked to drop it for plain toggles).
+    """
+    return len(states) == 2
+
+
+def _dot_glyph(is_binary: bool, current_name: str | None, state_index: int | None) -> str:
+    """Filled (●) / outline (○) — for a binary toggle this now means
+    the actual state itself, not just "known vs unknown": state_index
+    == 0 (declaration order — the packaged examples all declare their
+    "on" state first) is filled, everything else (including "off" and
+    "current state unknown/errored", state_index is None either way)
+    is outline. An N-way cycle keeps the old "known vs unknown" rule —
+    it has its own per-state color to distinguish which state it's in
+    (see _toggle_dot_color), a plain filled dot can't.
+    """
+    if is_binary:
+        return "●" if state_index == 0 else "○"
+    return "●" if current_name is not None else "○"
+
+
+def _row_suffix(kind: str, is_binary: bool, current_name: str | None, error: str | None) -> str:
+    """The text after the label — "[ERROR]"/"(poll error message)" take
+    priority regardless of shape; otherwise a binary toggle shows
+    nothing (the dot already says it, see _dot_glyph), an N-way cycle
+    shows "[state_name]" (its dot alone can't).
+    """
+    if kind == "action_error":
+        return " [ERROR]"
+    if kind == "poll_error":
+        return f" ({error})"
+    if is_binary:
+        return ""
+    if current_name is not None:
+        return f" [{current_name}]"
+    return ""
+
+
 def _row_kind(current_name: str | None, error: str | None, action_error: str | None, pending: bool) -> str:
     """Which of the four mutually-exclusive ways a toggle's row can
     render, decided once so draw() doesn't repeat this priority logic
@@ -115,6 +160,7 @@ def draw(stdscr, box, ctx, module_name):
         pending = ctx.status is not None and ctx.status.is_pending(f"toggle:{i}", i)
 
         kind = _row_kind(current_name, error, action_error, pending)
+        binary = _is_binary(toggle["states"])
 
         if kind == "pending":
             text_color, attr = _pending_blink_style(theme)
@@ -134,20 +180,13 @@ def draw(stdscr, box, ctx, module_name):
             text_color, attr = theme.get("urgent", 0), 0
         else:
             state_index = _state_index(toggle["states"], current_name)
-            dot = "●" if current_name is not None else "○"
+            dot = _dot_glyph(binary, current_name, state_index)
             dot_color = _toggle_dot_color(ctx, i, state_index, theme)
             text_color = theme.get("selected", 0) if is_selected else theme.get("text", 0)
             attr = curses.A_BOLD if is_selected else 0
 
         label = toggle["label"]
-        if kind == "action_error":
-            suffix = " [ERROR]"
-        elif kind == "poll_error":
-            suffix = f" ({error})"
-        elif current_name is not None:
-            suffix = f" [{current_name}]"
-        else:
-            suffix = ""
+        suffix = _row_suffix(kind, binary, current_name, error)
         rest = f" {label}{suffix}"[:max(inner_w - 1, 0)]
         try:
             stdscr.addstr(row, x + 2, dot, dot_color)

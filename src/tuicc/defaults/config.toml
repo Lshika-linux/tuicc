@@ -251,6 +251,15 @@ shell_true = false
 # values as [theme] above) — omit it to use the module's default dot
 # color for that state.
 #
+# A 2-state toggle shows NO "[state]" text at all — the dot itself is
+# filled for whichever state is declared FIRST, outline for the other,
+# same convention Connectivity's connected/disconnected dot already
+# uses. Declare your "on"/active state first (every example below
+# does) so the filled dot means what you'd expect. A 3+-state cycle
+# keeps the "[state]" text — a plain filled dot can't distinguish
+# which of 3+ states it's in, only per-state color can (see
+# Performance Mode below).
+#
 # All commented out below — none of these run until you uncomment one
 # AND have the underlying tool installed. Several assume genuinely
 # arbitrary tools (tailscale, EasyEffects, ...) that most users won't
@@ -274,14 +283,28 @@ shell_true = false
 # label = "Night Light"
 # shell_true = false
 #
+# -O 4500 is gammastep's "one shot manual mode" — sets a fixed color
+# temperature immediately with no sunset/sunrise calculation, so no
+# location setup (GeoClue2 or -l LAT:LON) is needed at all. It keeps
+# running afterward (pgrep/pkill still work) since Wayland's gamma
+# protocol reverts to normal the moment the client that set it
+# disconnects — unlike X11/RANDR, where the same command still works
+# but the ramp would persist even without the process; harmless either
+# way. Lower = warmer/redder, 6500 = neutral (gammastep's own default).
+# `-f`, not `-x`: verified live, gammastep's own binary sets its
+# internal process name (comm) to ".gammastep-wrap", not "gammastep" —
+# `pgrep -x`/`pkill -x` match against comm exactly and silently never
+# match at all (status stuck "off" forever, off never actually kills
+# it), `-f` matches the full command line instead, which does contain
+# "gammastep" regardless of what comm says.
 #   [[control.toggle.state]]
 #   name = "on"
-#   status_command = "pgrep -x gammastep"
-#   command = "gammastep"
+#   status_command = "pgrep -f gammastep"
+#   command = "gammastep -O 4500"
 #
 #   [[control.toggle.state]]
 #   name = "off"
-#   command = "pkill -x gammastep"
+#   command = "pkill -f gammastep"
 
 # [[control.toggle]]
 # label = "Mic Mute"
