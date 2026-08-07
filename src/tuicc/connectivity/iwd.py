@@ -74,11 +74,18 @@ def _network_name_connected_known(connection, network_path):
 
 class IwdBackend(WifiBackend):
     def get_networks(self) -> list[WifiNetwork]:
-        try:
-            connection = open_dbus_connection(bus="SYSTEM")
-        except Exception:
-            return []
-
+        """No internal try/except Exception here (there used to be one,
+        found live to be exactly the kind of silent failure VISION.md's
+        R3 exists to fix) — a D-Bus failure (iwd not running, SYSTEM
+        bus unreachable, ...) propagates naturally, so
+        status_worker.StatusWorker's poll wrapper can actually catch it
+        and record last_error instead of it vanishing into a bare `[]`
+        indistinguishable from "no networks around". Only resource
+        cleanup (closing the connection) needs its own try/finally —
+        it must run whether get_networks succeeds, raises, or returns
+        early.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
         try:
             station_path = _find_station_path(connection)
             if station_path is None:
@@ -99,17 +106,17 @@ class IwdBackend(WifiBackend):
                     signal=_signal_to_percent(centi_dbm),
                 ))
             return networks
-        except Exception:
-            return []
         finally:
             connection.close()
 
     def connect(self, ssid: str) -> None:
-        try:
-            connection = open_dbus_connection(bus="SYSTEM")
-        except Exception:
-            return
-
+        # Not yet surfaced to the user even after this fix — actions
+        # dispatched through StatusWorker still swallow exceptions
+        # (see its own module docstring for why that's a separate,
+        # documented gap) — but letting the real exception reach that
+        # point instead of dying here means that fix, when it lands,
+        # has a real exception to work with.
+        connection = open_dbus_connection(bus="SYSTEM")
         try:
             station_path = _find_station_path(connection)
             if station_path is None:
@@ -122,22 +129,14 @@ class IwdBackend(WifiBackend):
                 if name == ssid:
                     _call(connection, network_path, "net.connman.iwd.Network", "Connect")
                     break
-        except Exception:
-            pass
         finally:
             connection.close()
 
     def disconnect(self) -> None:
-        try:
-            connection = open_dbus_connection(bus="SYSTEM")
-        except Exception:
-            return
-
+        connection = open_dbus_connection(bus="SYSTEM")
         try:
             station_path = _find_station_path(connection)
             if station_path:
                 _call(connection, station_path, "net.connman.iwd.Station", "Disconnect")
-        except Exception:
-            pass
         finally:
             connection.close()

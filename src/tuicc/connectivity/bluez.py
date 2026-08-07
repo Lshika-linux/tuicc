@@ -10,11 +10,17 @@ from tuicc.connectivity.model import BluetoothDevice
 from tuicc.connectivity.util import strip_ansi
 
 def _run(cmd, timeout=5):
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return strip_ansi(result.stdout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
+    """No internal try/except here (there used to be one, silently
+    returning "" on TimeoutExpired/FileNotFoundError/OSError — found
+    live to be exactly the kind of failure VISION.md's R3 exists to
+    fix). Letting bluetoothctl actually being missing, hanging, or
+    erroring propagate naturally means status_worker.StatusWorker's
+    poll wrapper (get_devices() below doesn't catch anything itself
+    either) can record a real last_error instead of it silently
+    looking identical to "no bluetooth devices paired".
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return strip_ansi(result.stdout)
 
 
 def parse_paired_devices_output(text):

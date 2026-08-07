@@ -5,8 +5,13 @@ I/O itself. bluez still parses bluetoothctl's CLI text, so those tests
 remain fixture-based like before.
 """
 
-from tuicc.connectivity.iwd import find_station_path_in_objects, _signal_to_percent
-from tuicc.connectivity.bluez import parse_paired_devices_output, parse_info_output
+import subprocess
+
+import pytest
+
+import tuicc.connectivity.iwd as iwd_module
+from tuicc.connectivity.iwd import IwdBackend, find_station_path_in_objects, _signal_to_percent
+from tuicc.connectivity.bluez import _run, parse_paired_devices_output, parse_info_output
 
 
 # ---------- iwd: find_station_path_in_objects ----------
@@ -117,3 +122,40 @@ def test_parse_info_empty_output_defaults_safely():
 
     assert info["connected"] is False
     assert info["battery"] is None
+
+
+# ---------- no-silent-failure: real exceptions must propagate ----------
+# VISION.md's R3: found live that both backends had their OWN internal
+# except-and-hide-behind-[] before status_worker.StatusWorker's poll
+# wrapper ever got a chance to see a failure, making its last_error
+# mechanism unreachable for these two domains specifically. These
+# guard against that creeping back in.
+
+def test_iwd_get_networks_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        IwdBackend().get_networks()
+
+
+def test_bluez_run_propagates_missing_binary(monkeypatch):
+    def _raise(*args, **kwargs):
+        raise FileNotFoundError("bluetoothctl not found")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+
+    with pytest.raises(FileNotFoundError):
+        _run(["bluetoothctl", "devices", "Paired"])
+
+
+def test_bluez_run_propagates_timeout(monkeypatch):
+    def _raise(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="bluetoothctl", timeout=5)
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run(["bluetoothctl", "devices", "Paired"])
