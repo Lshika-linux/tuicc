@@ -5,19 +5,21 @@ Minimal UI design, maximal control over everyday tasks.
 Built on a core that communicates with the WM (see lower, or wiki..), with everything else as **swappable modules**.
 
 You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
-    - your workspaces and what's in them (sidebar.py);
-    - a live overview of what's on screen (preview.py);
-    - an integrated app launcher (launcher.py);
-    - which wifi/BT devices are connected (connectivity.py);
-    - a way to save and restore open windows across workspaces (sessions.py);
-    - a power menu (power_menu.py).
+- your workspaces and what's in them (sidebar.py);
+- a live overview of what's on screen (preview.py);
+- an integrated app launcher (launcher.py);
+- which wifi/BT devices are connected (connectivity.py);
+- a way to save and restore open windows across workspaces (sessions.py);
+- a power menu (power_menu.py).
 
 Missing something? 
-    See wiki, write a module!
+- See wiki, write a module!
+
 Don´t like some of the modules above? 
-    Shit man, I'm not here to dictate your modules, make them go away or move them around in the resize tool.
+- Shit man, I'm not here to dictate your modules, make them go away or move them around in the resize tool.
+
 Don´t like that it´s fullscreen? 
-    ok, that's a little more complicated, but you absolutely can run it not-fullscreen.. I recommend leaving it floating          tho, otherwise preview.py has a bad bad time. (We need to hide tuicc from the preview, and if tuicc is tiled, there's an        obvious blank spot in the workspace)
+- ok, that's a little more complicated, but you absolutely can run it not-fullscreen.. I recommend leaving it floating tho, otherwise preview.py has a bad bad time. (We need to hide tuicc from the preview, and if tuicc is tiled, there's an obvious blank spot in the workspace)
 
 
 This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
