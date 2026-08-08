@@ -10,11 +10,12 @@ left untested here, same as every other module.
 from types import SimpleNamespace
 
 import tuicc.modules.media as media_module
+from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.media.model import Player
 from tuicc.audio.model import AudioSink
 from tuicc.modules.media import (
     _player_label, _body_label, _source_label, marquee_text, has_scrolling_content,
-    _build_rows, nav_items, handle_row, is_expanded, collapse,
+    _build_rows, nav_items, handle_row, is_expanded, collapse, _cava_row_level,
 )
 
 
@@ -198,7 +199,7 @@ class _FakeStatus:
 
 
 def _ctx(**status_kwargs):
-    return SimpleNamespace(status=_FakeStatus(**status_kwargs), theme={}, selected_id=None)
+    return SimpleNamespace(status=_FakeStatus(**status_kwargs), theme={}, selected_id=None, cava=None)
 
 
 def _kinds(rows):
@@ -247,6 +248,80 @@ def test_output_rows_include_every_sink():
     assert [s.name for s in output_rows] == ["Speakers", "Headphones"]
 
 
+# ---------- cava visualizer section ----------
+# The visualizer itself draws INLINE within "output_item" rows (see
+# draw()'s own output_item handling) — _build_rows() only ever adds a
+# row for it in the one case there's nowhere inline to put a warning:
+# a real cava error, with no output_item rows for it to attach to.
+
+class _FakeCava:
+    def __init__(self, error=None):
+        self._error = error
+
+    def get_error(self):
+        return self._error
+
+
+def test_no_extra_row_when_ctx_cava_is_none():
+    _reset_module_state()
+    rows = _build_rows(_ctx(snapshots={}), box_h=20)
+    assert "cava_top" not in _kinds(rows)
+    assert not any(kind == "error" and "cava" in str(payload).lower() for kind, payload in rows)
+
+
+def test_no_extra_row_when_cava_present_and_no_error():
+    _reset_module_state()
+    ctx = _ctx(snapshots={})
+    ctx.cava = _FakeCava(error=None)
+    rows = _build_rows(ctx, box_h=20)
+    # No dedicated visualizer rows at all — it draws inline within
+    # whatever "output_item" rows the Output section already produced.
+    assert _kinds(rows) == ["header", "empty", "spacer", "header", "empty"]
+
+
+def test_cava_error_gets_its_own_row():
+    _reset_module_state()
+    ctx = _ctx(snapshots={})
+    ctx.cava = _FakeCava(error="cava not found on PATH — install it to enable the visualizer")
+    rows = _build_rows(ctx, box_h=20)
+    assert ("error", "cava not found on PATH — install it to enable the visualizer") in rows
+
+
+# ---------- _cava_row_level ----------
+
+def test_cava_row_level_bottommost_row_gets_low_bits():
+    # 2 rows, raw_height near the max — bottommost row (row_idx=1, the
+    # LAST/lowest) should be fully lit (level 8) once the bar climbs
+    # past its own 0..8 slice, same as the old cava_bottom's behavior.
+    assert _cava_row_level(raw_height=ASCII_MAX_RANGE, row_idx=1, num_rows=2) == 8
+
+
+def test_cava_row_level_topmost_row_only_lights_once_bar_is_tall_enough():
+    # A short bar (well under half of ASCII_MAX_RANGE) shouldn't light
+    # the TOP row of a 2-row visualizer at all yet.
+    assert _cava_row_level(raw_height=1, row_idx=0, num_rows=2) == 0
+
+
+def test_cava_row_level_zero_height_is_zero_everywhere():
+    assert _cava_row_level(raw_height=0, row_idx=0, num_rows=3) == 0
+    assert _cava_row_level(raw_height=0, row_idx=2, num_rows=3) == 0
+
+
+def test_cava_row_level_scales_to_however_many_rows_are_available():
+    # Same raw_height, more rows available -> proportionally lower
+    # per-row level (the bar's total height in "levels" scales UP with
+    # more rows, so any single row's own slice reads lower for the
+    # same raw signal) — found live design intent: a visualizer next to
+    # 4 sinks should look meaningfully taller/finer than next to 1.
+    one_row = _cava_row_level(raw_height=ASCII_MAX_RANGE // 2, row_idx=0, num_rows=1)
+    four_rows = _cava_row_level(raw_height=ASCII_MAX_RANGE // 2, row_idx=0, num_rows=4)
+    assert one_row >= four_rows
+
+
+def test_cava_row_level_num_rows_zero_is_zero_not_a_crash():
+    assert _cava_row_level(raw_height=100, row_idx=0, num_rows=0) == 0
+
+
 def test_reconcile_clears_expanded_state_when_player_vanishes():
     # Found live design concern: without this, is_expanded() would keep
     # reporting True forever for a player that quit while expanded.
@@ -268,7 +343,7 @@ def test_reconcile_leaves_expanded_state_when_player_still_present():
 def _fake_ctx_for_nav(players=None, sinks=None):
     return SimpleNamespace(
         status=_FakeStatus(snapshots={"media": players, "audio": sinks}),
-        theme={}, selected_id=None,
+        theme={}, selected_id=None, cava=None,
     )
 
 

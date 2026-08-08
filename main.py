@@ -32,6 +32,7 @@ from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
 from tuicc.audio.registry import build_audio_backend
 from tuicc.media.mpris import MprisBackend
+from tuicc.media.cava import CavaReader
 from tuicc.status_worker import StatusWorker, Domain
 from tuicc import control
 from tuicc.layout import ModuleBox
@@ -161,6 +162,17 @@ def main(stdscr):
         ))
     status_worker = StatusWorker(domains)
     status_worker.start()
+
+    # NOT a Domain — cava is a continuous stream, not a periodic
+    # poll-and-snapshot, so it isn't wired through StatusWorker at all
+    # (see cava.py's own module docstring). Constructed here but not
+    # started yet: main.py's own loop below starts/stops it lazily
+    # based on whether anything is actually playing, not unconditionally
+    # for tuicc's whole lifetime — a continuous audio capture + FFT
+    # process running even while nothing plays (or tuicc is dismissed)
+    # would be work with no payoff, not a meaningful resource problem in
+    # isolation (cava itself is lightweight) but free to avoid regardless.
+    cava_reader = CavaReader()  # bars defaults to 8 — see cava.py's own docstring
 
     action_ctx = ActionContext(provider=provider, status=status_worker)
 
@@ -375,9 +387,27 @@ def main(stdscr):
             # got REDRAWN once a second, turning a smooth 1-character
             # slide into a visible ~3-character jump. Found live.
             marquee_active = media_mode.has_scrolling_content(status_worker.get("media"))
+
+            # Lazy cava lifecycle: only run the visualizer subprocess
+            # while it could actually show something AND the current
+            # preset even has a media box to show it in — a preset
+            # without "media" in its layout still has the media Domain
+            # polling (every Domain is unconditional, see main.py's own
+            # domain construction above), so gating on media_module_present
+            # too avoids spinning up an audio-capture process for a
+            # visualizer nothing on screen would ever render.
+            media_module_present = any(b.name == "media" for b in cfg.layout.boxes)
+            media_players = status_worker.get("media") or []
+            any_playing = any(p.playback_status == "Playing" for p in media_players)
+            if media_module_present and any_playing:
+                cava_reader.start()
+            else:
+                cava_reader.stop()
+
             stdscr.timeout(
                 50 if (moves.entries or action_ctx.restore_queue or status_worker.has_pending()
                        or resize_message is not None)
+                else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
                 else 1000
             )
@@ -497,6 +527,7 @@ def main(stdscr):
                 status=status_worker,
                 session_preview=sessions_mode.expanded_preview(),
                 control_colors=control_colors,
+                cava=cava_reader,
             )
 
             items = collect_nav_items(cfg.layout, boxes, ctx)
@@ -945,6 +976,7 @@ def main(stdscr):
                 provider.dismiss_self()
     finally:
         status_worker.stop()
+        cava_reader.stop()
 
 
 if __name__ == "__main__":

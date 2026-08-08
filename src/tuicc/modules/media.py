@@ -34,10 +34,64 @@ import curses
 import time
 from urllib.parse import urlparse
 
+from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
 
 MARQUEE_STEP_SECONDS = 0.3
+
+# Redraw cadence while the cava visualizer is actively streaming —
+# matched to cava.conf's own `framerate = 30` (see cava.py), not just
+# "faster than the marquee tier": found live, redrawing slower than
+# cava actually PRODUCES new frames (the original 0.1s/10fps here vs.
+# cava's 30fps) meant only every 3rd frame ever got drawn, reading as
+# visibly choppy even though the reader thread itself was keeping up
+# fine — the bottleneck was the redraw cadence, not the data. Same
+# order of magnitude as the existing 50ms "urgent" tier already proven
+# fine in this exact loop (spawn/move resolution), so the extra redraw
+# frequency isn't a new category of risk.
+CAVA_REDRAW_SECONDS = 1 / 30
+
+# Index 0 = blank (level 0), index 8 = full block (level 8) — 9 entries
+# for one physical row's own 0..8 slice of a bar (see _cava_row_level()
+# below). _CAVA_BLOCKS[1] (the thinnest non-blank glyph) doubles as the
+# idle-state flatline character.
+_CAVA_BLOCKS = " ▁▂▃▄▅▆▇█"
+
+# Drawn inline to the right of the Output section's own rows, not as
+# separate rows below it — found live, asked for after the first cut
+# (2 fixed full-width rows under everything) didn't read as
+# intentional: the goal was filling the same empty space to the right
+# of Output's sink names that "<< ▶ >>" already fills to the right of
+# Now Playing's rows, at Output's own height (however many sinks that
+# is), not a separate decorative block. CAVA_VIS_WIDTH matches
+# CavaReader's own default bar count 1:1 (see cava.py) — no
+# clip/pad mismatch by construction. 24, not the original 8 — found
+# live, asked to stretch it out further, closer to the sink name text
+# rather than staying a narrow strip.
+CAVA_VIS_WIDTH = 24
+CAVA_RIGHT_GAP = 1  # same "don't render flush against the border" margin Now Playing's controls use
+
+
+def _cava_row_level(raw_height: int, row_idx: int, num_rows: int) -> int:
+    """One bar's height (0..ASCII_MAX_RANGE, cava's own fixed range) as
+    seen from just ONE physical output row's point of view. The
+    visualizer's total height is dynamic — one row per currently-
+    connected audio sink, not a fixed count — so this scales cava's
+    fixed range down to whatever 0..(num_rows*8) resolution is actually
+    available this frame, then returns just this row's own 0..8 slice.
+    row_idx=0 is the TOPMOST row (the highest portion of the bar);
+    row_idx=num_rows-1 is the BOTTOMMOST (where a bar visually starts
+    growing from). Pure function — testable without curses or a real
+    cava frame, same reasoning marquee_text() gets an explicit `now`.
+    """
+    if num_rows <= 0:
+        return 0
+    total_levels = num_rows * 8
+    scaled = raw_height * total_levels // ASCII_MAX_RANGE
+    scaled = max(0, min(scaled, total_levels))
+    row_base = (num_rows - 1 - row_idx) * 8
+    return max(0, min(scaled - row_base, 8))
 
 _expanded_bus_name = None  # str | None — which player's actions are showing, if any
 
@@ -222,6 +276,18 @@ def _build_rows(ctx, box_h):
         for sink in sinks:
             rows.append(("output_item", sink))
 
+    # No separate rows for the cava visualizer — it's drawn INLINE to
+    # the right of the "output_item" rows just added above (see draw()'s
+    # own output_item handling), not as its own section. The one
+    # exception: a real cava error (missing binary, crashed process —
+    # see cava.py's get_error() docstring) gets its own row, since
+    # there's no "output_item" row space to attach a warning to once
+    # rendering has already skipped drawing any bars.
+    if ctx.cava is not None:
+        cava_error = ctx.cava.get_error()
+        if cava_error:
+            rows.append(("error", cava_error))
+
     return rows
 
 
@@ -235,6 +301,19 @@ def draw(stdscr, box, ctx, module_name):
 
     inner_w = max(w - 4, 0)
     now = time.time()
+
+    # Cava state, computed once per draw() call (not per-row) — every
+    # output_item row below reads from these same values, and
+    # num_output_rows in particular has to be known BEFORE any
+    # output_item row draws, since row_idx=0 is the topmost row and
+    # _cava_row_level() needs the total row count to know which 0..8
+    # slice of each bar this particular row is responsible for.
+    sinks_for_cava = ctx.status.get("audio") if ctx.status is not None else None
+    num_output_rows = len(sinks_for_cava) if sinks_for_cava else 0
+    cava_running = ctx.cava is not None and ctx.cava.is_running()
+    cava_frame = ctx.cava.get_frame() if cava_running else None
+    output_row_index = 0  # incremented once per output_item row drawn below
+
     for i, (kind, payload) in enumerate(_build_rows(ctx, h)):
         row = y + 1 + i
         if row >= y + h - 1:
@@ -381,12 +460,55 @@ def draw(stdscr, box, ctx, module_name):
                 dot_color = theme.get("accent", 0) if sink.is_default else theme.get("text", 0)
                 text_color = theme.get("selected", 0) if is_selected else theme.get("text", 0)
                 attr = curses.A_BOLD if is_selected else 0
-            rest = f" {sink.name}"[:max(inner_w - 1, 0)]
+
+            # Reserve CAVA_VIS_WIDTH (+ its right-edge gap) out of the
+            # sink name's own available width whenever a visualizer will
+            # actually be drawn on this row — same "compute the reserved
+            # width before laying out the text" order the Now Playing
+            # rows already use for their own transport-glyph cluster.
+            has_cava = ctx.cava is not None and num_output_rows > 0
+            reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if has_cava else 0
+            rest = f" {sink.name}"[:max(inner_w - 1 - reserved_w, 0)]
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, rest, text_color | attr)
             except curses.error:
                 pass
+
+            if has_cava:
+                vis_x = x + w - 1 - CAVA_RIGHT_GAP - CAVA_VIS_WIDTH
+                if cava_frame is None:
+                    # Idle (nothing playing, cava not started) or just-
+                    # started (no frame parsed yet) — a flat baseline
+                    # only on the BOTTOMMOST output row, same "signals a
+                    # visualizer lives here without a jarring pop"
+                    # reasoning as the row_idx math below, applied to
+                    # just the one row a single flat line reads best on.
+                    # Plain "text" color, NOT also A_DIM — found live,
+                    # asked for after the original dim+thinnest-glyph
+                    # combination turned out too subtle to actually see
+                    # against a real theme; the glyph's own short 1/8
+                    # height already reads as "quiet", it doesn't need
+                    # the color dimmed on top to communicate "idle".
+                    if output_row_index == num_output_rows - 1:
+                        try:
+                            stdscr.addstr(row, vis_x, _CAVA_BLOCKS[1] * CAVA_VIS_WIDTH, theme.get("text", 0))
+                        except curses.error:
+                            pass
+                else:
+                    chars = [
+                        _CAVA_BLOCKS[_cava_row_level(raw_height, output_row_index, num_output_rows)]
+                        for raw_height in cava_frame[:CAVA_VIS_WIDTH]
+                    ]
+                    # theme's "text" color (plain), not "accent" — found
+                    # live, asked for after the accent color read as too
+                    # visually loud for a passive decoration next to the
+                    # Output list's own quieter dot/name styling.
+                    try:
+                        stdscr.addstr(row, vis_x, "".join(chars), theme.get("text", 0))
+                    except curses.error:
+                        pass
+                output_row_index += 1
 
 
 def nav_items(box, ctx, module_name) -> list[NavItem]:

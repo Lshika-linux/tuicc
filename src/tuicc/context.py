@@ -60,3 +60,12 @@ class RenderContext:
     # default for it, same "look it up, fall back if missing" pattern
     # _connection_dot already uses.
     control_colors: dict = field(default_factory=dict)
+    # The shared media.cava.CavaReader instance (or None if the current
+    # preset has no media module at all) — same "expose the live worker
+    # object itself, not a snapshot" convention `status` above uses;
+    # modules/media.py calls .get_frame()/.get_error()/.is_running()
+    # directly. Genuinely optional, unlike `status`: a CavaReader only
+    # exists because the media module specifically needs one, whereas
+    # StatusWorker is wired up unconditionally in main.py regardless of
+    # which modules a preset actually uses.
+    cava: object = None
