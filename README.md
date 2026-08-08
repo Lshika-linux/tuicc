@@ -50,7 +50,7 @@ He's overselling. This is not a corporate project vision presentation. This is m
 
 Tuicc is maintained by me alone. Currently testing sway/i3 daily driving. Once I make it not annoying to use, that will be v0.1.0, realistically most likely around September 2026.
 
-But you could/should absolutely try it out now! 
+But you could/should absolutely try it out now! (SWAY is stable, I3 is still broken-ish :c )
 Right now it can:
 
 - Read live window/workspace state from **sway** and **i3** via the `sway.py` and `i3.py` providers (expandable to any WM, I hope!), including floating windows alongside tiled ones
