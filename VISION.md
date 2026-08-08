@@ -454,19 +454,23 @@ Two modules:
   real `⚠` row, distinct from "genuinely nothing playing"/"no sinks
   found".
 
-**Follow-on, not yet built:** a 2-row CAVA-style frequency bar
-visualizer in the media module, discussed with the user after Phase
-5 landed. Confirmed live feasible: `cava -p <config>` with `[output]
-method = raw`, `data_format = ascii` streams one semicolon-delimited
-line of bar-height integers per frame straight to stdout — genuinely
-different shape from every other backend in this codebase so far
-(continuous streaming subprocess + background reader thread, not a
-periodic poll-and-snapshot), closer to `StatusWorker`'s own
-thread-per-worker pattern than to a `Domain`'s poll() model. Decided:
-mono signal, 2 terminal rows used purely for finer vertical resolution
-per bar column via Unicode block characters (▁▂▃▄▅▆▇█, up to ~16
-levels stacked across 2 rows) — not stereo left/right. Explicitly
-scoped as a later, separate pass, not folded into Phase 4/5.
+**Follow-on, done:** a CAVA-style frequency bar visualizer, built as a
+separate pass after Phase 4/5 landed, per the plan above (mono signal,
+`cava -p <config>` with `[output] method = raw`, `data_format = ascii`,
+`CavaReader` — background reader thread, not a `Domain`, see
+`media/cava.py`'s own module docstring). One design point changed from
+the original plan during live testing: it landed drawn INLINE to the
+right of the Output section's own rows (height = one row per currently-
+connected sink, dynamic, via `_cava_row_level()`) rather than as 2
+fixed rows below everything — the fixed-rows cut didn't read as
+intentional once seen live, the inline placement mirrors how
+`"<< ▶ >>"` already fills the empty space to the right of Now Playing's
+own rows. Also found live: redraw cadence has to be matched to cava's
+own `framerate` (30, in the generated config) or the UI only shows
+every Nth frame cava actually produces, reading as choppy even though
+the reader thread itself keeps up fine; and a flat idle-state baseline
+needs plain color, not also dimmed — the thinnest block glyph (▁) with
+`A_DIM` on top turned out too subtle to see against a real theme.
 
 Both feed off StatusWorker (polling, action queue, pending blink).
 
@@ -501,9 +505,8 @@ the current docs will be wrong.
 3. **R3** StatusWorker (no-silent-failure lands here) — done (not a
    pure refactor in the end, see R3's own section for why)
 4. **R5** control + media (fast visible wins, exercise R3 three times)
-   — done (control's volume/brightness sliders excepted, see R5's own
-   section; a CAVA-style visualizer follow-on also identified, not
-   built)
+   — done, including the CAVA-style visualizer follow-on (control's
+   volume/brightness sliders still excepted, see R5's own section)
 5. **R6** system monitor (exercises R3 + fixture discipline)
 6. **R4** connectivity v2 agents (hardest, most infrastructure needed)
 7. **R7** default preset + docs
