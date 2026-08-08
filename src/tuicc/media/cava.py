@@ -79,17 +79,27 @@ class CavaReader:
         self._thread = None
         self._lock = threading.Lock()
         self._frame = None  # list[int] | None — latest parsed bar heights, 0..ASCII_MAX_RANGE each
-        self._error = None  # str | None
+        self._error = None  # str | None — a REAL failure only, see get_error()'s own docstring
+        # Set once, permanently, the first time start() finds cava
+        # missing — NOT the same thing as _error (see start()'s own
+        # comment on the FileNotFoundError branch for why a missing
+        # binary specifically does NOT count as an "error" here).
+        # Remembered so main.py's every-frame-something's-playing
+        # start() calls don't keep re-attempting a spawn that's going
+        # to fail identically every single time, for as long as
+        # anything plays — cheap insurance, not a correctness issue.
+        self._binary_missing = False
 
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
     def start(self):
-        """No-op if already running — main.py calls this every frame
-        something's playing rather than tracking "did I already start
+        """No-op if already running, or if a previous attempt already
+        found the binary missing — main.py calls this every frame
+        something's playing rather than tracking "did I already try
         this" itself, same convenience stop() gives below.
         """
-        if self.is_running():
+        if self.is_running() or self._binary_missing:
             return
         self._write_config()
         with self._lock:
@@ -101,12 +111,15 @@ class CavaReader:
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
         except FileNotFoundError:
-            # cava genuinely not installed — an expected, real condition
-            # (it's an optional extra, not a hard dependency), surfaced
-            # the same way every other backend surfaces a real failure:
-            # get_error(), not an exception main.py has to guard against.
-            with self._lock:
-                self._error = "cava not found on PATH — install it to enable the visualizer"
+            # cava genuinely not installed — deliberately NOT the same
+            # treatment as a real failure elsewhere in this codebase.
+            # Explicit user decision: this is an optional cosmetic extra
+            # with zero functional impact when absent (unlike wifi/
+            # bluetooth/audio actually not working), so it doesn't
+            # belong in get_error()/rendered as a warning — the media
+            # module just stays in its normal idle/flatline state
+            # forever, the same as if nothing were ever playing.
+            self._binary_missing = True
             self._process = None
             return
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
@@ -140,10 +153,13 @@ class CavaReader:
             return self._frame
 
     def get_error(self):
-        """Set if cava failed to start or exited unexpectedly while
-        running — surfaced by modules/media.py as a real error row, same
+        """Set if cava crashed or exited unexpectedly WHILE running —
+        surfaced by modules/media.py as a real error row, same
         no-silent-failure treatment as every other backend, not a blank
-        or frozen visualizer with no explanation.
+        or frozen visualizer with no explanation. Deliberately NOT set
+        just because the binary is missing (see start()'s own comment)
+        — that specific case has zero functional impact and doesn't
+        warrant interrupting anyone, unlike an actual runtime failure.
         """
         with self._lock:
             return self._error

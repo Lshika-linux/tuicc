@@ -377,5 +377,21 @@ case "$WRITE_ANSWER" in
         ;;
 esac
 
+# --- 10. Optional extras — printed only, never installed --------------
+#
+# Deliberately just a printed note, not a package-manager detect+run
+# step like the WM config block above: unlike that block (tuicc is
+# broken without a keybind to summon it), cava is a fully optional
+# cosmetic extra the media module already degrades around gracefully
+# when it's missing — no ⚠ warning, no broken feature, just no
+# visualizer bars. A cross-distro apt/pacman/dnf/zypper/apk detect step
+# is real, ongoing maintenance for something with this little payoff.
+
+echo
+if ! command -v cava >/dev/null 2>&1; then
+    note "Optional: install 'cava' (your distro's package manager) for the"
+    note "media module's audio visualizer — tuicc works fully without it."
+fi
+
 echo
 bold "Done. Press $KEYBIND (after reloading, if you pasted it by hand) to summon tuicc."

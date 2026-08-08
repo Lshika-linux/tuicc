@@ -279,10 +279,11 @@ def _build_rows(ctx, box_h):
     # No separate rows for the cava visualizer — it's drawn INLINE to
     # the right of the "output_item" rows just added above (see draw()'s
     # own output_item handling), not as its own section. The one
-    # exception: a real cava error (missing binary, crashed process —
-    # see cava.py's get_error() docstring) gets its own row, since
-    # there's no "output_item" row space to attach a warning to once
-    # rendering has already skipped drawing any bars.
+    # exception: get_error() (a real crash/unexpected exit WHILE
+    # running — deliberately NOT a missing binary, see its own
+    # docstring in cava.py) gets its own row, since there's no
+    # "output_item" row space to attach a warning to once rendering has
+    # already skipped drawing any bars.
     if ctx.cava is not None:
         cava_error = ctx.cava.get_error()
         if cava_error:

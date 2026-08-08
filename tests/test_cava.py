@@ -36,7 +36,7 @@ def test_parse_cava_line_ignores_trailing_delimiter():
 
 # ---------- CavaReader.start() — missing binary ----------
 
-def test_start_missing_binary_sets_error_not_exception(monkeypatch, tmp_path):
+def test_start_missing_binary_does_not_raise(monkeypatch, tmp_path):
     monkeypatch.setattr(cava_module, "CONFIG_PATH", tmp_path / "cava.conf")
 
     def _raise(*args, **kwargs):
@@ -48,9 +48,21 @@ def test_start_missing_binary_sets_error_not_exception(monkeypatch, tmp_path):
     reader.start()  # must not raise — cava missing is a real, expected condition
 
     assert reader.is_running() is False
-    assert reader.get_error() is not None
-    assert "cava" in reader.get_error().lower()
     assert reader.get_frame() is None
+
+
+def test_start_missing_binary_does_not_set_get_error(monkeypatch, tmp_path):
+    # Deliberate, explicit product decision: a missing OPTIONAL
+    # cosmetic extra has zero functional impact and shouldn't surface
+    # as a warning the way a real backend outage does — see
+    # get_error()'s own docstring.
+    monkeypatch.setattr(cava_module, "CONFIG_PATH", tmp_path / "cava.conf")
+    monkeypatch.setattr(cava_module.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+
+    reader = CavaReader()
+    reader.start()
+
+    assert reader.get_error() is None
 
 
 def test_start_missing_binary_does_not_spawn_thread(monkeypatch, tmp_path):
@@ -61,6 +73,23 @@ def test_start_missing_binary_does_not_spawn_thread(monkeypatch, tmp_path):
     reader.start()
 
     assert reader._thread is None
+
+
+def test_start_missing_binary_does_not_retry_on_next_call(monkeypatch, tmp_path):
+    monkeypatch.setattr(cava_module, "CONFIG_PATH", tmp_path / "cava.conf")
+    calls = []
+
+    def _raise(*args, **kwargs):
+        calls.append(1)
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(cava_module.subprocess, "Popen", _raise)
+
+    reader = CavaReader()
+    reader.start()  # main.py calls start() every frame something's playing —
+    reader.start()  # a 2nd call must not re-attempt the doomed Popen.
+
+    assert calls == [1]
 
 
 # ---------- CavaReader.stop() — no-op when never started ----------
