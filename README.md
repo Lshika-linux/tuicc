@@ -10,6 +10,10 @@ You summon tuicc with a key-combo, and you get modules to see and control the sy
 - an integrated app launcher (launcher.py);
 - which wifi/BT devices are connected (connectivity.py);
 - a way to save and restore open windows across workspaces (sessions.py);
+- system toggles — night light, power profiles, DND, whatever on/off-style
+  shell commands your setup uses (control.py);
+- now-playing + transport controls for whatever's running over MPRIS, output
+  switching, and an optional live audio visualizer (media.py);
 - a power menu (power_menu.py).
 
 Missing something? 
@@ -55,6 +59,8 @@ Right now it can:
 - Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, dismissing tuicc
 - Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
 - Show wifi and bluetooth status (known networks only — connecting to a new network needs a passphrase flow that isn't built yet) and toggle connections
+- System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
+- See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
 - A power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
 - Global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
 - Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
@@ -63,10 +69,9 @@ Right now it can:
 Not yet built:
 
 - scrollable-WM support (`scroll`/niri, see "Writing your own WM provider" below, most likely not in V0.1.0 tho :c unless someone would want to help);
--  a `quick_actions` module exists in the code but isn't wired into the default layout yet (reserved for something more open-ended later).
-- Media control
-- System info module
-- System toggle module (like power profiles, nightlight, that sort of on/off thing)
+- a `quick_actions` module exists in the code but isn't wired into the default layout yet (reserved for something more open-ended later).
+- System info/process monitor module (CPU/RAM per window, kill a runaway process from the list)
+- Volume/brightness sliders in the control module (the toggle/cycle side is done — a slider is a different interaction shape, still pending)
 
 ## Try it 
 
@@ -119,7 +124,7 @@ Quick navigation cheat sheet: Tab/Shift+Tab (or arrows) move between
 items, rolling into the next/previous module at either end; Left/Right
 jump straight to a module's first item; Enter runs the selected thing
 and dismisses tuicc (hides it, keeps it running) except for the
-launcher, connectivity, and sessions modules, which stay open; Escape
+launcher, connectivity, sessions, control, and media modules, which stay open; Escape
 does the same dismiss at the top level; typing anywhere opens the
 launcher. Full details, every key, and how it all actually decides
 where to go: [Keybindings](https://github.com/Lshika-linux/tuicc/wiki/Keybindings)
@@ -155,6 +160,30 @@ and the rest — is documented field-by-field in the wiki's
 [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference),
 including the reasoning behind choices like why `power_menu` and
 `quick_actions` take identical fields but stay in separate namespaces.
+
+### Optional external tools
+
+None of these are Python dependencies (`requirements.txt` doesn't
+change) — they're system binaries a couple of modules shell out to,
+same category as `swaylock`/`i3lock` in the power menu, except these
+are picked by tuicc's own code rather than something you type into
+`config.toml` yourself:
+
+- **`wpctl` or `pactl`** (`[audio] audio_backend`, default `wpctl`) —
+  needed for output-device switching in the media module. `wpctl`
+  (WirePlumber's CLI) is the right pick on basically every current
+  sway/i3 setup; `pactl` is there for plain PulseAudio instead.
+- **`brightnessctl`** — brightness backend exists but isn't wired into
+  a module yet, so nothing currently calls it.
+- **`cava`** — genuinely optional, not required for anything else in
+  the media module to work. Missing it just means no visualizer bars
+  next to the output list — no warning, no degraded feature, tuicc
+  doesn't even try to spawn it unless something's actually playing.
+
+Any of these missing degrades gracefully (a real, readable error where
+it's actually relevant — see `[[control.toggle]]` in
+[Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)
+for the same idea applied to your own toggle commands), never a crash.
 
 ## Summoning tuicc
 
@@ -243,6 +272,10 @@ src/tuicc/
 ├── render_utils.py                    # shared curses drawing helpers
 ├── resize_mode.py                      # interactive resize/move — ResizeState, SpawnPickerState
 ├── help_mode.py                        # F1 help menu — FAQ/keybinds, resize reference, color editor
+├── status_worker.py                     # StatusWorker/Domain — one background poll thread shared by
+│                                        #   wifi/bluetooth/audio/media/every control.toggle
+├── control.py                            # backend for [[control.toggle]] — status_command + per-state command
+├── brightness.py                          # brightnessctl wrapper (backend only, not wired into a module yet)
 ├── defaults/config.toml                  # packaged default config
 ├── presets/                               # built-in layout presets (plain TOML) — copied to
 │                                          #   ~/.config/tuicc/presets/<N>.toml on first use
@@ -252,10 +285,12 @@ src/tuicc/
 │   ├── preview.py                 # windows of the currently focused workspace
 │   ├── launcher.py                 # fuzzy app search + launch
 │   ├── connectivity.py              # wifi/bluetooth status + toggle
-│   ├── power_menu.py                 # lock/logout/reboot/shutdown, user-defined
-│   ├── sessions.py                    # save/load/delete a named set of window positions
-│   ├── quick_actions.py                # generic action list — not in the default layout yet
-│   └── clock.py                         # not in the default layout yet
+│   ├── control.py                    # [[control.toggle]] rows — status dot + advance-on-confirm
+│   ├── media.py                       # MPRIS now-playing + transport + output switching + cava visualizer
+│   ├── power_menu.py                   # lock/logout/reboot/shutdown, user-defined
+│   ├── sessions.py                      # save/load/delete a named set of window positions
+│   ├── quick_actions.py                  # generic action list — not in the default layout yet
+│   └── clock.py                           # not in the default layout yet
 └── providers/
     ├── base.py                # Provider contract every WM provider implements
     ├── registry.py             # provider name -> Provider class
@@ -267,9 +302,24 @@ src/tuicc/connectivity/
 ├── registry.py             # backend name -> backend class
 ├── iwd.py                   # wifi via iwd, over D-Bus (not iwctl text parsing)
 ├── bluez.py                  # bluetooth via bluetoothctl
-├── worker.py                   # background thread — connect/disconnect never blocks the render loop
-├── model.py                     # WifiNetwork/BluetoothDevice — the generic connectivity model
-└── util.py                       # shared helpers (e.g. stripping ANSI codes from CLI output)
+├── model.py                   # WifiNetwork/BluetoothDevice — the generic connectivity model
+└── util.py                     # shared helpers (e.g. stripping ANSI codes from CLI output)
+
+src/tuicc/audio/
+├── base.py                # AudioBackend contract
+├── registry.py             # backend name -> backend class ([audio] audio_backend)
+├── wpctl.py                  # WirePlumber CLI (the primary backend — PipeWire is the norm on sway/i3)
+├── pactl.py                   # plain PulseAudio fallback
+└── model.py                     # AudioSink — the generic sink model
+
+src/tuicc/media/
+├── base.py                # MediaBackend contract
+├── mpris.py                 # the only real backend — talks to org.mpris.MediaPlayer2.* over D-Bus
+├── model.py                   # Player — the generic now-playing model
+└── cava.py                     # optional: CavaReader, a background thread streaming `cava`'s raw
+                                #   output for modules/media.py's audio visualizer — genuinely
+                                #   different shape from every other backend here (continuous
+                                #   stream, not a periodic poll), see its own module docstring
 ```
 
 ## Writing your own WM provider
