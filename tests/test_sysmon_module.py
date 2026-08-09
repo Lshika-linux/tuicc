@@ -296,16 +296,30 @@ def test_severity_role_unknown_value_is_value_not_urgent():
 
 # ---------- _format_stats_grid ----------
 # Each row is a list of (text, role) segments now, role in
-# {"label","value","urgent"} — draw() resolves role to a theme color
-# (accent/text/urgent respectively). _row_text() flattens a row back to
-# a plain string for the tests that only care about CONTENT, not color.
+# {"label","value","warning","urgent"} — draw() resolves role to a
+# theme color (accent/text/warning/urgent respectively). _row_text()
+# flattens a row back to a plain string for the tests that only care
+# about CONTENT, not color. `blocks` is now ctx.config.sysmon_blocks'
+# own shape — a list of [[sysmon.block]] dicts, not a flat thresholds
+# dict — see config.py's DEFAULT_SYSMON_BLOCKS for the packaged layout
+# _DEFAULT_BLOCKS (test_sysmon_module.py's own copy, top of file)
+# reproduces.
 
 def _row_text(row):
     return "".join(text for text, _role in row)
 
 
+def _block(metric, column=1, row=1, warning=None, urgent=None, enabled=True, label=None):
+    """A single [[sysmon.block]]-shaped dict — same keys config.py's
+    own _build_sysmon_blocks() produces — for tests that only care
+    about ONE metric's own behavior in isolation.
+    """
+    return {"metric": metric, "enabled": enabled, "column": column, "row": row,
+            "warning": warning, "urgent": urgent, "label": label}
+
+
 def test_format_stats_grid_shows_unknown_as_question_marks():
-    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, thresholds=_DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, blocks=_DEFAULT_BLOCKS)
     assert "CPU" in _row_text(rows[0]) and "?%" in _row_text(rows[0])
     assert "RAM" in _row_text(rows[0])
 
@@ -324,7 +338,7 @@ def test_format_stats_grid_shows_real_values():
         "throttled_recently": False, "swap_in_kb_s": 0.0, "swap_out_kb_s": 0.0,
     }
     sensors_data = {"cpu_temp": (58.0, "coretemp-isa-0000", "Package id 0"), "hottest": (58.0, "coretemp-isa-0000", "Package id 0")}
-    rows = _format_stats_grid(sysinfo_data, sensors_data, _DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data, sensors_data, _DEFAULT_BLOCKS)
     texts = [_row_text(r) for r in rows]
     assert len(rows) == 3
     assert "CPU" in texts[0] and "23%" in texts[0]
@@ -342,17 +356,17 @@ def test_format_stats_grid_shows_real_values():
 
 
 def test_format_stats_grid_throttled_flag_appends_to_hot_not_swap():
-    # THROTTLED is a CPU-thermal flag — belongs with HOT (the one row
-    # with no fixed-width neighbor, so it can never get clipped by
-    # column width), not SWAP. Found live, asked for: an earlier
-    # version put it on SWAP purely because that's where free row-
-    # space happened to be, which read as unrelated once questioned.
+    # THROTTLED is a CPU-thermal flag — rides along on HOT's own
+    # cell (the packaged default's own genuinely-unconstrained row),
+    # not SWAP. Found live, asked for: an earlier version put it on
+    # SWAP purely because that's where free row-space happened to be,
+    # which read as unrelated once questioned.
     sysinfo_data = {
         "cpu_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
         "swap_in_kb_s": None, "swap_out_kb_s": None,
     }
-    rows = _format_stats_grid(sysinfo_data, None, _DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data, None, _DEFAULT_BLOCKS)
     texts = [_row_text(r) for r in rows]
     assert any("HOT" in t and "THROTTLED" in t for t in texts)
     assert not any("SWAP" in t and "THROTTLED" in t for t in texts)
@@ -362,13 +376,13 @@ def test_format_stats_grid_throttled_segment_has_urgent_role():
     # Found live, asked for: THROTTLED should draw the eye once it's
     # visible at all — its own segment, colored "urgent" (draw()
     # resolves this to theme["urgent"]), not lumped into HOT's own
-    # plain-"value" temperature reading.
+    # plain-severity temperature reading.
     sysinfo_data = {
         "cpu_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
         "swap_in_kb_s": None, "swap_out_kb_s": None,
     }
-    rows = _format_stats_grid(sysinfo_data, None, _DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data, None, _DEFAULT_BLOCKS)
     hot_row = next(r for r in rows if "HOT" in _row_text(r))
     urgent_texts = [text for text, role in hot_row if role == "urgent"]
     assert any("THROTTLED" in t for t in urgent_texts)
@@ -382,15 +396,15 @@ def test_format_stats_grid_hot_row_is_not_truncated_by_column_width():
         "cpu_temp": None,
         "hottest": (58.0, "coretemp-isa-0000", "Package id 0"),
     }
-    rows = _format_stats_grid(sysinfo_data=None, sensors_data=sensors_data, thresholds=_DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=sensors_data, blocks=_DEFAULT_BLOCKS)
     assert _row_text(rows[2]) == "HOT  58°C (CPU (Package id 0))"
 
 
 def test_format_stats_grid_columns_are_fixed_width():
-    # The third column must always start at the same position
-    # regardless of how long any individual value in earlier columns
+    # The second column must always start at the same position
+    # regardless of how long any individual value in the first column
     # is — that's the whole point of a real aligned grid.
-    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, thresholds=_DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, blocks=_DEFAULT_BLOCKS)
     assert _row_text(rows[0])[GRID_COL_WIDTH:GRID_COL_WIDTH + 4] == "RAM "
 
 
@@ -398,85 +412,94 @@ def test_format_stats_grid_labels_use_label_role():
     # Found live, asked for: metric labels (CPU, RAM, ...) in accent
     # color, values in plain text color, "ať se v tom líp scanuje" —
     # draw() resolves the "label" role to theme["accent"].
-    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, thresholds=_DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, blocks=_DEFAULT_BLOCKS)
     label_texts = [text.strip() for text, role in rows[0] if role == "label"]
     assert "CPU" in label_texts
     assert "RAM" in label_texts
 
 
 def test_format_stats_grid_values_use_value_role_not_label():
-    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, thresholds=_DEFAULT_THRESHOLDS)
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, blocks=_DEFAULT_BLOCKS)
     value_texts = [text for text, role in rows[0] if role == "value"]
     assert any("?%" in t for t in value_texts)
 
 
 def test_format_stats_grid_cpu_colored_by_threshold():
-    thresholds = dict(_DEFAULT_THRESHOLDS)
-    sysinfo_data = {
-        "cpu_percent": 95.0, "ram": None, "disk": None,
-        "load_average": None, "throttled_recently": False,
-        "swap_in_kb_s": None, "swap_out_kb_s": None,
-    }
-    rows = _format_stats_grid(sysinfo_data, None, thresholds)
+    sysinfo_data = {"cpu_percent": 95.0}
+    rows = _format_stats_grid(sysinfo_data, None, [_block("cpu", warning=70, urgent=90)])
     cpu_cell = next((text, role) for text, role in rows[0] if "95%" in text)
-    assert cpu_cell[1] == "urgent"  # 95 >= cpu_urgent_percent (90)
+    assert cpu_cell[1] == "urgent"  # 95 >= urgent (90)
 
 
 def test_format_stats_grid_ram_colored_by_underlying_percent_not_displayed_amount():
     # RAM's own displayed text is used/available in GiB, not a percent
     # — but the COLOR still follows the real percent-full.
-    thresholds = dict(_DEFAULT_THRESHOLDS)
-    sysinfo_data = {
-        "cpu_percent": None,
-        "ram": {"total_kb": 1000, "used_kb": 800, "available_kb": 200, "percent": 80.0},
-        "disk": None, "load_average": None, "throttled_recently": False,
-        "swap_in_kb_s": None, "swap_out_kb_s": None,
-    }
-    rows = _format_stats_grid(sysinfo_data, None, thresholds)
+    sysinfo_data = {"ram": {"total_kb": 1000, "used_kb": 800, "available_kb": 200, "percent": 80.0}}
+    rows = _format_stats_grid(sysinfo_data, None, [_block("ram", warning=75, urgent=90)])
     ram_cell = next((text, role) for text, role in rows[0] if "GiB" in text)
-    assert ram_cell[1] == "warning"  # 80 is between ram_warning (75) and ram_urgent (90)
+    assert ram_cell[1] == "warning"  # 80 is between warning (75) and urgent (90)
 
 
 def test_format_stats_grid_disk_colored_by_percent():
-    thresholds = dict(_DEFAULT_THRESHOLDS)
-    sysinfo_data = {
-        "cpu_percent": None, "ram": None,
-        "disk": {"total": 100, "used": 96, "free": 4, "percent": 96.0},
-        "load_average": None, "throttled_recently": False,
-        "swap_in_kb_s": None, "swap_out_kb_s": None,
-    }
-    rows = _format_stats_grid(sysinfo_data, None, thresholds)
-    disk_cell = next((text, role) for text, role in rows[1] if "GB" in text)
-    assert disk_cell[1] == "urgent"  # 96 >= disk_urgent_percent (95)
+    sysinfo_data = {"disk": {"total": 100, "used": 96, "free": 4, "percent": 96.0}}
+    rows = _format_stats_grid(sysinfo_data, None, [_block("disk", warning=80, urgent=95)])
+    disk_cell = next((text, role) for text, role in rows[0] if "GB" in text)
+    assert disk_cell[1] == "urgent"  # 96 >= urgent (95)
 
 
 def test_format_stats_grid_cputemp_and_hot_colored_by_temp_thresholds():
-    thresholds = dict(_DEFAULT_THRESHOLDS)
     sensors_data = {
         "cpu_temp": (95.0, "coretemp-isa-0000", "Package id 0"),
         "hottest": (78.0, "nvme-pci-3d00", "Composite"),
     }
-    rows = _format_stats_grid(sysinfo_data=None, sensors_data=sensors_data, thresholds=thresholds)
-    cputemp_cell = next((text, role) for text, role in rows[1] if "95°C" in text)
-    assert cputemp_cell[1] == "urgent"  # 95 >= temp_urgent_c (90)
-    hot_cell = next((text, role) for text, role in rows[2] if "78°C" in text)
-    assert hot_cell[1] == "warning"  # 78 is between temp_warning_c (75) and temp_urgent_c (90)
+    blocks = [_block("cputemp", column=1, row=1, warning=75, urgent=90),
+              _block("hot", column=1, row=2, warning=75, urgent=90)]
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=sensors_data, blocks=blocks)
+    cputemp_cell = next((text, role) for text, role in rows[0] if "95°C" in text)
+    assert cputemp_cell[1] == "urgent"  # 95 >= urgent (90)
+    hot_cell = next((text, role) for text, role in rows[1] if "78°C" in text)
+    assert hot_cell[1] == "warning"  # 78 is between warning (75) and urgent (90)
 
 
-def test_format_stats_grid_load_and_swap_never_threshold_colored():
-    # Deliberately not colored — LOAD needs core-count normalization,
-    # SWAP has its own documented false-positive risk (VISION.md).
-    thresholds = dict(_DEFAULT_THRESHOLDS)
-    sysinfo_data = {
-        "cpu_percent": None, "ram": None, "disk": None,
-        "load_average": (99.0, 99.0, 99.0), "throttled_recently": False,
-        "swap_in_kb_s": 99999.0, "swap_out_kb_s": 99999.0,
-    }
-    rows = _format_stats_grid(sysinfo_data, None, thresholds)
+def test_format_stats_grid_block_without_thresholds_is_never_colored():
+    # A block with no warning/urgent configured at all (LOAD/SWAP's own
+    # packaged default) is deliberately never threshold-colored, even
+    # given an extreme value — LOAD needs core-count normalization
+    # (not implemented), SWAP has its own documented false-positive
+    # risk (VISION.md).
+    sysinfo_data = {"load_average": (99.0, 99.0, 99.0)}
+    rows = _format_stats_grid(sysinfo_data, None, [_block("load")])
     load_cell = next((text, role) for text, role in rows[0] if "99.0" in text)
     assert load_cell[1] == "value"
-    swap_cell = next((text, role) for text, role in rows[1] if "KB/s" in text)
-    assert swap_cell[1] == "value"
+
+
+def test_format_stats_grid_disabled_block_is_skipped():
+    # enabled = false hides a block entirely — found live, asked for
+    # directly ("možnost ho tam mít nebo nemít").
+    sysinfo_data = {"cpu_percent": 50.0, "ram": {"total_kb": 1, "used_kb": 1, "available_kb": 0, "percent": 100.0}}
+    blocks = [_block("cpu", column=1, row=1), _block("ram", column=1, row=2, enabled=False)]
+    rows = _format_stats_grid(sysinfo_data, None, blocks)
+    texts = [_row_text(r) for r in rows]
+    assert not any("RAM" in t for t in texts)
+
+
+def test_format_stats_grid_user_can_reposition_blocks_into_new_columns():
+    # Found live, asked for directly: "i pozice v těch rows a
+    # collumns" — column/row are real config values, not fixed.
+    sysinfo_data = {"cpu_percent": 10.0, "load_average": (1.0, 1.0, 1.0)}
+    blocks = [_block("load", column=1, row=1), _block("cpu", column=2, row=1, warning=70, urgent=90)]
+    rows = _format_stats_grid(sysinfo_data, None, blocks)
+    assert len(rows) == 1
+    # LOAD (column 1) now comes before CPU (column 2) — the opposite of
+    # the packaged default's own column order.
+    assert _row_text(rows[0]).index("LOAD") < _row_text(rows[0]).index("CPU")
+
+
+def test_format_stats_grid_custom_label_overrides_metric_name():
+    sysinfo_data = {"cpu_percent": 10.0}
+    rows = _format_stats_grid(sysinfo_data, None, [_block("cpu", label="Processor")])
+    assert "Processor" in _row_text(rows[0])
+    assert "CPU " not in _row_text(rows[0])
 
 
 # ---------- _diagnostics_summary_text ----------
@@ -524,13 +547,16 @@ class _FakeStatus:
         return self._errors.get(domain_name)
 
 
-# Same defaults as defaults/config.toml's own [sysmon] section.
-_DEFAULT_THRESHOLDS = {
-    "cpu_warning": 70, "cpu_urgent": 90,
-    "ram_warning": 75, "ram_urgent": 90,
-    "disk_warning": 80, "disk_urgent": 95,
-    "temp_warning_c": 75, "temp_urgent_c": 90,
-}
+# Same packaged layout as config.py's own DEFAULT_SYSMON_BLOCKS.
+_DEFAULT_BLOCKS = [
+    {"metric": "cpu", "enabled": True, "column": 1, "row": 1, "warning": 70, "urgent": 90, "label": None},
+    {"metric": "cputemp", "enabled": True, "column": 1, "row": 2, "warning": 75, "urgent": 90, "label": None},
+    {"metric": "hot", "enabled": True, "column": 1, "row": 3, "warning": 75, "urgent": 90, "label": None},
+    {"metric": "ram", "enabled": True, "column": 2, "row": 1, "warning": 75, "urgent": 90, "label": None},
+    {"metric": "disk", "enabled": True, "column": 2, "row": 2, "warning": 80, "urgent": 95, "label": None},
+    {"metric": "load", "enabled": True, "column": 3, "row": 1, "warning": None, "urgent": None, "label": None},
+    {"metric": "swap", "enabled": True, "column": 3, "row": 2, "warning": None, "urgent": None, "label": None},
+]
 
 
 def _ctx(windows=None, windows_error=None, sysinfo_data=None, sensors_data=None,
@@ -542,7 +568,7 @@ def _ctx(windows=None, windows_error=None, sysinfo_data=None, sensors_data=None,
             errors={"windows": windows_error},
         ),
         theme={}, selected_id=selected_id,
-        config=SimpleNamespace(sysmon_thresholds=_DEFAULT_THRESHOLDS),
+        config=SimpleNamespace(sysmon_blocks=_DEFAULT_BLOCKS),
         pending_confirm=None,
     )
 

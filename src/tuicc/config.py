@@ -80,7 +80,7 @@ class Config:
     global_shortcuts: dict
     session_names: dict
     control_toggles: list
-    sysmon_thresholds: dict
+    sysmon_blocks: list
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -438,6 +438,89 @@ def _build_control_toggles(user_data: dict) -> list:
     return toggles
 
 
+# Every metric modules/sysmon.py's own stats grid knows how to render —
+# _build_sysmon_blocks (below) validates every [[sysmon.block]] entry's
+# "metric" against this set, loudly (ValueError), rather than letting a
+# typo'd metric name silently vanish from the grid.
+SYSMON_METRICS = {"cpu", "ram", "disk", "load", "cputemp", "hot", "swap"}
+
+# Today's packaged layout, reproduced exactly — used whenever [sysmon]
+# has no [[block]] entries at all (a fresh install, or an existing
+# config.toml predating this landing), so nothing changes visually for
+# anyone who hasn't opted into customizing it. load/swap deliberately
+# have no warning/urgent (None) — see modules/sysmon.py's own module
+# docstring for why those two aren't threshold-colored at all.
+DEFAULT_SYSMON_BLOCKS = [
+    {"metric": "cpu", "enabled": True, "column": 1, "row": 1, "warning": 70, "urgent": 90, "label": None},
+    {"metric": "cputemp", "enabled": True, "column": 1, "row": 2, "warning": 75, "urgent": 90, "label": None},
+    {"metric": "hot", "enabled": True, "column": 1, "row": 3, "warning": 75, "urgent": 90, "label": None},
+    {"metric": "ram", "enabled": True, "column": 2, "row": 1, "warning": 75, "urgent": 90, "label": None},
+    {"metric": "disk", "enabled": True, "column": 2, "row": 2, "warning": 80, "urgent": 95, "label": None},
+    {"metric": "load", "enabled": True, "column": 3, "row": 1, "warning": None, "urgent": None, "label": None},
+    {"metric": "swap", "enabled": True, "column": 3, "row": 2, "warning": None, "urgent": None, "label": None},
+]
+
+
+def _build_sysmon_blocks(user_data: dict) -> list:
+    """[[sysmon.block]] -> a list of {"metric", "enabled", "column",
+    "row", "warning", "urgent", "label"} dicts — the System module's
+    own single source of truth for which stat blocks show at all, where
+    each one sits, and what counts as warning/urgent for it. Found
+    live, asked for directly: "ten config by měl být to jedno místo kde
+    nastavuješ všechno ohledně boxíku" (the config should be the one
+    place you configure everything about that box).
+
+    Falls back to DEFAULT_SYSMON_BLOCKS (above) when [sysmon] has no
+    [[block]] entries — same .get()-with-fallback reasoning [audio]'s
+    own section established for a config section landing after initial
+    release; an existing config.toml predating this must not lose its
+    whole System module over a missing section.
+
+    "row" is really just this block's own ORDER within its column, not
+    a literal shared row index across every column — columns don't
+    have to have the same number of blocks (today's default column 1
+    has 3, columns 2/3 have 2 each), so gaps/non-contiguous row numbers
+    are fine; only the relative order within one column matters.
+    warning/urgent are optional (None, the default, when a metric isn't
+    given either) — a block with neither never gets threshold-colored,
+    always plain text.
+    """
+    raw_blocks = user_data.get("sysmon", {}).get("block")
+    if not raw_blocks:
+        return [dict(b) for b in DEFAULT_SYSMON_BLOCKS]
+
+    blocks = []
+    claimed_positions = {}  # (column, row) -> metric that already claimed it, for the collision check below
+    for entry in raw_blocks:
+        metric = entry.get("metric")
+        if metric not in SYSMON_METRICS:
+            raise ValueError(
+                f"[[sysmon.block]] has metric={metric!r} — must be one of {sorted(SYSMON_METRICS)}"
+            )
+        enabled = entry.get("enabled", True)
+        column = entry.get("column", 1)
+        row = entry.get("row", 1)
+        if enabled:
+            position = (column, row)
+            if position in claimed_positions:
+                raise ValueError(
+                    f"[[sysmon.block]] metric={metric!r} collides with "
+                    f"metric={claimed_positions[position]!r} at column={column}, row={row} — "
+                    f"each enabled block needs its own (column, row)"
+                )
+            claimed_positions[position] = metric
+        blocks.append({
+            "metric": metric,
+            "enabled": enabled,
+            "column": column,
+            "row": row,
+            "warning": entry.get("warning"),
+            "urgent": entry.get("urgent"),
+            "label": entry.get("label"),
+        })
+    return blocks
+
+
 def load_config() -> Config:
     ensure_user_config_exists()
     ensure_all_packaged_presets_exist()
@@ -531,25 +614,7 @@ def load_config() -> Config:
     # desktop actually runs).
     audio_backend_name = user_data.get("audio", {}).get("audio_backend", "wpctl")
     control_toggles = _build_control_toggles(user_data)
-    # [sysmon] is newer still (R6) — same .get()-with-fallback reasoning
-    # as [audio] above. What counts as "concerning" CPU/RAM/disk/temp is
-    # genuinely per-machine/per-user (CONTRIBUTING.md's "no hardcoded
-    # personal preferences" rule) — a beefy desktop's normal 60% load is
-    # someone else's alarming 60% on a thin laptop — so these are real
-    # config values, not constants baked into modules/sysmon.py, found
-    # live, asked for directly ("chce to i degraded a bad"). Defaults
-    # below match the packaged config.toml's own [sysmon] section.
-    _sysmon_data = user_data.get("sysmon", {})
-    sysmon_thresholds = {
-        "cpu_warning": _sysmon_data.get("cpu_warning_percent", 70),
-        "cpu_urgent": _sysmon_data.get("cpu_urgent_percent", 90),
-        "ram_warning": _sysmon_data.get("ram_warning_percent", 75),
-        "ram_urgent": _sysmon_data.get("ram_urgent_percent", 90),
-        "disk_warning": _sysmon_data.get("disk_warning_percent", 80),
-        "disk_urgent": _sysmon_data.get("disk_urgent_percent", 95),
-        "temp_warning_c": _sysmon_data.get("temp_warning_c", 75),
-        "temp_urgent_c": _sysmon_data.get("temp_urgent_c", 90),
-    }
+    sysmon_blocks = _build_sysmon_blocks(user_data)
 
     return Config(
         layout=layout,
@@ -576,5 +641,5 @@ def load_config() -> Config:
         global_shortcuts=global_shortcuts,
         session_names=session_names,
         control_toggles=control_toggles,
-        sysmon_thresholds=sysmon_thresholds,
+        sysmon_blocks=sysmon_blocks,
     )

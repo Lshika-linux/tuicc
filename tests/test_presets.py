@@ -22,6 +22,8 @@ from tuicc.config import (
     get_raw_power_menu_actions,
     _build_session_names,
     _build_control_toggles,
+    _build_sysmon_blocks,
+    DEFAULT_SYSMON_BLOCKS,
 )
 from tuicc.layout import Layout, ModuleBox
 
@@ -637,3 +639,77 @@ def test_build_control_toggles_rejects_a_missing_status_command_on_a_non_last_st
 
     with pytest.raises(ValueError):
         _build_control_toggles(user_data)
+
+
+# ---------- _build_sysmon_blocks ----------
+
+def test_build_sysmon_blocks_missing_section_falls_back_to_default_layout():
+    # A fresh install, or an existing config.toml predating this
+    # section — must reproduce today's packaged layout exactly, not an
+    # empty System module.
+    result = _build_sysmon_blocks({})
+    assert result == DEFAULT_SYSMON_BLOCKS
+    assert result is not DEFAULT_SYSMON_BLOCKS  # a copy, not the same list object
+
+
+def test_build_sysmon_blocks_empty_block_list_also_falls_back_to_default():
+    # [sysmon] present but with no [[block]] entries at all (e.g. a
+    # user who added the section for some other reason) — same
+    # fallback as the section being fully absent.
+    assert _build_sysmon_blocks({"sysmon": {}}) == DEFAULT_SYSMON_BLOCKS
+
+
+def test_build_sysmon_blocks_parses_a_custom_layout():
+    user_data = {"sysmon": {"block": [
+        {"metric": "cpu", "column": 1, "row": 1, "warning": 60, "urgent": 85},
+        {"metric": "load", "column": 2, "row": 1},
+    ]}}
+
+    result = _build_sysmon_blocks(user_data)
+
+    assert result == [
+        {"metric": "cpu", "enabled": True, "column": 1, "row": 1, "warning": 60, "urgent": 85, "label": None},
+        {"metric": "load", "enabled": True, "column": 2, "row": 1, "warning": None, "urgent": None, "label": None},
+    ]
+
+
+def test_build_sysmon_blocks_enabled_defaults_to_true():
+    user_data = {"sysmon": {"block": [{"metric": "cpu", "column": 1, "row": 1}]}}
+    assert _build_sysmon_blocks(user_data)[0]["enabled"] is True
+
+
+def test_build_sysmon_blocks_enabled_false_is_respected():
+    user_data = {"sysmon": {"block": [{"metric": "cpu", "column": 1, "row": 1, "enabled": False}]}}
+    assert _build_sysmon_blocks(user_data)[0]["enabled"] is False
+
+
+def test_build_sysmon_blocks_custom_label_is_kept():
+    user_data = {"sysmon": {"block": [{"metric": "cpu", "column": 1, "row": 1, "label": "Processor"}]}}
+    assert _build_sysmon_blocks(user_data)[0]["label"] == "Processor"
+
+
+def test_build_sysmon_blocks_rejects_unknown_metric():
+    user_data = {"sysmon": {"block": [{"metric": "gpu", "column": 1, "row": 1}]}}
+    with pytest.raises(ValueError):
+        _build_sysmon_blocks(user_data)
+
+
+def test_build_sysmon_blocks_rejects_two_enabled_blocks_at_the_same_position():
+    user_data = {"sysmon": {"block": [
+        {"metric": "cpu", "column": 1, "row": 1},
+        {"metric": "ram", "column": 1, "row": 1},
+    ]}}
+    with pytest.raises(ValueError):
+        _build_sysmon_blocks(user_data)
+
+
+def test_build_sysmon_blocks_allows_a_disabled_block_at_an_occupied_position():
+    # A disabled block never actually renders, so it can't really
+    # "collide" with anything — only enabled blocks need unique
+    # positions.
+    user_data = {"sysmon": {"block": [
+        {"metric": "cpu", "column": 1, "row": 1},
+        {"metric": "ram", "column": 1, "row": 1, "enabled": False},
+    ]}}
+    result = _build_sysmon_blocks(user_data)
+    assert len(result) == 2

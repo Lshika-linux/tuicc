@@ -400,123 +400,157 @@ def _severity_role(value: float | None, warning: float, urgent: float) -> str:
     return "value"
 
 
-def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None,
-                        thresholds: dict) -> list[list[tuple[str, str]]]:
-    """Three side-by-side COLUMNS, grouped by what they're actually
-    about, not three side-by-side ROWS — found live, asked for: CPU/
-    CPUTEMP/HOT together (CPU-related), RAM/DISK together (capacity-
-    related), LOAD/SWAP together (system-pressure-related). The three
-    columns don't all have the same number of entries (CPU's own
-    column has 3, the other two have 2) — rendered row-by-row, so the
-    third grid row only has CPU's column's own content (HOT) on it,
-    nothing to its right competing for width. That's the actual fix
-    for HOT's own value getting cut off mid-word: reusing _grid_row's
-    existing "only the LAST cell in a row is left unpadded/untruncated"
-    rule, a row with just one real cell on it makes that cell the last
-    one by definition, so it gets the row's own full width instead of
-    being squeezed into a fixed GRID_COL_WIDTH the way it was when HOT
-    used to share a row with LOAD and CPUTEMP.
+def _pct_text(value: float | None) -> str:
+    return f"{value:.0f}%" if value is not None else "?%"
+
+
+def _temp_text(value: float | None) -> str:
+    return f"{value:.0f}°C" if value is not None else "?°C"
+
+
+def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: dict | None,
+                          block: dict) -> tuple[str, list[tuple[str, str]]]:
+    """(label, value_segments) for ONE configured [[sysmon.block]]
+    entry — the single place that knows how to turn each known metric
+    name into display text + a severity role (see _severity_role).
+    `block` carries this metric's own warning/urgent thresholds — None
+    for either means this block is never threshold-colored at all
+    (load/swap's own packaged default, see DEFAULT_SYSMON_BLOCKS in
+    config.py), not just "always plain" by coincidence.
 
     Any single value that's currently unknown (a poll that hasn't
     completed yet, or a real poll error) shows as "?" rather than a
     misleading 0 — same None-vs-0 discipline as everywhere else.
-
-    RAM/DISK show used/available amounts, not a bare percent — found
-    live, asked for ("RAM 70% je fajn ale lepší by bylo U/A v GiB",
-    "disk 20% ... lepší by bylo U/A v GB"): a percentage alone doesn't
-    say how much room is actually left. RAM in GiB (binary, /1024²)
-    since that's the unit the kernel's own MemTotal/MemAvailable
-    already round to; DISK in GB (decimal, /1e9) matching how disk
-    capacity is conventionally reported everywhere else (drive
-    packaging, `df`'s own default). "TEMP" is renamed "CPUTEMP" for
-    clarity against the HOT row right below it — same value, but the
-    label alone didn't make clear it's specifically the CPU package,
-    not "temperature" in general.
-
-    CPU/RAM/DISK/CPUTEMP/HOT values are colored by `thresholds`
-    (ctx.config.sysmon_thresholds — a real [sysmon] config.toml
-    section, not a hardcoded constant: what counts as "concerning" is
-    genuinely per-machine, see CONTRIBUTING.md's "no hardcoded personal
-    preferences" rule — found live, asked for directly: "chce to i
-    degraded a bad"). RAM/DISK are colored by their real usage PERCENT
-    even though the text itself shows used/available amounts, not a
-    bare percent. LOAD/SWAP are deliberately NOT threshold-colored:
-    LOAD's own "concerning" point depends on core count (a raw "2.0"
-    means opposite things on a 2-core vs 16-core machine) — not
-    implemented yet; SWAP already has VISION.md's own documented
-    reasoning for why a naive threshold on it would be misleading (the
-    kernel proactively swaps rarely-touched pages even with plenty of
-    free RAM — normal housekeeping reads identically to real thrashing
-    on a plain gauge).
     """
-    def _pct(value):
-        return f"{value:.0f}%" if value is not None else "?%"
+    label = block.get("label") or metric.upper()
+    warning, urgent = block.get("warning"), block.get("urgent")
+    thresholded = warning is not None and urgent is not None
 
-    def _temp(value):
-        return f"{value:.0f}°C" if value is not None else "?°C"
+    def _role(value):
+        return _severity_role(value, warning, urgent) if thresholded else "value"
 
-    cpu = sysinfo_data.get("cpu_percent") if sysinfo_data else None
-    cpu_role = _severity_role(cpu, thresholds["cpu_warning"], thresholds["cpu_urgent"])
+    if metric == "cpu":
+        cpu = sysinfo_data.get("cpu_percent") if sysinfo_data else None
+        return label, [(_pct_text(cpu), _role(cpu))]
 
-    ram = sysinfo_data.get("ram") if sysinfo_data else None
-    if ram:
+    if metric == "ram":
+        ram = sysinfo_data.get("ram") if sysinfo_data else None
+        if not ram:
+            return label, [("?/? GiB", "value")]
         gib = 1024 * 1024  # ram's own values are in kB (see sysinfo.get_ram_info)
-        ram_str = f"{ram['used_kb'] / gib:.1f}/{ram['available_kb'] / gib:.1f} GiB"
-        ram_role = _severity_role(ram["percent"], thresholds["ram_warning"], thresholds["ram_urgent"])
-    else:
-        ram_str = "?/? GiB"
-        ram_role = "value"
+        # RAM/DISK show used/available amounts, not a bare percent —
+        # found live, asked for ("RAM 70% je fajn ale lepší by bylo
+        # U/A v GiB"): a percentage alone doesn't say how much room is
+        # actually left. GiB (binary, /1024²) since that's the unit
+        # the kernel's own MemTotal/MemAvailable already round to. The
+        # color still follows the real usage PERCENT even though the
+        # displayed text doesn't show one.
+        text = f"{ram['used_kb'] / gib:.1f}/{ram['available_kb'] / gib:.1f} GiB"
+        return label, [(text, _role(ram["percent"]))]
 
-    disk = sysinfo_data.get("disk") if sysinfo_data else None
-    if disk and disk.get("used") is not None and disk.get("free") is not None:
-        disk_str = f"{disk['used'] / 1e9:.0f}/{disk['free'] / 1e9:.0f} GB"
-        disk_role = _severity_role(disk.get("percent"), thresholds["disk_warning"], thresholds["disk_urgent"])
-    else:
-        disk_str = "?/? GB"
-        disk_role = "value"
+    if metric == "disk":
+        disk = sysinfo_data.get("disk") if sysinfo_data else None
+        if not disk or disk.get("used") is None or disk.get("free") is None:
+            return label, [("?/? GB", "value")]
+        # GB (decimal, /1e9) matching how disk capacity is
+        # conventionally reported everywhere else (drive packaging,
+        # `df`'s own default) — GiB is RAM's own convention, not this.
+        text = f"{disk['used'] / 1e9:.0f}/{disk['free'] / 1e9:.0f} GB"
+        return label, [(text, _role(disk.get("percent")))]
 
-    load = sysinfo_data.get("load_average") if sysinfo_data else None
-    load_str = f"{load[0]:.1f}/{load[1]:.1f}/{load[2]:.1f}" if load else "?/?/?"
+    if metric == "load":
+        load = sysinfo_data.get("load_average") if sysinfo_data else None
+        text = f"{load[0]:.1f}/{load[1]:.1f}/{load[2]:.1f}" if load else "?/?/?"
+        return label, [(text, "value")]  # never threshold-colored — see module docstring
 
-    cpu_temp_entry = sensors_data.get("cpu_temp") if sensors_data else None
-    hottest_entry = sensors_data.get("hottest") if sensors_data else None
-    cpu_temp_str = _temp(cpu_temp_entry[0]) if cpu_temp_entry else "?°C"
-    cpu_temp_role = _severity_role(
-        cpu_temp_entry[0] if cpu_temp_entry else None, thresholds["temp_warning_c"], thresholds["temp_urgent_c"],
-    )
-    if hottest_entry:
-        hot_value, hot_chip, hot_feature = hottest_entry
-        hot_str = f"{_temp(hot_value)} ({describe_sensor(hot_chip, hot_feature)})"
-        hot_role = _severity_role(hot_value, thresholds["temp_warning_c"], thresholds["temp_urgent_c"])
-    else:
-        hot_str = "?°C"
-        hot_role = "value"
-    # THROTTLED is a CPU-thermal flag (core_throttle_count deltas, see
-    # sysinfo.py), not a swap-related one — appended to HOT's own cell
-    # specifically because that's the one cell in this whole grid with
-    # no fixed-width neighbor to its right (see the module docstring's
-    # own reasoning for why HOT gets a row to itself), so it's the one
-    # place THROTTLED can't get silently clipped by column width. Found
-    # live, asked for — an earlier version tacked it onto SWAP purely
-    # because that happened to be where free row-space was, which read
-    # as "why is a CPU heat flag next to swap I/O" once actually asked.
-    # Urgent-colored (its own segment, "urgent" role) so it actually
-    # draws the eye once it's visible at all — found live, asked for.
-    hot_segments = [(hot_str, hot_role)]
-    if sysinfo_data and sysinfo_data.get("throttled_recently"):
-        hot_segments.append((" THROTTLED", "urgent"))
+    if metric == "cputemp":
+        # "CPUTEMP", not just "TEMP" — found live, asked for clarity
+        # against the HOT block right below it in the packaged default
+        # layout: same value, but the bare label didn't make clear
+        # it's specifically the CPU package, not "temperature" in
+        # general.
+        entry = sensors_data.get("cpu_temp") if sensors_data else None
+        value = entry[0] if entry else None
+        return label, [(_temp_text(value), _role(value))]
 
-    swap_in = sysinfo_data.get("swap_in_kb_s") if sysinfo_data else None
-    swap_out = sysinfo_data.get("swap_out_kb_s") if sysinfo_data else None
-    swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
+    if metric == "hot":
+        entry = sensors_data.get("hottest") if sensors_data else None
+        if entry:
+            value, chip, feature = entry
+            text = f"{_temp_text(value)} ({describe_sensor(chip, feature)})"
+            role = _role(value)
+        else:
+            text, role = "?°C", "value"
+        segments = [(text, role)]
+        # THROTTLED is a CPU-thermal flag (core_throttle_count deltas,
+        # see sysinfo.py) — rides along on HOT's own cell specifically:
+        # in the packaged default layout it's the one cell with no
+        # fixed-width neighbor to its right (column 1's own 3rd row —
+        # the other two columns only have 2 entries), so it's the one
+        # place THROTTLED can't get silently clipped by column width.
+        # If you reposition "hot" into a row that DOES share width with
+        # another column, or disable it outright, THROTTLED can get
+        # clipped or stop showing entirely — a consequence of that
+        # layout choice, documented in config.toml's own [sysmon]
+        # comment, not something this function tries to work around.
+        # Urgent-colored (its own segment) so it actually draws the eye
+        # once it's visible at all — found live, asked for.
+        if sysinfo_data and sysinfo_data.get("throttled_recently"):
+            segments.append((" THROTTLED", "urgent"))
+        return label, segments
 
-    columns = [
-        [("CPU", [(_pct(cpu), cpu_role)]), ("CPUTEMP", [(cpu_temp_str, cpu_temp_role)]), ("HOT", hot_segments)],
-        [("RAM", [(ram_str, ram_role)]), ("DISK", [(disk_str, disk_role)])],
-        [("LOAD", [(load_str, "value")]), ("SWAP", [(swap_str, "value")])],
-    ]
-    max_rows = max(len(col) for col in columns)
-    return [_grid_row([col[i] for col in columns if i < len(col)]) for i in range(max_rows)]
+    if metric == "swap":
+        swap_in = sysinfo_data.get("swap_in_kb_s") if sysinfo_data else None
+        swap_out = sysinfo_data.get("swap_out_kb_s") if sysinfo_data else None
+        text = (f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s"
+                if swap_in is not None and swap_out is not None else "?/? KB/s")
+        return label, [(text, "value")]  # never threshold-colored — see module docstring
+
+    # config.py's own _build_sysmon_blocks already validates `metric`
+    # against SYSMON_METRICS at load time — reaching here would mean
+    # that validation and this dispatch drifted out of sync, a real
+    # programming error, not a user-facing config mistake.
+    raise ValueError(f"No renderer for sysmon metric {metric!r}")
+
+
+def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None,
+                        blocks: list[dict]) -> list[list[tuple[str, str]]]:
+    """The System module's own compact stats block — one column per
+    distinct `block["column"]` value, one row per block WITHIN that
+    column, in `block["row"]` order (a pure sort key, not a literal
+    shared row index — see config.toml's own [[sysmon.block]] comment).
+    `blocks` is ctx.config.sysmon_blocks: every block a user configures
+    is a real config.toml value (config.py's own DEFAULT_SYSMON_BLOCKS
+    reproduces today's packaged layout when [sysmon] has no [[block]]
+    entries at all) — found live, asked for directly: "ten config by
+    měl být to jedno místo kde nastavuješ všechno ohledně boxíku".
+
+    Rendered row-by-row via _grid_row, same as before this became
+    configurable: columns don't all need the same number of rows (the
+    packaged default's column 1 has 3 blocks, columns 2/3 have 2 each)
+    — a row with only ONE column's block on it makes that block's own
+    cell the LAST one by definition, so _grid_row leaves it its full
+    natural width instead of squeezing it into a fixed GRID_COL_WIDTH.
+    This is what protects a long value (HOT's own describe_sensor()
+    label, in the packaged default) from truncating — a user who moves
+    that block somewhere it now shares a row with others takes on that
+    same truncation risk themselves, a consequence of their own layout
+    choice, not something this function tries to prevent for them.
+
+    A disabled block (enabled=false) is simply skipped, not rendered as
+    an empty cell.
+    """
+    enabled_blocks = [b for b in blocks if b.get("enabled", True)]
+    columns: dict[int, list[tuple[str, list[tuple[str, str]]]]] = {}
+    for block in sorted(enabled_blocks, key=lambda b: (b["column"], b["row"])):
+        cell = _compute_metric_cell(block["metric"], sysinfo_data, sensors_data, block)
+        columns.setdefault(block["column"], []).append(cell)
+
+    ordered_columns = [columns[c] for c in sorted(columns)]
+    if not ordered_columns:
+        return []
+    max_rows = max(len(col) for col in ordered_columns)
+    return [_grid_row([col[i] for col in ordered_columns if i < len(col)]) for i in range(max_rows)]
 
 
 # ---------- bottom diagnostics line ----------
@@ -583,7 +617,7 @@ def _build_rows(ctx, box_h):
     rows = [("header", header_with_count("Windows", windows))]
     rows.extend(section_rows(windows, windows_error, selected_index, "window", "window"))
     rows.append(("spacer", None))
-    for line in _format_stats_grid(sysinfo_data, sensors_data, ctx.config.sysmon_thresholds):
+    for line in _format_stats_grid(sysinfo_data, sensors_data, ctx.config.sysmon_blocks):
         rows.append(("stats_line", line))
     rows.append(("diagnostics", diagnostics_data))
     return rows

@@ -195,30 +195,86 @@ bluetooth_backend = "bluez"
 audio_backend = "wpctl"
 
 [sysmon]
-# Thresholds for the System module's own CPU/RAM/DISK/CPUTEMP/HOT
-# values — below *_warning, plain text color; at/above *_warning,
-# theme.warning (yellow by default); at/above *_urgent, theme.urgent
-# (red). What counts as "concerning" is genuinely per-machine: a beefy
-# desktop's normal 60% load reads very differently than the same 60%
-# on a thin, passively-cooled laptop, so these are real config values,
-# not something modules/sysmon.py assumes for you.
-# RAM/DISK are colored by their real usage PERCENT even though the
-# System box itself shows them as used/available amounts (e.g. "5.8/1.9
-# GiB"), not a bare percent — the percent is still what decides the
-# color.
-cpu_warning_percent = 70
-cpu_urgent_percent = 90
-ram_warning_percent = 75
-ram_urgent_percent = 90
-disk_warning_percent = 80
-disk_urgent_percent = 95
-# Applies to BOTH CPUTEMP (the CPU package reading) and HOT (whichever
-# sensor is hottest overall) — one shared pair of thresholds, not a
-# separate one per sensor type (a laptop's NVMe/chipset sensors don't
-# usually get their own meaningfully different "safe" ceiling in
-# practice, and a single pair keeps this section short).
-temp_warning_c = 75
-temp_urgent_c = 90
+# Every value the System module's own stats block shows (CPU/RAM/DISK/
+# LOAD/CPUTEMP/HOT/SWAP) is configured below, one [[sysmon.block]]
+# entry per metric — the single source of truth for that box: which
+# blocks show at all (enabled), where each one sits (column/row — row
+# is really just this block's own ORDER within its column; columns
+# don't need to have the same number of blocks, so gaps/non-contiguous
+# numbers are fine), and what counts as warning (theme.warning, yellow
+# by default) / urgent (theme.urgent, red) for the metrics that support
+# threshold coloring at all.
+#
+# metric must be one of: cpu, ram, disk, load, cputemp, hot, swap.
+# label is optional (defaults to the metric name, uppercased).
+# warning/urgent are optional — omit both to leave a block always
+# plain-colored, never threshold-tinted (load/swap default to this:
+# LOAD's own "concerning" point depends on core count, not implemented
+# yet; SWAP has its own documented false-positive risk — a naive
+# threshold would flag the kernel's normal rarely-touched-page
+# housekeeping the same as real thrashing, see VISION.md). RAM/DISK are
+# colored by their real usage PERCENT even though the box itself shows
+# them as used/available amounts (e.g. "5.8/1.9 GiB"), not a bare
+# percent. HOT's own THROTTLED flag (a CPU-thermal signal, see
+# sysinfo.py) always rides along on HOT's own cell specifically,
+# wherever you put it (or not at all, if you disable/remove "hot") —
+# in the packaged layout below it's the one cell with no fixed-width
+# neighbor to its right, so THROTTLED can never get clipped there. If
+# you reposition "hot" into a row that DOES share width with another
+# column, a long THROTTLED marker can get clipped, same as any other
+# value would; that's a consequence of your own layout choice, not
+# something tuicc tries to work around for you.
+#
+# Delete a block entirely, or set enabled = false, to hide it. What
+# counts as "concerning" is genuinely per-machine (a beefy desktop's
+# normal 60% load reads very differently than the same 60% on a thin,
+# passively-cooled laptop) — that's the whole reason this lives in
+# config.toml instead of being a constant in modules/sysmon.py.
+
+[[sysmon.block]]
+metric = "cpu"
+column = 1
+row = 1
+warning = 70
+urgent = 90
+
+[[sysmon.block]]
+metric = "cputemp"
+column = 1
+row = 2
+warning = 75
+urgent = 90
+
+[[sysmon.block]]
+metric = "hot"
+column = 1
+row = 3
+warning = 75
+urgent = 90
+
+[[sysmon.block]]
+metric = "ram"
+column = 2
+row = 1
+warning = 75
+urgent = 90
+
+[[sysmon.block]]
+metric = "disk"
+column = 2
+row = 2
+warning = 80
+urgent = 95
+
+[[sysmon.block]]
+metric = "load"
+column = 3
+row = 1
+
+[[sysmon.block]]
+metric = "swap"
+column = 3
+row = 2
 
 [sessions]
 # Display name for each of the 3 save/load/delete slots — purely
