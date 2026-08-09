@@ -307,14 +307,20 @@ def test_format_stats_grid_shows_real_values():
     assert "HOT" in rows[2] and "CPU (Package id 0)" in rows[2]
 
 
-def test_format_stats_grid_throttled_flag_appends_to_swap():
+def test_format_stats_grid_throttled_flag_appends_to_hot_not_swap():
+    # THROTTLED is a CPU-thermal flag — belongs with HOT (the one row
+    # with no fixed-width neighbor, so it can never get clipped by
+    # column width), not SWAP. Found live, asked for: an earlier
+    # version put it on SWAP purely because that's where free row-
+    # space happened to be, which read as unrelated once questioned.
     sysinfo_data = {
         "cpu_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
         "swap_in_kb_s": None, "swap_out_kb_s": None,
     }
     rows = _format_stats_grid(sysinfo_data, None)
-    assert any("SWAP" in row and "THROTTLED" in row for row in rows)
+    assert any("HOT" in row and "THROTTLED" in row for row in rows)
+    assert not any("SWAP" in row and "THROTTLED" in row for row in rows)
 
 
 def test_format_stats_grid_hot_row_is_not_truncated_by_column_width():

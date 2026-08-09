@@ -412,12 +412,21 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
         hot_str = f"{_temp(hot_value)} ({describe_sensor(hot_chip, hot_feature)})"
     else:
         hot_str = "?°C"
+    # THROTTLED is a CPU-thermal flag (core_throttle_count deltas, see
+    # sysinfo.py), not a swap-related one — appended to HOT's own cell
+    # specifically because that's the one cell in this whole grid with
+    # no fixed-width neighbor to its right (see the module docstring's
+    # own reasoning for why HOT gets a row to itself), so it's the one
+    # place THROTTLED can't get silently clipped by column width. Found
+    # live, asked for — an earlier version tacked it onto SWAP purely
+    # because that happened to be where free row-space was, which read
+    # as "why is a CPU heat flag next to swap I/O" once actually asked.
+    if sysinfo_data and sysinfo_data.get("throttled_recently"):
+        hot_str += " THROTTLED"
 
     swap_in = sysinfo_data.get("swap_in_kb_s") if sysinfo_data else None
     swap_out = sysinfo_data.get("swap_out_kb_s") if sysinfo_data else None
     swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
-    if sysinfo_data and sysinfo_data.get("throttled_recently"):
-        swap_str += " THROTTLED"
 
     columns = [
         [("CPU", _pct(cpu)), ("CPUTEMP", cpu_temp_str), ("HOT", hot_str)],
