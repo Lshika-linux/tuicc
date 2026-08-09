@@ -278,6 +278,11 @@ def test_format_stats_grid_shows_unknown_as_question_marks():
 
 
 def test_format_stats_grid_shows_real_values():
+    # Grouped by column, not by row: CPU/CPUTEMP/HOT together (column
+    # 1), RAM/DISK together (column 2), LOAD/SWAP together (column 3) —
+    # found live, asked for. Rendered row-by-row, so row 0 is
+    # CPU+RAM+LOAD, row 1 is CPUTEMP+DISK+SWAP, and row 2 is HOT alone
+    # (column 1's own 3rd entry — the other two columns only have 2).
     sysinfo_data = {
         "cpu_percent": 23.4,
         "ram": {"total_kb": 16_000_000, "used_kb": 4_000_000, "available_kb": 12_000_000, "percent": 25.0},
@@ -287,23 +292,41 @@ def test_format_stats_grid_shows_real_values():
     }
     sensors_data = {"cpu_temp": (58.0, "coretemp-isa-0000", "Package id 0"), "hottest": (58.0, "coretemp-isa-0000", "Package id 0")}
     rows = _format_stats_grid(sysinfo_data, sensors_data)
+    assert len(rows) == 3
     assert "CPU" in rows[0] and "23%" in rows[0]
     # RAM: used/available in GiB (binary), not a bare percent.
     assert "RAM" in rows[0] and "3.8/11.4 GiB" in rows[0]
-    # DISK: used/free in GB (decimal), not a bare percent.
-    assert "DISK" in rows[0] and "100/400 GB" in rows[0]
+    assert "LOAD" in rows[0] and "0.5/0.6/0.6" in rows[0]
     assert "CPUTEMP" in rows[1] and "58°C" in rows[1]
-    assert "CPU (Package id 0)" in rows[1]
+    # DISK: used/free in GB (decimal), not a bare percent.
+    assert "DISK" in rows[1] and "100/400 GB" in rows[1]
+    assert "SWAP" in rows[1]
+    # HOT gets the whole 3rd row to itself (nothing else has a 3rd
+    # column entry) — this is the actual fix for it getting truncated
+    # mid-word when it used to share a row with LOAD and CPUTEMP.
+    assert "HOT" in rows[2] and "CPU (Package id 0)" in rows[2]
 
 
-def test_format_stats_grid_shows_throttled_flag_in_third_row():
+def test_format_stats_grid_throttled_flag_appends_to_swap():
     sysinfo_data = {
-        "cpu_percent": None, "ram_percent": None, "disk": None,
+        "cpu_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
         "swap_in_kb_s": None, "swap_out_kb_s": None,
     }
     rows = _format_stats_grid(sysinfo_data, None)
-    assert "THROTTLED" in rows[2]
+    assert any("SWAP" in row and "THROTTLED" in row for row in rows)
+
+
+def test_format_stats_grid_hot_row_is_not_truncated_by_column_width():
+    # A long describe_sensor() label ("CPU (Package id 0)") must
+    # survive in full on its own row — the whole point of grouping by
+    # column instead of by row.
+    sensors_data = {
+        "cpu_temp": None,
+        "hottest": (58.0, "coretemp-isa-0000", "Package id 0"),
+    }
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=sensors_data)
+    assert rows[2] == "HOT  58°C (CPU (Package id 0))"
 
 
 def test_format_stats_grid_columns_are_fixed_width():

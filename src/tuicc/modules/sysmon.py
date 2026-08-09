@@ -352,11 +352,21 @@ def _grid_row(cells: list[tuple[str, str]]) -> str:
 
 
 def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> list[str]:
-    """Three fixed GRID_COL_WIDTH-column rows — CPU/RAM/DISK, then
-    LOAD/CPUTEMP/HOT, then SWAP (+ a THROTTLED flag in the same row
-    when true, blank otherwise). Columns side by side, not one value
-    per line — the box's own row budget can't fit that (see module
-    docstring) — but now genuinely ALIGNED, not just space-separated.
+    """Three side-by-side COLUMNS, grouped by what they're actually
+    about, not three side-by-side ROWS — found live, asked for: CPU/
+    CPUTEMP/HOT together (CPU-related), RAM/DISK together (capacity-
+    related), LOAD/SWAP together (system-pressure-related). The three
+    columns don't all have the same number of entries (CPU's own
+    column has 3, the other two have 2) — rendered row-by-row, so the
+    third grid row only has CPU's column's own content (HOT) on it,
+    nothing to its right competing for width. That's the actual fix
+    for HOT's own value getting cut off mid-word: reusing _grid_row's
+    existing "only the LAST cell in a row is left unpadded/untruncated"
+    rule, a row with just one real cell on it makes that cell the last
+    one by definition, so it gets the row's own full width instead of
+    being squeezed into a fixed GRID_COL_WIDTH the way it was when HOT
+    used to share a row with LOAD and CPUTEMP.
+
     Any single value that's currently unknown (a poll that hasn't
     completed yet, or a real poll error) shows as "?" rather than a
     misleading 0 — same None-vs-0 discipline as everywhere else.
@@ -406,16 +416,16 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
     swap_in = sysinfo_data.get("swap_in_kb_s") if sysinfo_data else None
     swap_out = sysinfo_data.get("swap_out_kb_s") if sysinfo_data else None
     swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
-    throttled = bool(sysinfo_data and sysinfo_data.get("throttled_recently"))
+    if sysinfo_data and sysinfo_data.get("throttled_recently"):
+        swap_str += " THROTTLED"
 
-    row1 = _grid_row([("CPU", _pct(cpu)), ("RAM", ram_str), ("DISK", disk_str)])
-    row2 = _grid_row([("LOAD", load_str), ("CPUTEMP", cpu_temp_str), ("HOT", hot_str)])
-    row3_cells = [("SWAP", swap_str)]
-    if throttled:
-        row3_cells.append(("", "THROTTLED"))
-    row3 = _grid_row(row3_cells)
-
-    return [row1, row2, row3]
+    columns = [
+        [("CPU", _pct(cpu)), ("CPUTEMP", cpu_temp_str), ("HOT", hot_str)],
+        [("RAM", ram_str), ("DISK", disk_str)],
+        [("LOAD", load_str), ("SWAP", swap_str)],
+    ]
+    max_rows = max(len(col) for col in columns)
+    return [_grid_row([col[i] for col in columns if i < len(col)]) for i in range(max_rows)]
 
 
 # ---------- bottom diagnostics line ----------
