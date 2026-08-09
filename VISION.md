@@ -492,6 +492,134 @@ comical 3%. Actions: Enter — `provider.close_window()`; secondary —
 SIGTERM with the existing pending_confirm dialog. /proc parsing as pure
 functions with recorded fixtures, provider-style discipline.
 
+**Overall system stats, decided in a long live design discussion with
+the user (not in the original plan) — every candidate has to pass a
+three-part test the user stated outright: "tells you something, calls
+for action, or is used to flex — otherwise don't bother me with it."**
+This is a sharper, feature-specific restatement of section 1's own
+Context test ("bounded, read-only decision input"), and it's what
+actually decided the final list below — several tempting candidates
+(uptime, package-update counts, disk/battery health) failed it or hit
+real implementation friction and got cut. Final v1 scope, passive
+display only (see its own paragraph below for what's explicitly
+deferred):
+
+- CPU%/RAM% overall, alongside the per-window list above.
+- **Disk usage** (df-style) — calls for action: clean something up.
+- **Load average** (1/5/15 min, `/proc/loadavg`) — trivial, free, tells
+  you the system is genuinely busy.
+- **CPU temp** — deliberately the SPECIFIC CPU package reading, not a
+  "hottest sensor in the system" catch-all (considered, explicitly
+  rejected: this one is "the flex value", the user's own words, needs
+  to be unambiguously the CPU). Confirmed live on this session's own
+  machine (T480) that getting this right is genuinely non-trivial: 7
+  different `/sys/class/thermal/thermal_zone*` entries with confusing
+  type names (`INT3400`, `acpitz`, `SEN1`, `pch_skylake`, `B0D4`,
+  `x86_pkg_temp`, `iwlwifi_1`) plus several separate `hwmon` devices —
+  naively reading the first thermal zone gives `INT3400` at 20°C,
+  nowhere near the real CPU reading. `x86_pkg_temp` (thermal_zone) and
+  `hwmon`'s own "coretemp" device's "Package id 0" label agreed with
+  each other live (57°C both) — confirms the right target exists, but
+  picking it needs a real vendor-aware heuristic (Intel: coretemp
+  "Package id N"; AMD: k10temp/zenpower "Tctl"/"Tdie"), not a
+  first-zone guess. Build against `sensors -j` (lm-sensors, already
+  solves this cross-vendor problem) rather than reimplementing
+  hwmon/thermal-zone selection from scratch — same "reuse the one
+  already-correct tool" reasoning brightness.py's own docstring gives
+  for brightnessctl. Optional dependency, same missing-binary-is-not-
+  an-error tolerance as cava.
+- **Hottest sensor + its own label** (e.g. "68°C (nvme)") — a SEPARATE
+  line from CPU temp, not a replacement for it: found live, discussing
+  it with the user — CPU is not always the hottest thing in a laptop,
+  NVMe SSDs commonly exceed CPU temps under heavy sustained I/O,
+  especially on a thin/passively-cooled chassis exactly like this
+  session's own T480. Showing the label alongside the value matters —
+  claiming "CPU: 68°C" when it's actually the SSD would be a real,
+  actionably wrong claim, not just an imprecise one.
+- **CPU thermal throttling** — whether the CPU has throttled RECENTLY
+  (since the last poll), a stronger, more directly actionable signal
+  than raw temperature alone ("this heat is measurably costing you
+  performance right now" vs "it's warm but who knows if that
+  matters"). Implemented against
+  `/sys/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count`
+  (summed across cores, delta between polls) instead of the
+  originally-proposed current-vs-max scaling-frequency comparison —
+  found during implementation: `scaling_cur_freq` sitting well below
+  `cpuinfo_max_freq` is the NORMAL, constant state of an idle or
+  power-saving-governed CPU, not a throttling signal on its own: a
+  laptop idling at its lowest P-state would read as "throttled" every
+  single poll, a false positive on essentially every real machine, not
+  an edge case. `core_throttle_count` is the kernel's own thermal
+  governor's dedicated counter, incremented only when PROCHOT/real
+  thermal throttling actually engages — unambiguous, no idle-vs-
+  throttled disambiguation needed. Intel-specific sysfs (not every
+  CPU family/driver exposes it) — None (not a false "not throttled")
+  when absent, same degraded-not-broken tolerance as everywhere else.
+- **Swap I/O rate**, not a static swap-used percentage — found live,
+  reasoned through with the user: Linux proactively swaps out rarely-
+  touched pages even with plenty of free RAM, so a static "2GB swap
+  used" reading is a weak, often-misleading signal (harmless kernel
+  housekeeping reads identically to real thrashing on a plain gauge).
+  Swap ACTUALLY happening right now (`/proc/vmstat`'s `pswpin`/
+  `pswpout` counters, delta between StatusWorker samples — the exact
+  same pattern CPU% already uses) is the real thrashing signal.
+- **Failed systemd units** (`systemctl --failed`) — shown only when
+  count > 0, the same "no news is no news" treatment no-silent-
+  failure's own philosophy extends to here: a quiet system says
+  nothing, not "0 failed services".
+- **OOM killer events since boot** — its own line, separate from the
+  general error count below (see that entry for why), shown only when
+  it's actually happened: "⚠ OOM killed firefox (14:32)", urgent color.
+  Solves a real, common mystery ("why did my browser just vanish with
+  no explanation") — detected via `journalctl -k -b -o json`
+  (structured output, not fragile free-text scraping) filtered for
+  "Killed process".
+- **General dmesg/journalctl errors since boot** (`journalctl -p
+  err..alert -b`), a bounded count — **deduplicated against OOM/
+  failed-systemd** (the user's own explicit call, over the simpler
+  "let them overlap" alternative) so the same real event never gets
+  counted twice across different lines. Detail (the most recent
+  error's own text) surfaces via preview_text on selection, same one-
+  line-per-physical-line convention control.py's own action_error
+  display already established (a raw embedded "\n" escapes
+  draw_centered_lines' own positioning, found live building that).
+
+Explicitly cut, with the reasoning that killed each one:
+- **Uptime** — fails the three-part test outright: doesn't inform a
+  decision, isn't really flex-worthy either.
+- **Package updates available** — would pass the test (calls for
+  action: "go update"), cut purely on implementation cost: genuinely
+  different per distro (NixOS generation staleness vs Arch's own
+  `checkupdates` vs dnf/apt), would need its own registry-backend
+  pattern like audio/connectivity rather than one simple source.
+  Revisit as its own scoped follow-up, not bundled into R6.
+- **Battery health** (cycle count / energy_full vs energy_full_design)
+  — genuinely free data (battery.py already reads both fields for
+  aggregate()'s own energy-weighting) but belongs to bars.py's BAT
+  gauge as a future addition, not this module.
+- **Disk health (SMART)** — same treatment as battery health, deferred
+  rather than cut outright: real value ("your disk is dying, back up
+  now" — often days/weeks of advance warning), but `smartctl` commonly
+  needs root/sudo (varies by distro's own udev rules) on top of being
+  an external tool dependency. Revisit if the permission story turns
+  out cleaner than expected on real hardware.
+- **GPU usage** — same vendor-fragmentation problem VISION.md already
+  rejects per-app network monitoring over; not pursued.
+
+**Explicitly deferred past R6's own v1 (backlog, not "no"):** a
+per-row "open this in a real terminal" action — tuicc computes/shows
+its own bounded summary, but Enter (or a secondary key) on, say, the
+failed-systemd line would spawn a terminal actually running
+`systemctl status <unit>`, letting the user dig into the real, full
+output themselves rather than only ever seeing tuicc's own digest.
+Needs a new config value (which terminal to spawn — CONTRIBUTING.md's
+own "no hardcoded personal preferences" rule means this can't default
+to whatever terminal the person building it happens to run) and a
+shared per-row-diagnostic-action pattern reusable across several of
+the lines above, not just one. Cut from v1 purely to keep the first
+pass to "tuicc shows you things", not also "tuicc becomes a launcher
+for a second tier of diagnostic tools" in the same pass.
+
 ### R7 — Default preset + docs rewrite
 Last, and done largely *inside tuicc* (F1 spawn, F2 resize, F3 save).
 Compose the thesis screen: left column sidebar — connectivity — control

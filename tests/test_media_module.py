@@ -16,8 +16,7 @@ from tuicc.audio.model import AudioSink
 from tuicc.modules.media import (
     _player_label, _body_label, _source_label, marquee_text, has_scrolling_content,
     _build_rows, nav_items, handle_row, is_expanded, collapse, _cava_row_level,
-    _window_start, _selected_player_index, _selected_output_index, _section_nav_indices,
-    _header_with_count,
+    _selected_player_index, _selected_output_index,
 )
 
 
@@ -183,18 +182,9 @@ def test_collapse_when_nothing_expanded_returns_none():
     assert collapse() is None
 
 
-# ---------- _header_with_count ----------
-
-def test_header_with_count_appends_the_real_item_count():
-    assert _header_with_count("Now Playing", []) == "Now Playing [0]"
-    assert _header_with_count("Now Playing", [_player(), _player(bus_name="b")]) == "Now Playing [2]"
-
-
-def test_header_with_count_omitted_when_unknown():
-    # None -> count genuinely unknown (not polled yet, or poll error) -
-    # must not claim "[0]", same None-vs-[] discipline as elsewhere.
-    assert _header_with_count("Output", None) == "Output"
-
+# ---------- _build_rows header counts (windowed_list.header_with_count's
+# own logic is tested directly in test_windowed_list.py; these three
+# just confirm _build_rows actually wires it in for both sections) ----------
 
 def test_build_rows_now_playing_header_shows_count():
     _reset_module_state()
@@ -350,33 +340,6 @@ def test_fewer_than_three_players_never_scrolls():
     rows = _build_rows(ctx, box_h=20)
     shown = [p.bus_name for k, p in rows if k == "player"]
     assert shown == ["0", "1"]
-
-
-# ---------- _window_start ----------
-
-def test_window_start_no_scroll_needed_when_everything_fits():
-    assert _window_start(count=2, selected_index=1) == 0
-    assert _window_start(count=3, selected_index=2) == 0
-
-
-def test_window_start_no_selection_starts_at_zero():
-    assert _window_start(count=10, selected_index=None) == 0
-
-
-def test_window_start_selection_within_first_window_stays_at_zero():
-    assert _window_start(count=10, selected_index=0) == 0
-    assert _window_start(count=10, selected_index=2) == 0
-
-
-def test_window_start_scrolls_minimally_to_include_selection():
-    # selecting index 3 (the 4th item) with 3 visible slots must bring
-    # it into view as the LAST visible slot, not centered/over-scrolled
-    assert _window_start(count=10, selected_index=3) == 1
-    assert _window_start(count=10, selected_index=9) == 7
-
-
-def test_window_start_never_scrolls_past_the_end():
-    assert _window_start(count=5, selected_index=4, visible_slots=3) == 2  # not 4 or more
 
 
 # ---------- _selected_player_index / _selected_output_index ----------
@@ -647,29 +610,6 @@ def test_nav_items_peek_items_work_for_outputs_too():
 
     ids = [item.focus_target for item in items if item.target_kind == "media_output"]
     assert ids == ["0", "1", "2", "3"]
-
-
-# ---------- _section_nav_indices ----------
-
-def test_section_nav_indices_none_when_everything_fits():
-    assert _section_nav_indices(count=3, selected_index=None) == (None, None)
-    assert _section_nav_indices(count=0, selected_index=None) == (None, None)
-
-
-def test_section_nav_indices_after_only_at_the_start():
-    # window is [0,1,2] when nothing selected -> nothing before it,
-    # index 3 is the one peek item right after
-    assert _section_nav_indices(count=6, selected_index=None) == (None, 3)
-
-
-def test_section_nav_indices_both_sides_when_scrolled_into_the_middle():
-    # 6 items, selected index 3 -> window [1,2,3] (min(3-3+1, 6-3)=1)
-    assert _section_nav_indices(count=6, selected_index=3) == (0, 4)
-
-
-def test_section_nav_indices_before_only_at_the_end():
-    # window ends at the last item -> nothing after, one peek before it
-    assert _section_nav_indices(count=6, selected_index=5) == (2, None)
 
 
 # ---------- handle_row ----------

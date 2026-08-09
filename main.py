@@ -37,6 +37,10 @@ from tuicc.status_worker import StatusWorker, Domain
 from tuicc import control
 from tuicc import battery
 from tuicc import brightness
+from tuicc import procmon
+from tuicc import sysinfo
+from tuicc import sensors
+from tuicc import diagnostics
 from tuicc.layout import ModuleBox
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
@@ -58,6 +62,39 @@ from tuicc import resize_mode, help_mode, pending_moves
 from tuicc.modules import launcher as launcher_mode
 from tuicc.modules import sessions as sessions_mode
 from tuicc.modules import media as media_mode
+from tuicc.modules import sysmon as sysmon_mode
+
+
+def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider):
+    """Fills in `pid` for any procmon.WindowInfo currently missing one
+    (i3 has no native pid on its own IPC tree — see providers/base.py's
+    resolve_pid() docstring) by calling Provider.resolve_pid() here,
+    main-thread, and ONLY for windows within sysmon.py's own currently-
+    visible VISIBLE_SLOTS scroll window (sysmon_mode.visible_window_ids)
+    — resolve_pid() is a real, possibly-slow on-demand X11 lookup on
+    i3, so doing it for every window on every frame regardless of
+    visibility would be wasted work for a long, mostly-scrolled-out-of-
+    view window list. Resolved pids are cached indefinitely per
+    window_id in `resolved_pid_cache` (main.py's own dict, not on the
+    WindowInfo objects themselves, which are rebuilt fresh every frame
+    from `state`) — a window that closes just stops appearing in
+    `windows` on a later frame; its now-orphaned cache entry is
+    harmless and small enough not to bother clearing, same accepted-
+    small-growth tradeoff Provider.no_focus_next_window's own
+    for_window rules already document (see CLAUDE.md).
+    """
+    visible_ids = sysmon_mode.visible_window_ids(windows, selected_id)
+    resolved = []
+    for w in windows:
+        pid = w.pid
+        if pid is None:
+            pid = resolved_pid_cache.get(w.window_id)
+        if pid is None and w.window_id in visible_ids:
+            pid = provider.resolve_pid(w.window_id)
+            if pid is not None:
+                resolved_pid_cache[w.window_id] = pid
+        resolved.append(procmon.WindowInfo(window_id=w.window_id, app_id=w.app_id, title=w.title, pid=pid))
+    return resolved
 
 
 def main(stdscr):
@@ -80,6 +117,18 @@ def main(stdscr):
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
     audio_backend = build_audio_backend(cfg.audio_backend_name)
     media_backend = MprisBackend()
+    # VISION.md's R6 (system monitor) — see procmon.py's own module
+    # docstring for why PidFeed exists at all: the "windows" Domain's
+    # poll() (below) runs on StatusWorker's own background thread and
+    # must never touch `provider` directly, so PidFeed is how it learns
+    # the current frame's window list instead. One instance of each,
+    # constructed here (not per-poll) so the stateful samplers actually
+    # see consecutive polls' prior state (CPU%/swap-rate/throttle are
+    # all deltas — see procmon.py/sysinfo.py's own docstrings).
+    pid_feed = procmon.PidFeed()
+    proc_sampler = procmon.ProcMonSampler()
+    sysinfo_sampler = sysinfo.SysInfoSampler()
+    sensors_source = sensors.SensorsSource()
     # One shared worker/thread for every domain — wifi/bluetooth today,
     # audio/brightness/control-toggle domains (VISION.md's R5) register
     # against this exact same instance as they land, not a separate
@@ -181,6 +230,36 @@ def main(stdscr):
             # ~3/s is still cheap on any real machine, revisit only if
             # that stops being true somewhere.
             poll_interval=0.3,
+        ),
+        # VISION.md's R6 — see procmon.py's own module docstring for why
+        # this reads pids via PidFeed rather than closing over `provider`
+        # directly (Provider stays main-thread-only, same as every other
+        # Domain here).
+        Domain(
+            name="windows",
+            poll=lambda: proc_sampler.poll(pid_feed.get()),
+            actions={},
+        ),
+        Domain(
+            name="sysinfo",
+            poll=sysinfo_sampler.poll,
+            actions={},
+        ),
+        Domain(
+            name="sensors",
+            poll=sensors_source.poll,
+            actions={},
+        ),
+        Domain(
+            name="diagnostics",
+            poll=diagnostics.poll_diagnostics,
+            actions={},
+            # journalctl/systemctl subprocess calls are real (if small)
+            # work — same "don't hammer it" reasoning as brightness's
+            # own poll_interval, just far less time-sensitive (failed
+            # units/OOM/log errors don't need sub-second freshness the
+            # way VOL/BRI/BAT do), so this stays on StatusWorker's
+            # shared default interval rather than tightening it.
         ),
     ]
     # One Domain per [[control.toggle]] entry, not one shared domain
@@ -337,6 +416,12 @@ def main(stdscr):
     help_state = help_mode.HelpState()
     launcher = launcher_mode.LauncherState()
     moves = pending_moves.PendingMovesQueue()
+    # window_id -> pid, filled in lazily by _resolve_visible_pids() below
+    # (i3 only — sway's Window.pid is already populated from get_state()
+    # directly, see model.py's own docstring) — main.py-owned, not
+    # sysmon.py's, since resolving a pid needs `provider`, which no
+    # module's draw()/nav_items() ever touches (see CLAUDE.md).
+    resolved_pid_cache = {}
 
     # A generic transient toast — used by save/cycle-preset as much as
     # by resize, genuinely main-loop-level, not owned by either module.
@@ -420,7 +505,9 @@ def main(stdscr):
         # in practice (each is scoped to its own module, and leaving a
         # module auto-collapses it, see the per-frame check above), but
         # the OR is what actually stays correct if that ever changes.
-        return sessions_mode.is_expanded() or media_mode.is_expanded()
+        # sysmon.py's window rows (VISION.md's R6) are a third module
+        # using this same two-level model, added the same way.
+        return sessions_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
 
     # No `break` anywhere below this point — tuicc's lifecycle model
     # (VISION.md section 2) is a persistent process the WM shows/hides;
@@ -480,6 +567,21 @@ def main(stdscr):
             term_height, term_width = stdscr.getmaxyx()
             boxes = compute_boxes(cfg.layout, term_width, term_height)
             state = provider.get_state()
+
+            # VISION.md's R6 — publish this frame's window list for the
+            # background "windows" Domain to pick up next poll (see
+            # procmon.py's own module docstring for why this crosses the
+            # thread boundary via PidFeed rather than a Domain reading
+            # `provider`/`state` directly). Resolving i3's missing pids
+            # here, main-thread, right after `state` itself is fresh, is
+            # deliberately BEFORE this frame's own RenderContext/nav_items
+            # are built below — sysmon_mode.visible_window_ids() only
+            # needs `selected_id` (already current from last frame) and
+            # this frame's own flattened window list, not anything
+            # RenderContext provides.
+            pid_feed.set(_resolve_visible_pids(
+                procmon.flatten_windows(state), selected_id, resolved_pid_cache, provider,
+            ))
 
             if state.focused_region_id is not None and state.focused_region_id != last_focused_region_id:
                 origin_region_id = last_focused_region_id
@@ -572,6 +674,11 @@ def main(stdscr):
             # same two-level model sessions.py established.
             if active_module != "media" and media_mode.is_expanded():
                 media_mode.collapse()
+            # Same idea, sysmon.py's own window-row expand/collapse
+            # (VISION.md's R6) — see media.py's module docstring for
+            # why this two-level model needed to be reused a third time.
+            if active_module != "sysmon" and sysmon_mode.is_expanded():
+                sysmon_mode.collapse()
 
             ctx = RenderContext(
                 state=state,
@@ -704,6 +811,23 @@ def main(stdscr):
                         set_session_name(slot, new_name)
                         input_claim = None
                 elif not sessions_mode.handle_naming_key(key):
+                    input_claim = None
+                continue
+
+            if input_claim == "sysmon_nice":
+                # Fourth consumer of R2's input_claim — sysmon.py's own
+                # NICE value entry, same narrow key-capture shape as
+                # sessions_naming right above (a digits-only field, not
+                # a full modal). apply_nice_edit() itself calls
+                # os.setpriority() — there's no cfg/theme state to
+                # thread through here the way sessions_naming's rename
+                # needs cfg.session_names/set_session_name, so this
+                # tier is even simpler than that one.
+                if key == cfg.keybinds["confirm"]:
+                    result = sysmon_mode.apply_nice_edit()
+                    if result is not None:
+                        input_claim = None
+                elif not sysmon_mode.handle_nice_key(key):
                     input_claim = None
                 continue
 
@@ -907,6 +1031,13 @@ def main(stdscr):
                 # start_color_edit() call above.
                 if sessions_mode.is_naming():
                     input_claim = "sessions_naming"
+                # sysmon.py's own NICE action calls start_nice_edit() on
+                # itself (module-owned state, same as sessions.py's
+                # naming field) — same "main.py notices right after
+                # dispatch, claims input on the module's behalf" idiom
+                # as sessions_naming/help_colors above.
+                if sysmon_mode.is_editing_nice():
+                    input_claim = "sysmon_nice"
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
@@ -1033,6 +1164,14 @@ def main(stdscr):
                 if collapsed_bus_name is not None:
                     selected_id = f"media:{collapsed_bus_name}:row"
                     active_module = "media"
+            elif key == 27 and sysmon_mode.is_expanded():
+                # Same idea as sessions.py's/media.py's own Escape-
+                # collapse branches above, mirrored for sysmon.py's
+                # window rows (VISION.md's R6).
+                collapsed_window_id = sysmon_mode.collapse()
+                if collapsed_window_id is not None:
+                    selected_id = f"sysmon:{collapsed_window_id}:row"
+                    active_module = "sysmon"
             elif key == 27:  # Escape, no active input claim: dismiss at top level
                 if cfg.return_to_origin and origin_region_id is not None:
                     provider.focus_region(origin_region_id)

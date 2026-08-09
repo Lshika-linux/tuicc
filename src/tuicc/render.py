@@ -23,6 +23,7 @@ from tuicc.modules import (
     control,
     media,
     bars,
+    sysmon,
 )
 from tuicc.actions import BASE_HANDLERS
 
@@ -40,6 +41,7 @@ MODULES = {
     "control": control.draw,
     "media": media.draw,
     "bars": bars.draw,
+    "sysmon": sysmon.draw,
 }
 
 NAV_PROVIDERS = {
@@ -55,6 +57,7 @@ NAV_PROVIDERS = {
     "control": control.nav_items,
     "media": media.nav_items,
     "bars": bars.nav_items,
+    "sysmon": sysmon.nav_items,
 }
 
 ACTION_HANDLERS = dict(BASE_HANDLERS)
@@ -64,6 +67,7 @@ ACTION_HANDLERS[control.TARGET_KIND] = control.handle
 ACTION_HANDLERS.update(connectivity.HANDLERS)
 ACTION_HANDLERS.update(sessions.HANDLERS)
 ACTION_HANDLERS.update(media.HANDLERS)
+ACTION_HANDLERS.update(sysmon.HANDLERS)
 
 def draw_all(stdscr, layout, boxes, ctx):
     for module_box in layout.boxes:
