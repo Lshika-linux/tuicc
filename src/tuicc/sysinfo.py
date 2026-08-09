@@ -78,9 +78,15 @@ def parse_meminfo(text: str) -> dict[str, int]:
     return result
 
 
-def get_ram_percent(proc_path: str = PROC_PATH) -> float | None:
-    """None if /proc/meminfo can't be read at all, or doesn't expose
-    MemTotal — genuinely can't tell, distinct from a real 0%.
+def get_ram_info(proc_path: str = PROC_PATH) -> dict | None:
+    """{"total_kb", "available_kb", "used_kb", "percent"} — same
+    MemAvailable-based calculation get_ram_percent() (below) uses, also
+    exposing the underlying kB counts so a caller (sysmon.py's own
+    stats grid) can show real used/available amounts in GiB, not just
+    a bare percentage — found live, asked for ("RAM 70% je fajn ale
+    lepší by bylo U/A v GiB"). None under the same conditions
+    get_ram_percent() already returns None for (can't read meminfo, or
+    no MemTotal).
     """
     try:
         with open(f"{proc_path}/meminfo") as f:
@@ -98,7 +104,21 @@ def get_ram_percent(proc_path: str = PROC_PATH) -> float | None:
         # free+buffers+cached approximation rather than reporting
         # nothing at all.
         available = mem.get("MemFree", 0) + mem.get("Buffers", 0) + mem.get("Cached", 0)
-    return max(0.0, min(100.0, 100.0 * (1 - available / total)))
+    available = max(0, min(available, total))
+    used = total - available
+    percent = max(0.0, min(100.0, 100.0 * used / total))
+    return {"total_kb": total, "available_kb": available, "used_kb": used, "percent": percent}
+
+
+def get_ram_percent(proc_path: str = PROC_PATH) -> float | None:
+    """None if /proc/meminfo can't be read at all, or doesn't expose
+    MemTotal — genuinely can't tell, distinct from a real 0%. Thin
+    wrapper over get_ram_info() (above) — kept as its own function
+    since it predates get_ram_info and nothing else needs the fuller
+    dict.
+    """
+    info = get_ram_info(proc_path)
+    return info["percent"] if info is not None else None
 
 
 def get_load_average(proc_path: str = PROC_PATH) -> tuple[float, float, float] | None:
@@ -238,9 +258,11 @@ class SysInfoSampler:
         if throttle_count is not None and self._prev_throttle is not None:
             throttled_recently = throttle_count > self._prev_throttle
 
+        ram_info = get_ram_info(proc_path)
         result = {
             "cpu_percent": cpu_percent,
-            "ram_percent": get_ram_percent(proc_path),
+            "ram_percent": ram_info["percent"] if ram_info is not None else None,
+            "ram": ram_info,
             "disk": get_disk_usage(disk_path),
             "load_average": get_load_average(proc_path),
             "throttled_recently": throttled_recently,

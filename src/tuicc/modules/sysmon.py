@@ -353,13 +353,25 @@ def _grid_row(cells: list[tuple[str, str]]) -> str:
 
 def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> list[str]:
     """Three fixed GRID_COL_WIDTH-column rows — CPU/RAM/DISK, then
-    LOAD/TEMP/HOT, then SWAP (+ a THROTTLED flag in the same row when
-    true, blank otherwise). Columns side by side, not one value per
-    line — the box's own row budget can't fit that (see module
+    LOAD/CPUTEMP/HOT, then SWAP (+ a THROTTLED flag in the same row
+    when true, blank otherwise). Columns side by side, not one value
+    per line — the box's own row budget can't fit that (see module
     docstring) — but now genuinely ALIGNED, not just space-separated.
     Any single value that's currently unknown (a poll that hasn't
     completed yet, or a real poll error) shows as "?" rather than a
     misleading 0 — same None-vs-0 discipline as everywhere else.
+
+    RAM/DISK show used/available amounts, not a bare percent — found
+    live, asked for ("RAM 70% je fajn ale lepší by bylo U/A v GiB",
+    "disk 20% ... lepší by bylo U/A v GB"): a percentage alone doesn't
+    say how much room is actually left. RAM in GiB (binary, /1024²)
+    since that's the unit the kernel's own MemTotal/MemAvailable
+    already round to; DISK in GB (decimal, /1e9) matching how disk
+    capacity is conventionally reported everywhere else (drive
+    packaging, `df`'s own default). "TEMP" is renamed "CPUTEMP" for
+    clarity against the HOT row right below it — same value, but the
+    label alone didn't make clear it's specifically the CPU package,
+    not "temperature" in general.
     """
     def _pct(value):
         return f"{value:.0f}%" if value is not None else "?%"
@@ -368,9 +380,17 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
         return f"{value:.0f}°C" if value is not None else "?°C"
 
     cpu = sysinfo_data.get("cpu_percent") if sysinfo_data else None
-    ram = sysinfo_data.get("ram_percent") if sysinfo_data else None
+    ram = sysinfo_data.get("ram") if sysinfo_data else None
+    if ram:
+        gib = 1024 * 1024  # ram's own values are in kB (see sysinfo.get_ram_info)
+        ram_str = f"{ram['used_kb'] / gib:.1f}/{ram['available_kb'] / gib:.1f} GiB"
+    else:
+        ram_str = "?/? GiB"
     disk = sysinfo_data.get("disk") if sysinfo_data else None
-    disk_pct = disk.get("percent") if disk else None
+    if disk and disk.get("used") is not None and disk.get("free") is not None:
+        disk_str = f"{disk['used'] / 1e9:.0f}/{disk['free'] / 1e9:.0f} GB"
+    else:
+        disk_str = "?/? GB"
     load = sysinfo_data.get("load_average") if sysinfo_data else None
     load_str = f"{load[0]:.1f}/{load[1]:.1f}/{load[2]:.1f}" if load else "?/?/?"
 
@@ -388,8 +408,8 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
     swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
     throttled = bool(sysinfo_data and sysinfo_data.get("throttled_recently"))
 
-    row1 = _grid_row([("CPU", _pct(cpu)), ("RAM", _pct(ram)), ("DISK", _pct(disk_pct))])
-    row2 = _grid_row([("LOAD", load_str), ("TEMP", cpu_temp_str), ("HOT", hot_str)])
+    row1 = _grid_row([("CPU", _pct(cpu)), ("RAM", ram_str), ("DISK", disk_str)])
+    row2 = _grid_row([("LOAD", load_str), ("CPUTEMP", cpu_temp_str), ("HOT", hot_str)])
     row3_cells = [("SWAP", swap_str)]
     if throttled:
         row3_cells.append(("", "THROTTLED"))

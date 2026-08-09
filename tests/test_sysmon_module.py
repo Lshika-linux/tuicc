@@ -279,16 +279,20 @@ def test_format_stats_grid_shows_unknown_as_question_marks():
 
 def test_format_stats_grid_shows_real_values():
     sysinfo_data = {
-        "cpu_percent": 23.4, "ram_percent": 61.0,
-        "disk": {"percent": 45.0}, "load_average": (0.52, 0.58, 0.59),
+        "cpu_percent": 23.4,
+        "ram": {"total_kb": 16_000_000, "used_kb": 4_000_000, "available_kb": 12_000_000, "percent": 25.0},
+        "disk": {"total": 500_000_000_000, "used": 100_000_000_000, "free": 400_000_000_000, "percent": 20.0},
+        "load_average": (0.52, 0.58, 0.59),
         "throttled_recently": False, "swap_in_kb_s": 0.0, "swap_out_kb_s": 0.0,
     }
     sensors_data = {"cpu_temp": (58.0, "coretemp-isa-0000", "Package id 0"), "hottest": (58.0, "coretemp-isa-0000", "Package id 0")}
     rows = _format_stats_grid(sysinfo_data, sensors_data)
     assert "CPU" in rows[0] and "23%" in rows[0]
-    assert "RAM" in rows[0] and "61%" in rows[0]
-    assert "DISK" in rows[0] and "45%" in rows[0]
-    assert "TEMP" in rows[1] and "58°C" in rows[1]
+    # RAM: used/available in GiB (binary), not a bare percent.
+    assert "RAM" in rows[0] and "3.8/11.4 GiB" in rows[0]
+    # DISK: used/free in GB (decimal), not a bare percent.
+    assert "DISK" in rows[0] and "100/400 GB" in rows[0]
+    assert "CPUTEMP" in rows[1] and "58°C" in rows[1]
     assert "CPU (Package id 0)" in rows[1]
 
 

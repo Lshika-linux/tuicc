@@ -11,7 +11,7 @@ import pytest
 
 from tuicc import sysinfo
 from tuicc.sysinfo import (
-    SysInfoSampler, get_disk_usage, get_load_average, get_ram_percent,
+    SysInfoSampler, get_disk_usage, get_load_average, get_ram_info, get_ram_percent,
     parse_cpu_line, parse_meminfo, parse_vmstat, read_cpu_times,
     read_swap_pages, read_throttle_count,
 )
@@ -71,6 +71,19 @@ def test_get_ram_percent_missing_file_returns_none(tmp_path):
 def test_get_ram_percent_missing_mem_total_returns_none(tmp_path):
     (tmp_path / "meminfo").write_text("MemAvailable: 250 kB\n")
     assert get_ram_percent(str(tmp_path)) is None
+
+
+# ---------- get_ram_info ----------
+
+def test_get_ram_info_returns_kb_amounts_and_percent(tmp_path):
+    (tmp_path / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 250 kB\n")
+    assert get_ram_info(str(tmp_path)) == {
+        "total_kb": 1000, "available_kb": 250, "used_kb": 750, "percent": 75.0,
+    }
+
+
+def test_get_ram_info_missing_file_returns_none(tmp_path):
+    assert get_ram_info(str(tmp_path)) is None
 
 
 # ---------- get_load_average ----------
@@ -157,6 +170,7 @@ def test_first_poll_has_no_cpu_percent_yet(tmp_path):
 
     assert result["cpu_percent"] is None
     assert result["ram_percent"] == 50.0
+    assert result["ram"] == {"total_kb": 1000, "available_kb": 500, "used_kb": 500, "percent": 50.0}
     assert result["load_average"] == (0.1, 0.2, 0.3)
     assert result["swap_in_kb_s"] is None
     assert result["swap_out_kb_s"] is None
