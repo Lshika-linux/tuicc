@@ -171,15 +171,18 @@ are picked by tuicc's own code rather than something you type into
 `config.toml` yourself:
 
 - **`wpctl` or `pactl`** (`[audio] audio_backend`, default `wpctl`) —
-  needed for output-device switching in the media module. `wpctl`
-  (WirePlumber's CLI) is the right pick on basically every current
-  sway/i3 setup; `pactl` is there for plain PulseAudio instead.
-- **`brightnessctl`** — brightness backend exists but isn't wired into
-  a module yet, so nothing currently calls it.
+  needed for output-device switching in the media module, and for the
+  bars module's VOL gauge. `wpctl` (WirePlumber's CLI) is the right
+  pick on basically every current sway/i3 setup; `pactl` is there for
+  plain PulseAudio instead.
+- **`brightnessctl`** — backs the bars module's BRI gauge.
 - **`cava`** — genuinely optional, not required for anything else in
   the media module to work. Missing it just means no visualizer bars
   next to the output list — no warning, no degraded feature, tuicc
   doesn't even try to spawn it unless something's actually playing.
+- **`lm-sensors`** (the `sensors` binary) — backs the system module's
+  CPUTEMP/HOT readings. Same tolerance as `cava`: missing it just means
+  those two values show as unknown (`?°C`), no warning, no crash.
 
 Any of these missing degrades gracefully (a real, readable error where
 it's actually relevant — see `[[control.toggle]]` in
@@ -242,12 +245,16 @@ generic `NavItem` list, independent of which module an item belongs
 to.
 
 Modules — the sidebar, the preview, the launcher, connectivity, the
-power menu, and future ones — live as standalone files under
-`modules/`, each owning both how it draws itself and where its own
-focusable items are; adding one means adding a line to `render.py`'s
-registries, not touching the render loop itself. Config and presets
-are plain, transparent TOML, no hidden defaults baked into Python —
-delete one and tuicc regenerates a fresh default.
+power menu, sessions, control (user-defined toggles/cycles), media
+(MPRIS now-playing + output switching + cava visualizer), bars
+(volume/brightness/battery gauges), the system monitor (per-window
+CPU/RAM, overall stats, diagnostics), and future ones — live as
+standalone files under `modules/`, each owning both how
+it draws itself and where its own focusable items are; adding one
+means adding a line to `render.py`'s registries, not touching the
+render loop itself. Config and presets are plain, transparent TOML, no
+hidden defaults baked into Python — delete one and tuicc regenerates a
+fresh default.
 
 The full picture — the RenderContext pattern, why floating windows are
 drawn as an overview rather than pixel-perfect, why spatial navigation
@@ -263,6 +270,8 @@ src/tuicc/
 │                              #   as ratios, fixed counts, or box references
 ├── layout_engine.py          # resolves a Layout into absolute terminal cells
 ├── navigation.py              # NavItem, tab-order/hotkey navigation
+├── windowed_list.py            # fixed N-visible-slots + scrollable-via-peek-nav-items list
+│                              #   mechanic shared by media.py (Now Playing/Output) and sysmon.py (windows)
 ├── keybinds.py                 # config key names -> curses key codes
 ├── actions.py                   # region/window focus handlers shared across modules
 ├── context.py                    # RenderContext — everything a module needs per frame
@@ -274,9 +283,22 @@ src/tuicc/
 ├── resize_mode.py                      # interactive resize/move — ResizeState, SpawnPickerState
 ├── help_mode.py                        # F1 help menu — FAQ/keybinds, resize reference, color editor
 ├── status_worker.py                     # StatusWorker/Domain — one background poll thread shared by
-│                                        #   wifi/bluetooth/audio/media/every control.toggle
+│                                        #   wifi/bluetooth/audio/media/every control.toggle/sysmon's own domains
+├── push_worker.py                        # PushWorker/CombinedStatus — event-driven counterpart to
+├── combined_status.py                    #   StatusWorker, built+tested but NOT currently wired into
+│                                        #   main.py — see VISION.md's R8 for the open question this gates
 ├── control.py                            # backend for [[control.toggle]] — status_command + per-state command
 ├── brightness.py                          # brightnessctl wrapper (backend only, not wired into a module yet)
+├── battery.py                              # /sys/class/power_supply reader — backs bars.py's BAT gauge
+├── procmon.py                               # per-window CPU/RAM: /proc parsing, full-subtree aggregation,
+│                                          #   PidFeed (crosses the main-thread/StatusWorker-thread boundary)
+├── sysinfo.py                               # overall CPU%/RAM/disk/load/throttle/swap — backs sysmon.py's stats grid
+├── sensors.py                               # `sensors -j` wrapper — vendor-aware CPU temp + hottest-sensor reading
+├── diagnostics.py                           # failed systemd units + OOM + deduped journal errors — sysmon.py's
+│                                          #   diagnostics line
+├── session.py                              # capture/save/load a session's window layout (sessions.py's backend)
+├── pending_moves.py                         # PendingMovesQueue — matches a spawned/restored window to its
+│                                          #   target region once it maps, staggered, with a timeout
 ├── defaults/config.toml                  # packaged default config
 ├── presets/                               # built-in layout presets (plain TOML) — copied to
 │                                          #   ~/.config/tuicc/presets/<N>.toml on first use
@@ -288,6 +310,9 @@ src/tuicc/
 │   ├── connectivity.py              # wifi/bluetooth status + toggle
 │   ├── control.py                    # [[control.toggle]] rows — status dot + advance-on-confirm
 │   ├── media.py                       # MPRIS now-playing + transport + output switching + cava visualizer
+│   ├── bars.py                         # VOL/BRI/BAT vertical gauges
+│   ├── sysmon.py                       # per-window CPU/RAM list (CLOSE/KILL/NICE) + a configurable
+│   │                                  #   ([[sysmon.block]]) overall-stats grid + a diagnostics summary line
 │   ├── power_menu.py                   # lock/logout/reboot/shutdown, user-defined
 │   ├── sessions.py                      # save/load/delete a named set of window positions
 │   ├── quick_actions.py                  # generic action list — not in the default layout yet

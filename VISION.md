@@ -485,12 +485,17 @@ Both feed off StatusWorker (polling, action queue, pending blink).
 Entity list = windows from WMState (pid via `Window.pid` on sway,
 `provider.resolve_pid()` on i3). RAM from `/proc/<pid>/status` (VmRSS);
 CPU% as utime+stime delta between StatusWorker samples (~2s) — never in
-the render loop; optional disk I/O from `/proc/<pid>/io`. **The real
-work: aggregate full process subtrees** (walk
-`/proc/<pid>/task/*/children` or PPid chains) or Firefox shows a
+the render loop. **The real work: aggregate full process subtrees**
+(walk `/proc/<pid>/task/*/children` or PPid chains) or Firefox shows a
 comical 3%. Actions: Enter — `provider.close_window()`; secondary —
-SIGTERM with the existing pending_confirm dialog. /proc parsing as pure
-functions with recorded fixtures, provider-style discipline.
+SIGKILL (`kill -9`, not SIGTERM as originally sketched here — matches
+the KILL action's own name more directly than a graceful-shutdown
+signal would, and CLOSE already covers the graceful path) with the
+existing pending_confirm dialog. /proc parsing as pure functions with
+recorded fixtures, provider-style discipline. Per-window disk I/O
+(`/proc/<pid>/io`), floated here as optional, did NOT ship — cut for
+scope, not for any real problem found; revisit if it turns out to
+matter in practice.
 
 **Overall system stats, decided in a long live design discussion with
 the user (not in the original plan) — every candidate has to pass a
@@ -619,6 +624,31 @@ shared per-row-diagnostic-action pattern reusable across several of
 the lines above, not just one. Cut from v1 purely to keep the first
 pass to "tuicc shows you things", not also "tuicc becomes a launcher
 for a second tier of diagnostic tools" in the same pass.
+
+**As shipped, one significant design evolution beyond this plan — found
+live, over several rounds of visual iteration after the module first
+worked functionally, not decided up front:** the stats block's own
+layout, thresholds, and per-metric visibility all ended up as real
+`[[sysmon.block]]` config.toml entries (`config.py`'s
+`_build_sysmon_blocks()`/`DEFAULT_SYSMON_BLOCKS`), not constants in
+`modules/sysmon.py`. The user's own framing, verbatim: "ten config by
+měl být to jedno místo kde nastavuješ všechno ohledně boxíku" (the
+config should be the one place you configure everything about that
+box). Each block is `{metric, enabled, column, row, warning, urgent,
+label}` — column/row position, show/hide, and warning/urgent
+thresholds are all independently configurable per metric, with
+`column`+`row` colliding for two *enabled* blocks raising loudly at
+load time rather than one silently winning. Falls back to today's
+packaged layout when `[sysmon]` has no `[[block]]` entries, so nothing
+changes for anyone who hasn't opted in. Two related refinements from
+the same iteration: `draw_centered_lines` (`render_utils.py`) gained a
+two-column overflow mode for `preview_text` blocks longer than one
+column has rows for (found live: a 74-line diagnostics breakdown wrote
+its first line onto the box's own top border under the original
+single-column math), and `NavItem` gained a `preview_urgent` flag so a
+preview showing a real problem colors the WHOLE preview box border
+`theme.urgent`, not just the text inside it. Full reasoning for both
+lives in those files' own docstrings/commit history, not repeated here.
 
 ### R7 — Default preset + docs rewrite
 Last, and done largely *inside tuicc* (F1 spawn, F2 resize, F3 save).
