@@ -331,27 +331,59 @@ def _format_window_label(win_stat, available_w: int) -> str:
 GRID_COL_WIDTH = 18
 
 
-def _grid_row(cells: list[tuple[str, str]]) -> str:
-    """Joins (label, value) pairs into one row — every cell EXCEPT the
-    last is padded/truncated to GRID_COL_WIDTH so the next column lines
-    up; the last cell is left its natural length, since nothing needs
-    to align after it. Found live: HOT's own describe_sensor() label
-    ("58°C (CPU (Package id 0))") routinely runs past GRID_COL_WIDTH —
-    truncating it the same way the earlier, alignment-only columns need
-    to be truncated would cut off exactly the part that answers "why
-    am I looking at this sensor", the one thing this value exists to
-    show.
+def _grid_row(cells: list[tuple[str, list[tuple[str, str]]]]) -> list[tuple[str, str]]:
+    """Joins (label, value_segments) pairs into one row of (text, role)
+    segments — role in {"label", "value", "urgent"}, resolved to an
+    actual theme color by draw() (this function stays pure/curses-free,
+    same reasoning every other formatting helper here does). Found
+    live, asked for: metric labels (CPU, RAM, ...) in accent color, the
+    rest in plain text color, "ať se v tom lépe scanuje" — a flat single
+    color read as a wall of text, not something you could scan at a
+    glance for just the labels or just the values.
+
+    value_segments lets one value carry a differently-colored suffix —
+    HOT's own THROTTLED marker (see _format_stats_grid) needs to stay
+    urgent-red even though the temperature reading right before it is
+    plain text.
+
+    Every cell EXCEPT the last is padded/truncated to GRID_COL_WIDTH so
+    the next column lines up; the last cell is left its natural length,
+    since nothing needs to align after it. Found live: HOT's own
+    describe_sensor() label ("58°C (CPU (Package id 0))") routinely
+    runs past GRID_COL_WIDTH — truncating it the same way the earlier,
+    alignment-only columns need to be truncated would cut off exactly
+    the part that answers "why am I looking at this sensor".
     """
-    parts = []
-    for i, (label, value) in enumerate(cells):
-        text = f"{label:<4} {value}" if label else value
-        if i < len(cells) - 1:
-            text = text[:GRID_COL_WIDTH].ljust(GRID_COL_WIDTH)
-        parts.append(text)
-    return "".join(parts).rstrip()
+    segments: list[tuple[str, str]] = []
+    for i, (label, value_segments) in enumerate(cells):
+        cell = ([(f"{label:<4} ", "label")] if label else []) + list(value_segments)
+        cell_len = sum(len(text) for text, _role in cell)
+        is_last = i == len(cells) - 1
+        if not is_last:
+            if cell_len > GRID_COL_WIDTH:
+                trimmed: list[tuple[str, str]] = []
+                remaining = GRID_COL_WIDTH
+                for text, role in cell:
+                    if remaining <= 0:
+                        break
+                    piece = text[:remaining]
+                    trimmed.append((piece, role))
+                    remaining -= len(piece)
+                cell = trimmed
+            elif cell_len < GRID_COL_WIDTH:
+                # Padding's own color is irrelevant (it's blank), but
+                # needs SOME role to satisfy the (text, role) shape.
+                cell = cell + [(" " * (GRID_COL_WIDTH - cell_len), "value")]
+        segments.extend(cell)
+    # Trailing all-blank segments (the padding on a cell that turned
+    # out to be last after all, e.g. a single-cell row) don't need to
+    # be drawn — same "rstrip()" idea the old string-based version used.
+    while segments and not segments[-1][0].strip():
+        segments.pop()
+    return segments
 
 
-def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> list[str]:
+def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> list[list[tuple[str, str]]]:
     """Three side-by-side COLUMNS, grouped by what they're actually
     about, not three side-by-side ROWS — found live, asked for: CPU/
     CPUTEMP/HOT together (CPU-related), RAM/DISK together (capacity-
@@ -421,17 +453,20 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
     # live, asked for — an earlier version tacked it onto SWAP purely
     # because that happened to be where free row-space was, which read
     # as "why is a CPU heat flag next to swap I/O" once actually asked.
+    # Urgent-colored (its own segment, "urgent" role) so it actually
+    # draws the eye once it's visible at all — found live, asked for.
+    hot_segments = [(hot_str, "value")]
     if sysinfo_data and sysinfo_data.get("throttled_recently"):
-        hot_str += " THROTTLED"
+        hot_segments.append((" THROTTLED", "urgent"))
 
     swap_in = sysinfo_data.get("swap_in_kb_s") if sysinfo_data else None
     swap_out = sysinfo_data.get("swap_out_kb_s") if sysinfo_data else None
     swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
 
     columns = [
-        [("CPU", _pct(cpu)), ("CPUTEMP", cpu_temp_str), ("HOT", hot_str)],
-        [("RAM", ram_str), ("DISK", disk_str)],
-        [("LOAD", load_str), ("SWAP", swap_str)],
+        [("CPU", [(_pct(cpu), "value")]), ("CPUTEMP", [(cpu_temp_str, "value")]), ("HOT", hot_segments)],
+        [("RAM", [(ram_str, "value")]), ("DISK", [(disk_str, "value")])],
+        [("LOAD", [(load_str, "value")]), ("SWAP", [(swap_str, "value")])],
     ]
     max_rows = max(len(col) for col in columns)
     return [_grid_row([col[i] for col in columns if i < len(col)]) for i in range(max_rows)]
@@ -554,8 +589,31 @@ def draw(stdscr, box, ctx, module_name):
             pass
 
         elif kind == "stats_line":
+            # payload is a list of (text, role) segments from
+            # _format_stats_grid — role in {"label","value","urgent"}
+            # — drawn one after another so metric labels (CPU, RAM,
+            # ...) read in accent color and values in plain text,
+            # found live, asked for ("dej ty označení metriky ...
+            # accent barvou, a zbytek normální barvou, ať se v tom líp
+            # scanuje"). Clipped to inner_w across the WHOLE row, not
+            # per-segment, so a long last segment (HOT's own describe_
+            # sensor label) still degrades the same way a plain string
+            # would have.
+            col_x = x + 2
+            remaining = max(inner_w, 0)
+            role_colors = {
+                "label": theme.get("accent", 0),
+                "value": theme.get("text", 0),
+                "urgent": theme.get("urgent", 0),
+            }
             try:
-                stdscr.addstr(row, x + 2, payload[:max(inner_w, 0)], theme.get("text", 0))
+                for text, role in payload:
+                    if remaining <= 0:
+                        break
+                    clipped = text[:remaining]
+                    stdscr.addstr(row, col_x, clipped, role_colors.get(role, theme.get("text", 0)))
+                    col_x += len(clipped)
+                    remaining -= len(clipped)
             except curses.error:
                 pass
 

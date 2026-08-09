@@ -270,11 +270,19 @@ def test_format_window_label_short_name_fits_untouched(monkeypatch):
 
 
 # ---------- _format_stats_grid ----------
+# Each row is a list of (text, role) segments now, role in
+# {"label","value","urgent"} — draw() resolves role to a theme color
+# (accent/text/urgent respectively). _row_text() flattens a row back to
+# a plain string for the tests that only care about CONTENT, not color.
+
+def _row_text(row):
+    return "".join(text for text, _role in row)
+
 
 def test_format_stats_grid_shows_unknown_as_question_marks():
     rows = _format_stats_grid(sysinfo_data=None, sensors_data=None)
-    assert "CPU" in rows[0] and "?%" in rows[0]
-    assert "RAM" in rows[0]
+    assert "CPU" in _row_text(rows[0]) and "?%" in _row_text(rows[0])
+    assert "RAM" in _row_text(rows[0])
 
 
 def test_format_stats_grid_shows_real_values():
@@ -292,19 +300,20 @@ def test_format_stats_grid_shows_real_values():
     }
     sensors_data = {"cpu_temp": (58.0, "coretemp-isa-0000", "Package id 0"), "hottest": (58.0, "coretemp-isa-0000", "Package id 0")}
     rows = _format_stats_grid(sysinfo_data, sensors_data)
+    texts = [_row_text(r) for r in rows]
     assert len(rows) == 3
-    assert "CPU" in rows[0] and "23%" in rows[0]
+    assert "CPU" in texts[0] and "23%" in texts[0]
     # RAM: used/available in GiB (binary), not a bare percent.
-    assert "RAM" in rows[0] and "3.8/11.4 GiB" in rows[0]
-    assert "LOAD" in rows[0] and "0.5/0.6/0.6" in rows[0]
-    assert "CPUTEMP" in rows[1] and "58°C" in rows[1]
+    assert "RAM" in texts[0] and "3.8/11.4 GiB" in texts[0]
+    assert "LOAD" in texts[0] and "0.5/0.6/0.6" in texts[0]
+    assert "CPUTEMP" in texts[1] and "58°C" in texts[1]
     # DISK: used/free in GB (decimal), not a bare percent.
-    assert "DISK" in rows[1] and "100/400 GB" in rows[1]
-    assert "SWAP" in rows[1]
+    assert "DISK" in texts[1] and "100/400 GB" in texts[1]
+    assert "SWAP" in texts[1]
     # HOT gets the whole 3rd row to itself (nothing else has a 3rd
     # column entry) — this is the actual fix for it getting truncated
     # mid-word when it used to share a row with LOAD and CPUTEMP.
-    assert "HOT" in rows[2] and "CPU (Package id 0)" in rows[2]
+    assert "HOT" in texts[2] and "CPU (Package id 0)" in texts[2]
 
 
 def test_format_stats_grid_throttled_flag_appends_to_hot_not_swap():
@@ -319,8 +328,25 @@ def test_format_stats_grid_throttled_flag_appends_to_hot_not_swap():
         "swap_in_kb_s": None, "swap_out_kb_s": None,
     }
     rows = _format_stats_grid(sysinfo_data, None)
-    assert any("HOT" in row and "THROTTLED" in row for row in rows)
-    assert not any("SWAP" in row and "THROTTLED" in row for row in rows)
+    texts = [_row_text(r) for r in rows]
+    assert any("HOT" in t and "THROTTLED" in t for t in texts)
+    assert not any("SWAP" in t and "THROTTLED" in t for t in texts)
+
+
+def test_format_stats_grid_throttled_segment_has_urgent_role():
+    # Found live, asked for: THROTTLED should draw the eye once it's
+    # visible at all — its own segment, colored "urgent" (draw()
+    # resolves this to theme["urgent"]), not lumped into HOT's own
+    # plain-"value" temperature reading.
+    sysinfo_data = {
+        "cpu_percent": None, "disk": None,
+        "load_average": None, "throttled_recently": True,
+        "swap_in_kb_s": None, "swap_out_kb_s": None,
+    }
+    rows = _format_stats_grid(sysinfo_data, None)
+    hot_row = next(r for r in rows if "HOT" in _row_text(r))
+    urgent_texts = [text for text, role in hot_row if role == "urgent"]
+    assert any("THROTTLED" in t for t in urgent_texts)
 
 
 def test_format_stats_grid_hot_row_is_not_truncated_by_column_width():
@@ -332,7 +358,7 @@ def test_format_stats_grid_hot_row_is_not_truncated_by_column_width():
         "hottest": (58.0, "coretemp-isa-0000", "Package id 0"),
     }
     rows = _format_stats_grid(sysinfo_data=None, sensors_data=sensors_data)
-    assert rows[2] == "HOT  58°C (CPU (Package id 0))"
+    assert _row_text(rows[2]) == "HOT  58°C (CPU (Package id 0))"
 
 
 def test_format_stats_grid_columns_are_fixed_width():
@@ -340,7 +366,23 @@ def test_format_stats_grid_columns_are_fixed_width():
     # regardless of how long any individual value in earlier columns
     # is — that's the whole point of a real aligned grid.
     rows = _format_stats_grid(sysinfo_data=None, sensors_data=None)
-    assert rows[0][GRID_COL_WIDTH:GRID_COL_WIDTH + 4] == "RAM "
+    assert _row_text(rows[0])[GRID_COL_WIDTH:GRID_COL_WIDTH + 4] == "RAM "
+
+
+def test_format_stats_grid_labels_use_label_role():
+    # Found live, asked for: metric labels (CPU, RAM, ...) in accent
+    # color, values in plain text color, "ať se v tom líp scanuje" —
+    # draw() resolves the "label" role to theme["accent"].
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None)
+    label_texts = [text.strip() for text, role in rows[0] if role == "label"]
+    assert "CPU" in label_texts
+    assert "RAM" in label_texts
+
+
+def test_format_stats_grid_values_use_value_role_not_label():
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None)
+    value_texts = [text for text, role in rows[0] if role == "value"]
+    assert any("?%" in t for t in value_texts)
 
 
 # ---------- _diagnostics_summary_text ----------
