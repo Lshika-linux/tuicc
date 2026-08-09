@@ -190,6 +190,47 @@ def visible_window_ids(windows: list, selected_id: str | None, visible_slots: in
     return {w.window_id for w in windows[start:start + visible_slots]}
 
 
+def _resource_drain_key(cpu_percent: float | None, rss_kb: int | None):
+    """CPU% primary (the live, right-now-draining signal), RSS as a
+    tiebreak — same convention top/htop's own default CPU-sort uses.
+    An unknown value sorts LAST within its tier, not first: "unknown"
+    isn't "draining a lot", it's "we don't know yet" — same None-vs-0
+    discipline as everywhere else in this codebase.
+    """
+    return (cpu_percent is None, -(cpu_percent or 0), rss_kb is None, -(rss_kb or 0))
+
+
+def sort_windows_by_drain(windows: list, known_stats: list | None = None) -> list:
+    """Most resource-intensive window first — found live, asked for.
+
+    `windows` items are expected to carry their own .cpu_percent/
+    .rss_kb (procmon.WindowStat — what _build_rows()/nav_items() work
+    with) UNLESS `known_stats` is given (a list of WindowStat, matched
+    by .window_id), in which case each item's cpu/rss is looked up
+    there instead. main.py needs that second form: its own per-frame
+    window list (procmon.WindowInfo, from flatten_windows()) has no
+    cpu/rss of its own — this frame's real sample only exists once the
+    background "windows" Domain's NEXT poll runs — so it sorts by the
+    MOST RECENTLY KNOWN sample instead (status_worker.get("windows")),
+    keeping visible_window_ids() looking at the same order draw()/
+    nav_items() will actually show. Self-correcting the same one-poll-
+    interval lag every other Domain-backed list in this codebase
+    already tolerates (wifi/bluetooth scans, etc.) — not a new kind of
+    staleness.
+    """
+    lookup = {s.window_id: s for s in known_stats} if known_stats is not None else None
+
+    def key(w):
+        if lookup is not None:
+            stat = lookup.get(w.window_id)
+            cpu, rss = (stat.cpu_percent, stat.rss_kb) if stat is not None else (None, None)
+        else:
+            cpu, rss = w.cpu_percent, w.rss_kb
+        return _resource_drain_key(cpu, rss)
+
+    return sorted(windows, key=key)
+
+
 def _window_action_positions(x: int, w: int) -> list[tuple[str, int]]:
     """Sessions.py's own _action_positions, same right-aligned layout,
     3 actions instead of 4 — shared by draw() and nav_items() so a
@@ -369,6 +410,9 @@ def _build_rows(ctx, box_h):
     sensors_data = ctx.status.get("sensors") if ctx.status is not None else None
     diagnostics_data = ctx.status.get("diagnostics") if ctx.status is not None else None
 
+    if windows is not None:
+        windows = sort_windows_by_drain(windows)
+
     _reconcile_expanded_state(windows or [])
 
     selected_index = _selected_window_index(windows or [], ctx.selected_id, _expanded_window_id)
@@ -490,6 +534,7 @@ def draw(stdscr, box, ctx, module_name):
 def nav_items(box, ctx, module_name) -> list[NavItem]:
     x, y, w, h = box
     windows = (ctx.status.get("windows") if ctx.status is not None else None) or []
+    windows = sort_windows_by_drain(windows)
     theme = ctx.theme or {}
 
     items: list[NavItem] = []

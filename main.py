@@ -578,9 +578,18 @@ def main(stdscr):
             # are built below — sysmon_mode.visible_window_ids() only
             # needs `selected_id` (already current from last frame) and
             # this frame's own flattened window list, not anything
-            # RenderContext provides.
+            # RenderContext provides. Sorted the same "most resource-
+            # intensive first" way sysmon.py's own _build_rows()/
+            # nav_items() sort for display (against the most recently
+            # KNOWN sample, since this frame's own WindowInfo objects
+            # have no cpu/rss of their own yet) — otherwise the lazy
+            # pid-resolution below would decide "visible" using a
+            # different order than what's actually about to be shown.
+            windows_this_frame = sysmon_mode.sort_windows_by_drain(
+                procmon.flatten_windows(state), known_stats=status_worker.get("windows"),
+            )
             pid_feed.set(_resolve_visible_pids(
-                procmon.flatten_windows(state), selected_id, resolved_pid_cache, provider,
+                windows_this_frame, selected_id, resolved_pid_cache, provider,
             ))
 
             if state.focused_region_id is not None and state.focused_region_id != last_focused_region_id:

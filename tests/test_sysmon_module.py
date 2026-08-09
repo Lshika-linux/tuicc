@@ -14,7 +14,7 @@ from tuicc.modules.sysmon import (
     _format_window_label, _friendly_app_name, _selected_window_index,
     _window_action_positions, apply_nice_edit, collapse, handle_action,
     handle_row, handle_nice_key, is_editing_nice, is_expanded, nav_items,
-    start_nice_edit, visible_window_ids,
+    sort_windows_by_drain, start_nice_edit, visible_window_ids,
 )
 from tuicc.procmon import WindowStat
 
@@ -155,6 +155,53 @@ def test_visible_window_ids_scrolls_to_keep_selection_visible():
     _reset_module_state()
     windows = [_win(window_id=str(i)) for i in range(6)]
     assert visible_window_ids(windows, selected_id="sysmon:4:row") == {"2", "3", "4"}
+
+
+# ---------- sort_windows_by_drain ----------
+
+def test_sort_windows_by_drain_most_cpu_first():
+    windows = [
+        _win(window_id="low", cpu=5.0, rss_kb=1000),
+        _win(window_id="high", cpu=90.0, rss_kb=1000),
+        _win(window_id="mid", cpu=40.0, rss_kb=1000),
+    ]
+    result = sort_windows_by_drain(windows)
+    assert [w.window_id for w in result] == ["high", "mid", "low"]
+
+
+def test_sort_windows_by_drain_rss_breaks_cpu_ties():
+    windows = [
+        _win(window_id="small", cpu=10.0, rss_kb=500),
+        _win(window_id="big", cpu=10.0, rss_kb=5000),
+    ]
+    result = sort_windows_by_drain(windows)
+    assert [w.window_id for w in result] == ["big", "small"]
+
+
+def test_sort_windows_by_drain_unknown_cpu_sorts_last():
+    windows = [
+        _win(window_id="unknown", cpu=None, rss_kb=None),
+        _win(window_id="known", cpu=1.0, rss_kb=1),
+    ]
+    result = sort_windows_by_drain(windows)
+    assert [w.window_id for w in result] == ["known", "unknown"]
+
+
+def test_sort_windows_by_drain_with_known_stats_lookup():
+    # main.py's own use case: WindowInfo objects with no cpu/rss of
+    # their own, sorted against the most recently known WindowStat
+    # sample (matched by window_id) instead.
+    window_infos = [
+        SimpleNamespace(window_id="a"),
+        SimpleNamespace(window_id="b"),
+        SimpleNamespace(window_id="c"),  # no matching known stat at all
+    ]
+    known_stats = [
+        _win(window_id="a", cpu=5.0, rss_kb=1),
+        _win(window_id="b", cpu=90.0, rss_kb=1),
+    ]
+    result = sort_windows_by_drain(window_infos, known_stats=known_stats)
+    assert [w.window_id for w in result] == ["b", "a", "c"]
 
 
 # ---------- _window_action_positions ----------
