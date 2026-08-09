@@ -16,13 +16,34 @@ NavItem per row at level 1 (like every other row-based module) sidesteps
 that entirely; the three actions only become separate NavItems once
 that specific player is expanded (Enter), same trade sessions.py makes.
 
-Unlike sessions.py's three fixed, always-existing slots, the player
-list is genuinely dynamic (a player can quit, appear, or reorder
-between polls) — `_expanded_bus_name` tracks the expanded player by its
-stable D-Bus identity, not a list position, and self-corrects
-(_reconcile_expanded_state) if that player disappears while expanded,
-rather than leaving a dangling reference is_expanded() would keep
-reporting forever.
+The player list is genuinely dynamic (a player can quit, appear, or
+reorder between polls) — `_expanded_bus_name` tracks the expanded
+player by its stable D-Bus identity, not a list position, and self-
+corrects (_reconcile_expanded_state) if that player disappears while
+expanded, rather than leaving a dangling reference is_expanded() would
+keep reporting forever.
+
+**Fixed-slot display, added after a live design discussion with the
+user about box-size predictability**: both sections (Now Playing's
+players, Output's sinks) always render exactly `VISIBLE_SLOTS` (3) rows
+— never more, never fewer — regardless of how many players/sinks
+actually exist right now. Fewer than 3 real items: the remaining slots
+show a "[empty - player N]"/"[empty - output N]" placeholder (N is the
+SLOT's own position, not a count of what's missing). More than 3:
+`_window_start` computes a scroll window that keeps whatever's
+currently selected (or expanded) in view, recomputed fresh from
+`ctx.selected_id` every call rather than a persisted scroll offset —
+same "derive from what's true right now" idiom `_reconcile_expanded_
+state` already uses, so it can't drift stale. This is the first module
+to get this treatment; the underlying tension (box size is a static
+user-configured ratio, content amount is a live, uncontrolled runtime
+quantity) applies to other modules too, but the fix is landing here
+first, not as a shared/extracted mechanism yet — connectivity.py is the
+next likely candidate (wifi/bluetooth lists have the same "count is
+outside the user's control" shape), control.py/power_menu.py/
+sessions.py deliberately do NOT need this (their content count is a
+config.toml choice, not runtime-variable — see VISION.md/project
+history for that distinction if this gets generalized later).
 
 ---
 IMPORTANT: Each module owns both how it draws itself and where its own
@@ -36,7 +57,7 @@ from urllib.parse import urlparse
 
 from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline
+from tuicc.render_utils import draw_box_outline, eighth_block_level
 
 MARQUEE_STEP_SECONDS = 0.3
 
@@ -80,18 +101,16 @@ def _cava_row_level(raw_height: int, row_idx: int, num_rows: int) -> int:
     connected audio sink, not a fixed count — so this scales cava's
     fixed range down to whatever 0..(num_rows*8) resolution is actually
     available this frame, then returns just this row's own 0..8 slice.
-    row_idx=0 is the TOPMOST row (the highest portion of the bar);
-    row_idx=num_rows-1 is the BOTTOMMOST (where a bar visually starts
-    growing from). Pure function — testable without curses or a real
-    cava frame, same reasoning marquee_text() gets an explicit `now`.
+
+    Thin wrapper over render_utils.eighth_block_level, which now owns
+    the actual math — pulled out into a shared helper once modules/
+    bars.py needed the exact same row-slicing technique for its own
+    vertical VOL/BRI/BAT fills (see that function's own docstring).
+    Kept here (not inlined at the one call site below) so the existing
+    cava-specific tests keep reading `_cava_row_level` as this module's
+    own name, unchanged.
     """
-    if num_rows <= 0:
-        return 0
-    total_levels = num_rows * 8
-    scaled = raw_height * total_levels // ASCII_MAX_RANGE
-    scaled = max(0, min(scaled, total_levels))
-    row_base = (num_rows - 1 - row_idx) * 8
-    return max(0, min(scaled - row_base, 8))
+    return eighth_block_level(raw_height, ASCII_MAX_RANGE, row_idx, num_rows)
 
 _expanded_bus_name = None  # str | None — which player's actions are showing, if any
 
@@ -245,6 +264,153 @@ def _reconcile_expanded_state(players: list) -> None:
         _expanded_bus_name = None
 
 
+# Each section (Now Playing's players, Output's sinks) always renders
+# exactly this many rows — never more (a scroll window kicks in, see
+# _window_start), never fewer (unfilled slots show an "[empty - ...]"
+# placeholder, see _section_rows). Found live, asked for: the box's own
+# content height should never silently vary just because more or fewer
+# players/sinks happen to exist right now — same "no silent truncation,
+# no surprise reflow" principle a longer design discussion with the
+# user converged on for this exact module first, before generalizing
+# elsewhere.
+VISIBLE_SLOTS = 3
+
+
+def _window_start(count: int, selected_index: int | None, visible_slots: int = VISIBLE_SLOTS) -> int:
+    """The 0-indexed start of the `visible_slots`-wide window into a
+    `count`-item list, keeping `selected_index` (if any) inside it.
+
+    Recomputed fresh from `selected_index` every call — no persisted
+    scroll-offset state, same "derive from what's true right now" idiom
+    _reconcile_expanded_state already uses one level up, so this can
+    never drift out of sync with whatever's actually selected. If
+    nothing in THIS list is currently selected, the window is just the
+    first `visible_slots` items — a stable, unsurprising default, not
+    "wherever a hidden offset happened to leave it last frame".
+
+    When selected_index is within the first visible_slots items, no
+    scrolling is needed at all (window starts at 0). Beyond that, the
+    window shifts by exactly enough to make selected_index the LAST
+    visible slot — not centered, not scrolled further than necessary.
+    """
+    if count <= visible_slots:
+        return 0
+    if selected_index is None or selected_index < visible_slots:
+        return 0
+    return min(selected_index - visible_slots + 1, count - visible_slots)
+
+
+def _selected_player_index(players: list, selected_id: str | None, expanded_bus_name: str | None) -> int | None:
+    """Which index into `players` the current selection corresponds to,
+    if any — used to anchor _window_start so navigating to (or
+    expanding) a player keeps its row in view. Checks expanded_bus_name
+    FIRST: an expanded row's own transport-control ids
+    ("media:<bus_name>:prev"/"playpause"/"next") still embed the same
+    bus_name, but checking the expansion directly is more direct than
+    re-parsing one of those three id shapes.
+    """
+    target_bus_name = expanded_bus_name
+    if target_bus_name is None and selected_id and selected_id.startswith("media:") \
+            and not selected_id.startswith("media:output:"):
+        target_bus_name = selected_id.split(":")[1]
+    if target_bus_name is None:
+        return None
+    for i, player in enumerate(players):
+        if player.bus_name == target_bus_name:
+            return i
+    return None
+
+
+def _selected_output_index(sinks: list, selected_id: str | None) -> int | None:
+    if not selected_id or not selected_id.startswith("media:output:"):
+        return None
+    sink_id = selected_id.split(":", 2)[2]
+    for i, sink in enumerate(sinks):
+        if sink.id == sink_id:
+            return i
+    return None
+
+
+def _section_nav_indices(count: int, selected_index: int | None,
+                          visible_slots: int = VISIBLE_SLOTS) -> tuple[int | None, int | None]:
+    """(before_index, after_index) — the two data indices, one on each
+    side of the current VISIBLE_SLOTS window (see _window_start), that
+    need a "peek" NavItem this frame so Tab/Shift+Tab can reach a
+    scrollable section's hidden items at all. Either is None when
+    there's nothing to peek in that direction (window already at that
+    edge, or count fits within visible_slots with no scrolling needed).
+
+    Why a peek item is safe, not a "select something invisible"
+    problem: landing on one updates ctx.selected_id, and — since
+    EVERYTHING recomputes fresh every frame, nothing cached (see
+    CLAUDE.md) — the very next frame's own _window_start immediately
+    recomputes around that new selection and the peek index becomes a
+    real, drawn slot before the screen ever actually redraws showing it
+    as selected. A peek NavItem only exists for the one frame between
+    "Tab was pressed" and "the screen redraws" — never something a user
+    can actually see selected-but-undrawn.
+    """
+    if count <= visible_slots:
+        return None, None
+    start = _window_start(count, selected_index, visible_slots)
+    end = start + visible_slots
+    before = start - 1 if start > 0 else None
+    after = end if end < count else None
+    return before, after
+
+
+def _section_rows(items: list | None, error: str | None, selected_index: int | None,
+                   kind: str, label: str, visible_slots: int = VISIBLE_SLOTS) -> list[tuple]:
+    """Exactly `visible_slots` rows for one list section — ALWAYS,
+    regardless of how many real items exist right now: real items
+    (windowed via _window_start when there are more than fit),
+    "[empty - <label> N]" placeholders for unfilled slots (N is the
+    SLOT's own position, 1-indexed — NOT a running count of how many
+    items are missing), or the poll error in the first slot (remaining
+    slots still padded the normal way) when the last poll genuinely
+    failed. `items=None` with no error (not yet polled) is treated the
+    same as a genuinely empty list — same None-vs-[] discipline as
+    elsewhere, but there's nothing DIFFERENT to show the user between
+    "unknown" and "empty" here (unlike bars.py's dash-vs-omit
+    distinction), both just render as empty slots.
+    """
+    if items is None and error:
+        rows = [("error", error)]
+        rows += [("empty_slot", f"[empty - {label} {slot + 1}]") for slot in range(1, visible_slots)]
+        return rows
+
+    items = items or []
+    count = len(items)
+    start = _window_start(count, selected_index, visible_slots)
+    rows = []
+    for slot in range(visible_slots):
+        idx = start + slot
+        if idx < count:
+            rows.append((kind, items[idx]))
+        else:
+            rows.append(("empty_slot", f"[empty - {label} {slot + 1}]"))
+    return rows
+
+
+def _header_with_count(title: str, items: list | None) -> str:
+    """Header text with the section's total real item count appended —
+    "Now Playing [6]" — found live, asked for: with VISIBLE_SLOTS
+    windowing only ever showing 3 of a possibly-longer list at once,
+    the header's own count is what makes "there's more than what
+    you're looking at right now" legible at a glance, not just
+    discoverable by scrolling into it.
+
+    Omitted (bare title, no "[N]") when the count itself is unknown —
+    items is None, whether that means "not polled yet" or "the last
+    poll failed" — showing "[0]" there would claim something this
+    function doesn't actually know, same None-vs-[] discipline the
+    rest of this codebase uses.
+    """
+    if items is None:
+        return title
+    return f"{title} [{len(items)}]"
+
+
 def _build_rows(ctx, box_h):
     """One row per line the box renders, in order — the single source
     of truth draw() and nav_items() both walk, same reasoning
@@ -257,24 +423,15 @@ def _build_rows(ctx, box_h):
 
     _reconcile_expanded_state(players or [])
 
-    rows = [("header", "Now Playing")]
-    if players is None and media_error:
-        rows.append(("error", media_error))
-    elif not players:
-        rows.append(("empty", "(nothing playing)"))
-    else:
-        for player in players:
-            rows.append(("player", player))
+    selected_player_index = _selected_player_index(players or [], ctx.selected_id, _expanded_bus_name)
+    selected_output_index = _selected_output_index(sinks or [], ctx.selected_id)
+
+    rows = [("header", _header_with_count("Now Playing", players))]
+    rows.extend(_section_rows(players, media_error, selected_player_index, "player", "player"))
 
     rows.append(("spacer", None))
-    rows.append(("header", "Output"))
-    if sinks is None and audio_error:
-        rows.append(("error", audio_error))
-    elif not sinks:
-        rows.append(("empty", "(no sinks found)"))
-    else:
-        for sink in sinks:
-            rows.append(("output_item", sink))
+    rows.append(("header", _header_with_count("Output", sinks)))
+    rows.extend(_section_rows(sinks, audio_error, selected_output_index, "output_item", "output"))
 
     # No separate rows for the cava visualizer — it's drawn INLINE to
     # the right of the "output_item" rows just added above (see draw()'s
@@ -292,6 +449,50 @@ def _build_rows(ctx, box_h):
     return rows
 
 
+def _draw_cava_row(stdscr, row, x, w, theme, output_row_index, num_output_rows, cava_frame):
+    """One row's worth of the cava visualizer, at the box's own right
+    edge — shared by the "output_item" AND "empty_slot" (output side)
+    branches below, since the visualizer now always spans the full
+    VISIBLE_SLOTS window (see draw()'s own num_output_rows setup),
+    not just however many real sinks currently exist. Found live,
+    asked for: with fewer than VISIBLE_SLOTS real sinks, the idle
+    baseline used to sit on whatever the last REAL sink's row happened
+    to be (output1/2/3 depending on sink count) instead of always the
+    fixed bottom slot — inconsistent with the rest of this module's own
+    "fixed 3-slot footprint regardless of content" design.
+    """
+    vis_x = x + w - 1 - CAVA_RIGHT_GAP - CAVA_VIS_WIDTH
+    if cava_frame is None:
+        # Idle (nothing playing, cava not started) or just-started (no
+        # frame parsed yet) — a flat baseline only on the BOTTOMMOST
+        # row of the fixed VISIBLE_SLOTS window, same "signals a
+        # visualizer lives here without a jarring pop" reasoning as the
+        # row_idx math below, applied to just the one row a single flat
+        # line reads best on. Plain "text" color, NOT also A_DIM —
+        # found live, asked for after the original dim+thinnest-glyph
+        # combination turned out too subtle to actually see against a
+        # real theme; the glyph's own short 1/8 height already reads as
+        # "quiet", it doesn't need the color dimmed on top too.
+        if output_row_index == num_output_rows - 1:
+            try:
+                stdscr.addstr(row, vis_x, _CAVA_BLOCKS[1] * CAVA_VIS_WIDTH, theme.get("text", 0))
+            except curses.error:
+                pass
+    else:
+        chars = [
+            _CAVA_BLOCKS[_cava_row_level(raw_height, output_row_index, num_output_rows)]
+            for raw_height in cava_frame[:CAVA_VIS_WIDTH]
+        ]
+        # theme's "text" color (plain), not "accent" — found live, asked
+        # for after the accent color read as too visually loud for a
+        # passive decoration next to the Output list's own quieter
+        # dot/name styling.
+        try:
+            stdscr.addstr(row, vis_x, "".join(chars), theme.get("text", 0))
+        except curses.error:
+            pass
+
+
 def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
@@ -304,16 +505,30 @@ def draw(stdscr, box, ctx, module_name):
     now = time.time()
 
     # Cava state, computed once per draw() call (not per-row) — every
-    # output_item row below reads from these same values, and
-    # num_output_rows in particular has to be known BEFORE any
-    # output_item row draws, since row_idx=0 is the topmost row and
-    # _cava_row_level() needs the total row count to know which 0..8
-    # slice of each bar this particular row is responsible for.
+    # output-section row below reads from these same values, and
+    # num_output_rows in particular has to be known BEFORE any of them
+    # draw, since row_idx=0 is the topmost row and _cava_row_level()
+    # needs the total row count to know which 0..8 slice of each bar
+    # this particular row is responsible for.
+    #
+    # num_output_rows is ALWAYS VISIBLE_SLOTS (not however many real
+    # sinks exist) whenever there's at least one real sink to justify
+    # showing a visualizer at all — found live, asked for: with fewer
+    # real sinks than VISIBLE_SLOTS, the idle baseline used to sit on
+    # whatever the last REAL sink's own row happened to be (varying
+    # with sink count) instead of always the fixed bottom slot,
+    # inconsistent with the rest of this module's "fixed 3-slot
+    # footprint regardless of content" design (see VISIBLE_SLOTS' own
+    # docstring). has_cava (not just "ctx.cava is not None") also
+    # requires real sink data to exist — a visualizer for literally no
+    # audio output at all would be nonsensical, distinct from "fewer
+    # than 3 outputs, still show the full 3-slot visualizer".
     sinks_for_cava = ctx.status.get("audio") if ctx.status is not None else None
-    num_output_rows = len(sinks_for_cava) if sinks_for_cava else 0
+    has_cava = ctx.cava is not None and bool(sinks_for_cava)
+    num_output_rows = VISIBLE_SLOTS if has_cava else 0
     cava_running = ctx.cava is not None and ctx.cava.is_running()
     cava_frame = ctx.cava.get_frame() if cava_running else None
-    output_row_index = 0  # incremented once per output_item row drawn below
+    output_row_index = 0  # incremented once per OUTPUT-SECTION row (real or empty) drawn below
 
     for i, (kind, payload) in enumerate(_build_rows(ctx, h)):
         row = y + 1 + i
@@ -322,7 +537,7 @@ def draw(stdscr, box, ctx, module_name):
 
         if kind == "header":
             try:
-                stdscr.addstr(row, x + 2, payload, theme.get("accent", 0) | curses.A_BOLD)
+                stdscr.addstr(row, x + 2, payload[:max(inner_w, 0)], theme.get("accent", 0) | curses.A_BOLD)
             except curses.error:
                 pass
 
@@ -337,6 +552,25 @@ def draw(stdscr, box, ctx, module_name):
                 stdscr.addstr(row, x + 2, payload, theme.get("text", 0) | curses.A_DIM)
             except curses.error:
                 pass
+
+        elif kind == "empty_slot":
+            # A specific unfilled SLOT within a fixed-VISIBLE_SLOTS
+            # section (see _section_rows) — same dim styling as "empty"
+            # above, just per-slot instead of one line for the whole
+            # section. An OUTPUT-side empty slot still gets its share of
+            # the cava visualizer (see has_cava's own docstring above) —
+            # reserve the same width for it the real "output_item" rows
+            # already do, so the placeholder text doesn't run into the
+            # bars.
+            is_output_slot = "output" in payload
+            reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if (is_output_slot and has_cava) else 0
+            try:
+                stdscr.addstr(row, x + 2, payload[:max(inner_w - reserved_w, 0)], theme.get("text", 0) | curses.A_DIM)
+            except curses.error:
+                pass
+            if is_output_slot and has_cava:
+                _draw_cava_row(stdscr, row, x, w, theme, output_row_index, num_output_rows, cava_frame)
+                output_row_index += 1
 
         elif kind == "player":
             player = payload
@@ -467,7 +701,8 @@ def draw(stdscr, box, ctx, module_name):
             # actually be drawn on this row — same "compute the reserved
             # width before laying out the text" order the Now Playing
             # rows already use for their own transport-glyph cluster.
-            has_cava = ctx.cava is not None and num_output_rows > 0
+            # has_cava is computed once, above the main loop — see its
+            # own docstring for why it no longer depends on THIS row.
             reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if has_cava else 0
             rest = f" {sink.name}"[:max(inner_w - 1 - reserved_w, 0)]
             try:
@@ -477,44 +712,72 @@ def draw(stdscr, box, ctx, module_name):
                 pass
 
             if has_cava:
-                vis_x = x + w - 1 - CAVA_RIGHT_GAP - CAVA_VIS_WIDTH
-                if cava_frame is None:
-                    # Idle (nothing playing, cava not started) or just-
-                    # started (no frame parsed yet) — a flat baseline
-                    # only on the BOTTOMMOST output row, same "signals a
-                    # visualizer lives here without a jarring pop"
-                    # reasoning as the row_idx math below, applied to
-                    # just the one row a single flat line reads best on.
-                    # Plain "text" color, NOT also A_DIM — found live,
-                    # asked for after the original dim+thinnest-glyph
-                    # combination turned out too subtle to actually see
-                    # against a real theme; the glyph's own short 1/8
-                    # height already reads as "quiet", it doesn't need
-                    # the color dimmed on top to communicate "idle".
-                    if output_row_index == num_output_rows - 1:
-                        try:
-                            stdscr.addstr(row, vis_x, _CAVA_BLOCKS[1] * CAVA_VIS_WIDTH, theme.get("text", 0))
-                        except curses.error:
-                            pass
-                else:
-                    chars = [
-                        _CAVA_BLOCKS[_cava_row_level(raw_height, output_row_index, num_output_rows)]
-                        for raw_height in cava_frame[:CAVA_VIS_WIDTH]
-                    ]
-                    # theme's "text" color (plain), not "accent" — found
-                    # live, asked for after the accent color read as too
-                    # visually loud for a passive decoration next to the
-                    # Output list's own quieter dot/name styling.
-                    try:
-                        stdscr.addstr(row, vis_x, "".join(chars), theme.get("text", 0))
-                    except curses.error:
-                        pass
+                _draw_cava_row(stdscr, row, x, w, theme, output_row_index, num_output_rows, cava_frame)
                 output_row_index += 1
 
 
-def nav_items(box, ctx, module_name) -> list[NavItem]:
+def _player_row_nav_items(player, box, row) -> list[NavItem]:
+    """NavItems for one player row — either its own collapsed single row,
+    or (if this is the currently-expanded player) its separate transport
+    controls. Shared by nav_items()'s real (drawn) rows and its "peek"
+    rows alike (see _section_nav_indices) — a peek row's `row` doesn't
+    correspond to anything actually drawn THIS frame, it reuses the
+    nearest real row's own y so tab_order()'s sort ties correctly
+    against it (see nav_items()' own docstring for why that's safe).
+    """
     x, y, w, h = box
-    items = []
+    if player.bus_name == _expanded_bus_name:
+        items = []
+        controls_w = 7
+        right_edge_gap = 1  # kept in sync with draw()'s own margin
+        glyph_x = x + w - 1 - right_edge_gap - controls_w
+        if player.can_go_previous:
+            items.append(NavItem(
+                id=f"media:{player.bus_name}:prev", rect=(glyph_x, row, 2, 1),
+                focus_target=player.bus_name, target_kind="media_transport",
+            ))
+        items.append(NavItem(
+            id=f"media:{player.bus_name}:playpause", rect=(glyph_x + 3, row, 1, 1),
+            focus_target=player.bus_name, target_kind="media_transport",
+        ))
+        if player.can_go_next:
+            items.append(NavItem(
+                id=f"media:{player.bus_name}:next", rect=(glyph_x + 5, row, 2, 1),
+                focus_target=player.bus_name, target_kind="media_transport",
+            ))
+        return items
+    return [NavItem(
+        id=f"media:{player.bus_name}:row", rect=(x + 1, row, w - 2, 1),
+        focus_target=player.bus_name, target_kind="media_row",
+    )]
+
+
+def _output_row_nav_item(sink, box, row) -> NavItem:
+    x, y, w, h = box
+    return NavItem(
+        id=f"media:output:{sink.id}", rect=(x + 1, row, w - 2, 1),
+        focus_target=sink.id, target_kind="media_output",
+    )
+
+
+def nav_items(box, ctx, module_name) -> list[NavItem]:
+    """Real (drawn, windowed) rows first, exactly as VISIBLE_SLOTS
+    itself lays them out (see _build_rows) — then, for each section
+    that's actually scrolled (more real items than fit), one extra
+    "peek" NavItem just before and/or after the window, reusing the
+    boundary row's own y. Tab/Shift+Tab landing on a peek item is how a
+    scrollable section's hidden items become reachable at all — see
+    _section_nav_indices' own docstring for why that never shows
+    something undrawn as selected.
+    """
+    x, y, w, h = box
+    players = (ctx.status.get("media") if ctx.status is not None else None) or []
+    sinks = (ctx.status.get("audio") if ctx.status is not None else None) or []
+
+    player_items: list[NavItem] = []
+    player_rows: list[int] = []  # one entry per REAL "player" row drawn, in order
+    output_items: list[NavItem] = []
+    output_rows: list[int] = []
 
     for i, (kind, payload) in enumerate(_build_rows(ctx, h)):
         row = y + 1 + i
@@ -522,38 +785,27 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             break
 
         if kind == "player":
-            player = payload
-            if player.bus_name == _expanded_bus_name:
-                controls_w = 7
-                right_edge_gap = 1  # kept in sync with draw()'s own margin
-                glyph_x = x + w - 1 - right_edge_gap - controls_w
-                if player.can_go_previous:
-                    items.append(NavItem(
-                        id=f"media:{player.bus_name}:prev", rect=(glyph_x, row, 2, 1),
-                        focus_target=player.bus_name, target_kind="media_transport",
-                    ))
-                items.append(NavItem(
-                    id=f"media:{player.bus_name}:playpause", rect=(glyph_x + 3, row, 1, 1),
-                    focus_target=player.bus_name, target_kind="media_transport",
-                ))
-                if player.can_go_next:
-                    items.append(NavItem(
-                        id=f"media:{player.bus_name}:next", rect=(glyph_x + 5, row, 2, 1),
-                        focus_target=player.bus_name, target_kind="media_transport",
-                    ))
-            else:
-                items.append(NavItem(
-                    id=f"media:{player.bus_name}:row", rect=(x + 1, row, w - 2, 1),
-                    focus_target=player.bus_name, target_kind="media_row",
-                ))
+            player_items.extend(_player_row_nav_items(payload, box, row))
+            player_rows.append(row)
         elif kind == "output_item":
-            sink = payload
-            items.append(NavItem(
-                id=f"media:output:{sink.id}", rect=(x + 1, row, w - 2, 1),
-                focus_target=sink.id, target_kind="media_output",
-            ))
+            output_items.append(_output_row_nav_item(payload, box, row))
+            output_rows.append(row)
 
-    return items
+    selected_player_index = _selected_player_index(players, ctx.selected_id, _expanded_bus_name)
+    before_i, after_i = _section_nav_indices(len(players), selected_player_index)
+    if before_i is not None and player_rows:
+        player_items = _player_row_nav_items(players[before_i], box, player_rows[0]) + player_items
+    if after_i is not None and player_rows:
+        player_items = player_items + _player_row_nav_items(players[after_i], box, player_rows[-1])
+
+    selected_output_index = _selected_output_index(sinks, ctx.selected_id)
+    before_i, after_i = _section_nav_indices(len(sinks), selected_output_index)
+    if before_i is not None and output_rows:
+        output_items = [_output_row_nav_item(sinks[before_i], box, output_rows[0])] + output_items
+    if after_i is not None and output_rows:
+        output_items = output_items + [_output_row_nav_item(sinks[after_i], box, output_rows[-1])]
+
+    return player_items + output_items
 
 
 def handle_row(ctx, item, cfg):

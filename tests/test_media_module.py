@@ -16,6 +16,8 @@ from tuicc.audio.model import AudioSink
 from tuicc.modules.media import (
     _player_label, _body_label, _source_label, marquee_text, has_scrolling_content,
     _build_rows, nav_items, handle_row, is_expanded, collapse, _cava_row_level,
+    _window_start, _selected_player_index, _selected_output_index, _section_nav_indices,
+    _header_with_count,
 )
 
 
@@ -181,6 +183,39 @@ def test_collapse_when_nothing_expanded_returns_none():
     assert collapse() is None
 
 
+# ---------- _header_with_count ----------
+
+def test_header_with_count_appends_the_real_item_count():
+    assert _header_with_count("Now Playing", []) == "Now Playing [0]"
+    assert _header_with_count("Now Playing", [_player(), _player(bus_name="b")]) == "Now Playing [2]"
+
+
+def test_header_with_count_omitted_when_unknown():
+    # None -> count genuinely unknown (not polled yet, or poll error) -
+    # must not claim "[0]", same None-vs-[] discipline as elsewhere.
+    assert _header_with_count("Output", None) == "Output"
+
+
+def test_build_rows_now_playing_header_shows_count():
+    _reset_module_state()
+    players = [_player(bus_name="a"), _player(bus_name="b")]
+    rows = _build_rows(_ctx(snapshots={"media": players}), box_h=20)
+    assert ("header", "Now Playing [2]") in rows
+
+
+def test_build_rows_output_header_shows_count():
+    _reset_module_state()
+    sinks = [AudioSink(id="1", name="A", volume=50, muted=False, is_default=True)]
+    rows = _build_rows(_ctx(snapshots={"audio": sinks}), box_h=20)
+    assert ("header", "Output [1]") in rows
+
+
+def test_build_rows_header_omits_count_on_poll_error():
+    _reset_module_state()
+    rows = _build_rows(_ctx(snapshots={"media": None}, errors={"media": "session bus unreachable"}), box_h=20)
+    assert ("header", "Now Playing") in rows
+
+
 # ---------- _build_rows / _reconcile_expanded_state ----------
 
 class _FakeStatus:
@@ -206,46 +241,170 @@ def _kinds(rows):
     return [kind for kind, _payload in rows]
 
 
-def test_no_players_and_no_error_renders_as_empty_not_error():
+def test_no_players_and_no_error_renders_as_three_empty_slots():
     _reset_module_state()
     rows = _build_rows(_ctx(snapshots={"media": None}), box_h=20)
-    assert ("empty", "(nothing playing)") in rows
+    player_rows = [(kind, payload) for kind, payload in rows
+                    if kind == "player" or (kind == "empty_slot" and "player" in payload)]
+    assert player_rows == [
+        ("empty_slot", "[empty - player 1]"),
+        ("empty_slot", "[empty - player 2]"),
+        ("empty_slot", "[empty - player 3]"),
+    ]
     assert "error" not in _kinds(rows)
 
 
-def test_media_error_renders_as_error_row():
+def test_media_error_renders_in_first_slot_others_stay_empty():
     _reset_module_state()
     rows = _build_rows(_ctx(snapshots={"media": None}, errors={"media": "session bus unreachable"}), box_h=20)
     assert ("error", "session bus unreachable") in rows
+    assert ("empty_slot", "[empty - player 2]") in rows
+    assert ("empty_slot", "[empty - player 3]") in rows
 
 
-def test_one_row_per_player():
+def test_one_row_per_player_up_to_three():
     _reset_module_state()
     players = [_player(bus_name="a"), _player(bus_name="b")]
     rows = _build_rows(_ctx(snapshots={"media": players}), box_h=20)
     player_rows = [payload for kind, payload in rows if kind == "player"]
     assert [p.bus_name for p in player_rows] == ["a", "b"]
+    # the third, unfilled slot must still be there
+    assert ("empty_slot", "[empty - player 3]") in rows
 
 
-def test_no_sinks_and_no_error_renders_as_empty_not_error():
+def test_no_sinks_and_no_error_renders_as_three_empty_slots():
     _reset_module_state()
     rows = _build_rows(_ctx(snapshots={"audio": None}), box_h=20)
-    assert ("empty", "(no sinks found)") in rows
+    output_rows = [(kind, payload) for kind, payload in rows if kind in ("output_item", "empty_slot")
+                   and "output" in str(payload)]
+    assert output_rows == [
+        ("empty_slot", "[empty - output 1]"),
+        ("empty_slot", "[empty - output 2]"),
+        ("empty_slot", "[empty - output 3]"),
+    ]
 
 
-def test_audio_error_renders_as_error_row():
+def test_audio_error_renders_in_first_slot_others_stay_empty():
     _reset_module_state()
     rows = _build_rows(_ctx(snapshots={"audio": None}, errors={"audio": "wpctl not found"}), box_h=20)
     assert ("error", "wpctl not found") in rows
+    assert ("empty_slot", "[empty - output 2]") in rows
+    assert ("empty_slot", "[empty - output 3]") in rows
 
 
-def test_output_rows_include_every_sink():
+def test_output_rows_include_every_sink_up_to_three():
     _reset_module_state()
     sinks = [AudioSink(id="1", name="Speakers", volume=50, muted=False, is_default=True),
              AudioSink(id="2", name="Headphones", volume=80, muted=False, is_default=False)]
     rows = _build_rows(_ctx(snapshots={"audio": sinks}), box_h=20)
     output_rows = [payload for kind, payload in rows if kind == "output_item"]
     assert [s.name for s in output_rows] == ["Speakers", "Headphones"]
+    assert ("empty_slot", "[empty - output 3]") in rows
+
+
+# ---------- fixed VISIBLE_SLOTS: exactly 3 rows per section, always ----------
+
+def test_player_section_is_always_exactly_three_rows():
+    _reset_module_state()
+    for players in ([], [_player(bus_name="a")],
+                     [_player(bus_name="a"), _player(bus_name="b"), _player(bus_name="c")],
+                     [_player(bus_name=str(i)) for i in range(6)]):
+        rows = _build_rows(_ctx(snapshots={"media": players}), box_h=20)
+        section = [(k, p) for k, p in rows if k == "player" or (k == "empty_slot" and "player" in p)]
+        assert len(section) == 3, f"expected 3 rows for {len(players)} players, got {len(section)}"
+
+
+def test_output_section_is_always_exactly_three_rows():
+    _reset_module_state()
+
+    def _sinks(n):
+        return [AudioSink(id=str(i), name=f"Sink {i}", volume=50, muted=False, is_default=(i == 0))
+                for i in range(n)]
+
+    for n in (0, 1, 3, 5):
+        rows = _build_rows(_ctx(snapshots={"audio": _sinks(n)}), box_h=20)
+        section = [(k, p) for k, p in rows
+                   if k == "output_item" or (k == "empty_slot" and "output" in p)]
+        assert len(section) == 3, f"expected 3 rows for {n} sinks, got {len(section)}"
+
+
+def test_more_than_three_players_scrolls_to_keep_selection_visible():
+    _reset_module_state()
+    players = [_player(bus_name=str(i)) for i in range(6)]  # indices 0..5
+    ctx = _ctx(snapshots={"media": players})
+    ctx.selected_id = "media:4:row"  # the 5th player (index 4) selected
+
+    rows = _build_rows(ctx, box_h=20)
+    shown = [p.bus_name for k, p in rows if k == "player"]
+    assert "4" in shown  # the selected one must be visible
+    # window shifts by exactly enough to make the selected index the
+    # LAST visible slot: index 4 with 3 slots -> starts at index 2
+    assert shown == ["2", "3", "4"]
+
+
+def test_fewer_than_three_players_never_scrolls():
+    _reset_module_state()
+    players = [_player(bus_name=str(i)) for i in range(2)]
+    ctx = _ctx(snapshots={"media": players})
+    ctx.selected_id = "media:1:row"
+    rows = _build_rows(ctx, box_h=20)
+    shown = [p.bus_name for k, p in rows if k == "player"]
+    assert shown == ["0", "1"]
+
+
+# ---------- _window_start ----------
+
+def test_window_start_no_scroll_needed_when_everything_fits():
+    assert _window_start(count=2, selected_index=1) == 0
+    assert _window_start(count=3, selected_index=2) == 0
+
+
+def test_window_start_no_selection_starts_at_zero():
+    assert _window_start(count=10, selected_index=None) == 0
+
+
+def test_window_start_selection_within_first_window_stays_at_zero():
+    assert _window_start(count=10, selected_index=0) == 0
+    assert _window_start(count=10, selected_index=2) == 0
+
+
+def test_window_start_scrolls_minimally_to_include_selection():
+    # selecting index 3 (the 4th item) with 3 visible slots must bring
+    # it into view as the LAST visible slot, not centered/over-scrolled
+    assert _window_start(count=10, selected_index=3) == 1
+    assert _window_start(count=10, selected_index=9) == 7
+
+
+def test_window_start_never_scrolls_past_the_end():
+    assert _window_start(count=5, selected_index=4, visible_slots=3) == 2  # not 4 or more
+
+
+# ---------- _selected_player_index / _selected_output_index ----------
+
+def test_selected_player_index_from_row_selection():
+    players = [_player(bus_name="a"), _player(bus_name="b")]
+    assert _selected_player_index(players, "media:b:row", expanded_bus_name=None) == 1
+
+
+def test_selected_player_index_from_expanded_state_takes_priority():
+    players = [_player(bus_name="a"), _player(bus_name="b")]
+    # selected_id points at a transport control, but expanded_bus_name is authoritative
+    assert _selected_player_index(players, "media:b:playpause", expanded_bus_name="a") == 0
+
+
+def test_selected_player_index_none_when_selection_is_elsewhere():
+    players = [_player(bus_name="a")]
+    assert _selected_player_index(players, "media:output:1", expanded_bus_name=None) is None
+    assert _selected_player_index(players, "sidebar:workspace:1", expanded_bus_name=None) is None
+    assert _selected_player_index(players, None, expanded_bus_name=None) is None
+
+
+def test_selected_output_index():
+    sinks = [AudioSink(id="1", name="A", volume=50, muted=False, is_default=True),
+             AudioSink(id="2", name="B", volume=50, muted=False, is_default=False)]
+    assert _selected_output_index(sinks, "media:output:2") == 1
+    assert _selected_output_index(sinks, "media:1:row") is None
+    assert _selected_output_index(sinks, None) is None
 
 
 # ---------- cava visualizer section ----------
@@ -276,7 +435,12 @@ def test_no_extra_row_when_cava_present_and_no_error():
     rows = _build_rows(ctx, box_h=20)
     # No dedicated visualizer rows at all — it draws inline within
     # whatever "output_item" rows the Output section already produced.
-    assert _kinds(rows) == ["header", "empty", "spacer", "header", "empty"]
+    # Each section is always exactly VISIBLE_SLOTS (3) rows now (empty
+    # slots, since nothing's playing/connected in this fixture).
+    assert _kinds(rows) == [
+        "header", "empty_slot", "empty_slot", "empty_slot",
+        "spacer", "header", "empty_slot", "empty_slot", "empty_slot",
+    ]
 
 
 def test_cava_error_gets_its_own_row():
@@ -340,10 +504,10 @@ def test_reconcile_leaves_expanded_state_when_player_still_present():
 
 # ---------- nav_items ----------
 
-def _fake_ctx_for_nav(players=None, sinks=None):
+def _fake_ctx_for_nav(players=None, sinks=None, selected_id=None):
     return SimpleNamespace(
         status=_FakeStatus(snapshots={"media": players, "audio": sinks}),
-        theme={}, selected_id=None, cava=None,
+        theme={}, selected_id=selected_id, cava=None,
     )
 
 
@@ -399,6 +563,113 @@ def test_nav_items_one_row_per_output_sink():
 
     output_items = [item for item in items if item.target_kind == "media_output"]
     assert [item.focus_target for item in output_items] == ["1", "2"]
+
+
+# ---------- nav_items: peek items for scrollable sections ----------
+
+def test_nav_items_no_peek_items_when_everything_fits():
+    _reset_module_state()
+    players = [_player(bus_name=str(i)) for i in range(3)]
+    ctx = _fake_ctx_for_nav(players=players)
+    box = (0, 0, 30, 10)
+
+    items = nav_items(box, ctx, "media")
+
+    assert [item.focus_target for item in items if item.target_kind == "media_row"] == ["0", "1", "2"]
+
+
+def test_nav_items_after_peek_item_appears_when_more_players_than_fit():
+    _reset_module_state()
+    players = [_player(bus_name=str(i)) for i in range(5)]  # nothing selected -> window is [0,1,2]
+    ctx = _fake_ctx_for_nav(players=players)
+    box = (0, 0, 30, 10)
+
+    items = nav_items(box, ctx, "media")
+
+    ids = [item.focus_target for item in items if item.target_kind == "media_row"]
+    # 3 real (windowed) rows + one "peek" row for index 3, reachable by
+    # Tab past the last real one — index 4 is NOT reachable yet (only
+    # ONE peek item ahead of the window at a time, matching how far
+    # Tab can actually move in a single press).
+    assert ids == ["0", "1", "2", "3"]
+
+
+def test_nav_items_before_peek_item_appears_once_scrolled():
+    _reset_module_state()
+    players = [_player(bus_name=str(i)) for i in range(6)]
+    ctx = _fake_ctx_for_nav(players=players, selected_id="media:4:row")  # window becomes [2,3,4]
+    box = (0, 0, 30, 10)
+
+    items = nav_items(box, ctx, "media")
+
+    ids = [item.focus_target for item in items if item.target_kind == "media_row"]
+    assert ids == ["1", "2", "3", "4", "5"]  # peek before (1) + window (2,3,4) + peek after (5)
+
+
+def test_nav_items_peek_item_reveals_a_real_row_on_the_next_call():
+    """Simulates two frames: Tab lands on the "after" peek item's id
+    (main.py would set ctx.selected_id to it), and the VERY NEXT
+    nav_items()/draw() call — same as the real render loop's own next
+    iteration — must show it as a real windowed row, not a peek one
+    anymore. This is the actual mechanism that makes peek items safe
+    (see _section_nav_indices' own docstring) — proven here, not just
+    asserted in prose.
+    """
+    _reset_module_state()
+    players = [_player(bus_name=str(i)) for i in range(5)]
+    box = (0, 0, 30, 10)
+
+    frame1 = _fake_ctx_for_nav(players=players)  # nothing selected -> window [0,1,2], peek at 3
+    items1 = nav_items(box, frame1, "media")
+    peek_ids = [item.focus_target for item in items1 if item.target_kind == "media_row"]
+    assert peek_ids[-1] == "3"  # the peek item Tab would land on
+
+    # "next frame": selection landed on the peek item's own row id
+    frame2 = _fake_ctx_for_nav(players=players, selected_id="media:3:row")
+    rows2 = _build_rows(frame2, box_h=20)
+    real_player_ids = [p.bus_name for kind, p in rows2 if kind == "player"]
+    assert real_player_ids == ["1", "2", "3"]  # now a REAL, drawn row — window shifted to include it
+    assert "3" in real_player_ids  # not a peek anymore
+
+
+def test_nav_items_peek_items_work_for_outputs_too():
+    _reset_module_state()
+    sinks = [AudioSink(id=str(i), name=f"Sink {i}", volume=50, muted=False, is_default=(i == 0))
+             for i in range(5)]
+    ctx = _fake_ctx_for_nav(sinks=sinks)
+    # Tall enough for the fixed 9-row content budget (header+3+spacer+
+    # header+3) to fully fit, unlike the other nav_items tests above
+    # which only ever care about the Now Playing section (rows 1-4) and
+    # so don't need the Output section's own rows (6-9) to fit at all.
+    box = (0, 0, 30, 12)
+
+    items = nav_items(box, ctx, "media")
+
+    ids = [item.focus_target for item in items if item.target_kind == "media_output"]
+    assert ids == ["0", "1", "2", "3"]
+
+
+# ---------- _section_nav_indices ----------
+
+def test_section_nav_indices_none_when_everything_fits():
+    assert _section_nav_indices(count=3, selected_index=None) == (None, None)
+    assert _section_nav_indices(count=0, selected_index=None) == (None, None)
+
+
+def test_section_nav_indices_after_only_at_the_start():
+    # window is [0,1,2] when nothing selected -> nothing before it,
+    # index 3 is the one peek item right after
+    assert _section_nav_indices(count=6, selected_index=None) == (None, 3)
+
+
+def test_section_nav_indices_both_sides_when_scrolled_into_the_middle():
+    # 6 items, selected index 3 -> window [1,2,3] (min(3-3+1, 6-3)=1)
+    assert _section_nav_indices(count=6, selected_index=3) == (0, 4)
+
+
+def test_section_nav_indices_before_only_at_the_end():
+    # window ends at the last item -> nothing after, one peek before it
+    assert _section_nav_indices(count=6, selected_index=5) == (2, None)
 
 
 # ---------- handle_row ----------
