@@ -22,6 +22,7 @@ from tuicc.modules import (
     sessions,
     control,
     media,
+    bars,
 )
 from tuicc.actions import BASE_HANDLERS
 
@@ -38,6 +39,7 @@ MODULES = {
     "sessions": sessions.draw,
     "control": control.draw,
     "media": media.draw,
+    "bars": bars.draw,
 }
 
 NAV_PROVIDERS = {
@@ -52,6 +54,7 @@ NAV_PROVIDERS = {
     "sessions": sessions.nav_items,
     "control": control.nav_items,
     "media": media.nav_items,
+    "bars": bars.nav_items,
 }
 
 ACTION_HANDLERS = dict(BASE_HANDLERS)

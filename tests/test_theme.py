@@ -2,7 +2,7 @@
 
 import pytest
 
-from tuicc.theme import resolve_color, hex_to_curses_color, rgb_to_curses_color, nearest_level_index
+from tuicc.theme import hex_to_curses_color, nearest_level_index, resolve_color, rgb_to_curses_color
 
 
 def test_inherit_returns_minus_one():
