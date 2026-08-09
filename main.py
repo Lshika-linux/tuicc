@@ -35,6 +35,8 @@ from tuicc.media.mpris import MprisBackend
 from tuicc.media.cava import CavaReader
 from tuicc.status_worker import StatusWorker, Domain
 from tuicc import control
+from tuicc import battery
+from tuicc import brightness
 from tuicc.layout import ModuleBox
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import (
@@ -109,11 +111,17 @@ def main(stdscr):
             name="audio",
             poll=audio_backend.get_sinks,
             actions={
-                # Only what modules/media.py's output switching needs
-                # (VISION.md's R5: "route it to headphones" reuses this
-                # exact method) — set_volume/set_mute are control.py's
-                # own future slider work, not wired here yet.
+                # set_default_sink: modules/media.py's output switching
+                # (VISION.md's R5: "route it to headphones").
+                # set_volume/set_mute: modules/bars.py's VOL slider — both
+                # take a (sink_id, value) tuple as request_action's single
+                # `arg`, unpacked here (see status_worker.py's own
+                # request_action docstring for why: this domain's actions
+                # need two pieces of data, not the single id wifi/
+                # bluetooth's own actions get away with).
                 "set_default_sink": audio_backend.set_default_sink,
+                "set_volume": lambda arg: audio_backend.set_volume(arg[0], arg[1]),
+                "set_mute": lambda arg: audio_backend.set_mute(arg[0], arg[1]),
             },
             # Shorter than the 5s shared default (see Domain.poll_interval's
             # own docstring) — found live: the default sink can change
@@ -138,6 +146,42 @@ def main(stdscr):
             # live.
             poll_interval=1,
         ),
+        # Tried as a push domain (battery.watch(), select.poll() on
+        # /sys/class/power_supply/*/uevent) — reverted, see this
+        # session's own live finding below. Back to a plain fast poll,
+        # same mechanism proven to work for VOL/BRI.
+        Domain(
+            name="battery",
+            poll=lambda: battery.aggregate(battery.get_packs(), battery.get_ac_online()),
+            actions={},
+            # Found live, empirically, on this exact machine (T480):
+            # select.poll() on BAT0/BAT1's own `uevent` attribute never
+            # fired once across several real charger unplug/replug
+            # cycles — confirmed by running battery.watch() with a
+            # 30s fallback and a live logger; every event that arrived
+            # was exactly 30s apart (the fallback), never sooner, and
+            # the underlying data hadn't changed anyway. The kernel's
+            # documented power_supply sysfs poll() support evidently
+            # isn't reliably wired up for this attribute on this kernel/
+            # driver combination — not something user space can verify
+            # ahead of time, and not something worth re-attempting
+            # blindly. battery.watch() itself is left in place (tested,
+            # does what its own docstring says) for a future revisit on
+            # different hardware, just not wired in here anymore.
+            poll_interval=0.3,
+        ),
+        Domain(
+            name="brightness",
+            poll=brightness.get_percent,
+            actions={"set": brightness.set_percent},
+            # Same reasoning as "battery" above — matched to the same
+            # 300ms so neither one is the bottleneck under the other.
+            # Real (if small) subprocess-spawn cost per poll here
+            # (brightnessctl -m), unlike battery's free /sys reads —
+            # ~3/s is still cheap on any real machine, revisit only if
+            # that stops being true somewhere.
+            poll_interval=0.3,
+        ),
     ]
     # One Domain per [[control.toggle]] entry, not one shared domain
     # for all of them — same granular-error-surfacing reasoning as the
@@ -160,6 +204,13 @@ def main(stdscr):
                 ),
             },
         ))
+    # push_worker.py/combined_status.py (PushWorker/CombinedStatus) exist
+    # in this codebase, tested, but aren't wired in here — "battery" was
+    # their pilot domain and got reverted (see its own Domain above for
+    # why). Left in place for a future domain with a genuinely reliable
+    # event source (a D-Bus signal, or a subprocess --subscribe stream —
+    # unlike sysfs poll(), which is what this pilot found NOT to hold
+    # here), not wired up "just in case" in the meantime.
     status_worker = StatusWorker(domains)
     status_worker.start()
 
@@ -409,7 +460,20 @@ def main(stdscr):
                        or resize_message is not None)
                 else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
-                else 1000
+                # 300, not 1000 — found live, reported by the user: even
+                # with a Domain's own poll_interval tightened (battery/
+                # brightness/audio/media all poll at 1s now), the render
+                # loop itself only ever LOOKS at a fresh StatusWorker
+                # snapshot once per idle getch() timeout — a 1s idle
+                # redraw cadence stacks up to ~1s of its own lag on top
+                # of whatever the poll cadence already contributes.
+                # Cheap to lower: nothing here is fetched from a remote
+                # source or does real work, every module's draw() already
+                # reruns unconditionally every frame regardless of
+                # cadence (see CLAUDE.md's "nothing is cached per-frame"),
+                # so redrawing 3.3x more often while idle just means
+                # doing the same cheap recompute more often, not new work.
+                else 300
             )
             stdscr.erase()
 
