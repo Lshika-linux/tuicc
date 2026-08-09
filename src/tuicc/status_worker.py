@@ -132,6 +132,15 @@ class StatusWorker:
     def resume(self):
         self._paused.clear()
 
+    def domain_names(self) -> set:
+        """The set of domain names this worker owns — combined_status.py's
+        CombinedStatus facade uses this (and push_worker.py's own
+        identical method) once at construction time to build its
+        domain-name -> worker routing table, so modules never need to
+        know which of the two workers a given domain actually lives in.
+        """
+        return set(self._domains.keys())
+
     def get(self, domain_name):
         """domain_name's cached snapshot — a list, or None if the last
         poll for it errored (or hasn't completed yet, e.g. right after
