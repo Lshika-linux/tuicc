@@ -46,6 +46,7 @@ import curses
 import os
 
 from tuicc.keybinds import key_label
+from tuicc.modules import launcher as launcher_mode
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, draw_centered_lines
 from tuicc.sensors import describe_sensor
@@ -221,6 +222,61 @@ def _current_nice(pid: int) -> int | None:
         return os.getpriority(os.PRIO_PROCESS, pid)
     except (ProcessLookupError, PermissionError, OSError):
         return None
+
+
+def _friendly_app_name(app_id: str | None) -> str:
+    """The app's own display name ("Firefox", "Visual Studio Code"),
+    not the raw app_id ("firefox", "code") a window row would otherwise
+    show — found live, asked for: the raw window TITLE ("settings.json
+    - tuicc - Visual Studio Code") is what this module showed at
+    first, and it read as noise for a resource-monitor row, where
+    "which APP is this" matters far more than "which specific document/
+    tab". Reuses launcher.py's own scan_desktop_apps() cache (matching
+    a window's app_id against whichever .desktop entry's own
+    StartupWMClass=/filename hint equals it — case-insensitively here,
+    looser than pending_moves.py's own app_id tier, which needs an
+    EXACT match to disambiguate between multiple pending spawns of
+    possibly-identical app_ids; a display-name lookup has no such
+    collision risk, so the looser match is fine) rather than a second,
+    hardcoded app_id->name table, which CONTRIBUTING.md's "no hardcoded
+    personal preferences" rule would rule out anyway (there's no
+    generic way to know every app_id's own preferred display name in
+    advance). Falls
+    back to the raw app_id itself when no .desktop entry matches — a
+    window from an app with no .desktop file at all (a dev build, a
+    custom script) is a real, expected case, not a bug to special-case
+    around.
+    """
+    if not app_id:
+        return "?"
+    app_l = app_id.lower()
+    for name, _exec_cmd, app_id_hint in launcher_mode.get_apps():
+        if app_id_hint.lower() == app_l:
+            return name
+    return app_id
+
+
+def _format_window_label(win_stat, available_w: int) -> str:
+    """"[13% 24M] Visual Studio Code…" — the CPU/RAM readout ALWAYS
+    shows in full (fixed-width, never truncated away) since it's the
+    actual point of a system-monitor row; the friendly app name (see
+    _friendly_app_name) gets whatever width is left over, truncated
+    with a trailing "…" when it doesn't fit. Found live: showing the
+    full window title first meant a long title (VS Code/Firefox tab
+    titles routinely run 40+ characters) silently pushed the CPU/RAM
+    numbers themselves off the edge of the box entirely — the least
+    useful part winning the space over the most useful part.
+    """
+    cpu_str = f"{win_stat.cpu_percent:.0f}%" if win_stat.cpu_percent is not None else "?%"
+    ram_str = f"{win_stat.rss_kb / 1024:.0f}M" if win_stat.rss_kb is not None else "?M"
+    stats_str = f"[{cpu_str} {ram_str}]"
+    name = _friendly_app_name(win_stat.app_id)
+
+    name_w = max(available_w - len(stats_str) - 1, 0)  # -1 for the space between stats and name
+    if len(name) > name_w:
+        name = (name[:max(name_w - 1, 0)] + "…") if name_w > 0 else ""
+
+    return f"{stats_str} {name}" if name else stats_str
 
 
 # ---------- middle "compact stats" section ----------
@@ -403,13 +459,10 @@ def draw(stdscr, box, ctx, module_name):
             else:
                 text_color, attr = theme.get("text", 0), 0
 
-            cpu_str = f"{win_stat.cpu_percent:.0f}%" if win_stat.cpu_percent is not None else "?%"
-            ram_str = f"{win_stat.rss_kb / 1024:.0f}M" if win_stat.rss_kb is not None else "?M"
-            label = f"{win_stat.title or win_stat.app_id}  [{cpu_str} {ram_str}]"
-
             positions = _window_action_positions(x, w)
             actions_start_x = positions[0][1] if positions else (x + w - 1)
             available_w = max(actions_start_x - 1 - (x + 2), 0)
+            label = _format_window_label(win_stat, available_w)
 
             try:
                 stdscr.addstr(row, x + 2, label[:available_w], text_color | attr)

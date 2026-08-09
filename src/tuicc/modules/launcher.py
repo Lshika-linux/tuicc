@@ -105,6 +105,20 @@ def _get_apps():
     return _apps_cache
 
 
+def get_apps():
+    """Public accessor for the same cached (name, exec_command,
+    app_id_hint) list _get_apps() already maintains for this module's
+    own fuzzy search — sysmon.py's own _friendly_app_name() reuses this
+    (a real window's app_id -> its .desktop entry's own display name)
+    rather than re-scanning DESKTOP_DIRS itself or keeping a second,
+    separate cache. Every other cross-module call in this codebase goes
+    through a public function (sessions_mode.is_expanded(), etc.), not
+    another module's own underscore-prefixed internals — this exists so
+    that convention holds here too.
+    """
+    return _get_apps()
+
+
 def _fuzzy_score(query, target):
     """Subsequence fuzzy match: every character in query must appear in
     target, in order, not necessarily contiguous. Returns None if no

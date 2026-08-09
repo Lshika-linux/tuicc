@@ -11,9 +11,10 @@ from types import SimpleNamespace
 import tuicc.modules.sysmon as sysmon_module
 from tuicc.modules.sysmon import (
     _build_rows, _diagnostics_summary_text, _format_stats_lines,
-    _selected_window_index, _window_action_positions, apply_nice_edit,
-    collapse, handle_action, handle_row, handle_nice_key, is_editing_nice,
-    is_expanded, nav_items, start_nice_edit, visible_window_ids,
+    _format_window_label, _friendly_app_name, _selected_window_index,
+    _window_action_positions, apply_nice_edit, collapse, handle_action,
+    handle_row, handle_nice_key, is_editing_nice, is_expanded, nav_items,
+    start_nice_edit, visible_window_ids,
 )
 from tuicc.procmon import WindowStat
 
@@ -164,6 +165,60 @@ def test_window_action_positions_right_aligned_and_ordered():
     # Each position strictly increases left-to-right.
     xs = [cx for _action, cx in positions]
     assert xs == sorted(xs)
+
+
+# ---------- _friendly_app_name / _format_window_label ----------
+
+def test_friendly_app_name_matches_desktop_entry_case_insensitively(monkeypatch):
+    monkeypatch.setattr(
+        sysmon_module.launcher_mode, "get_apps",
+        lambda: [("Visual Studio Code", "code", "Code"), ("Firefox", "firefox", "firefox")],
+    )
+    assert _friendly_app_name("code") == "Visual Studio Code"
+    assert _friendly_app_name("firefox") == "Firefox"
+
+
+def test_friendly_app_name_falls_back_to_raw_app_id_when_no_match(monkeypatch):
+    monkeypatch.setattr(sysmon_module.launcher_mode, "get_apps", lambda: [])
+    assert _friendly_app_name("some-custom-script") == "some-custom-script"
+
+
+def test_friendly_app_name_none_or_empty_is_a_placeholder(monkeypatch):
+    monkeypatch.setattr(sysmon_module.launcher_mode, "get_apps", lambda: [])
+    assert _friendly_app_name(None) == "?"
+    assert _friendly_app_name("") == "?"
+
+
+def test_format_window_label_stats_always_shown_in_full(monkeypatch):
+    monkeypatch.setattr(sysmon_module.launcher_mode, "get_apps", lambda: [])
+    win = _win(app_id="firefox", cpu=13.0, rss_kb=24 * 1024)
+    # Even with almost no room for a name, the "[13% 24M]" stats prefix
+    # itself must never be the part that gets cut — this is the actual
+    # bug found live (a long window title used to push the CPU/RAM
+    # numbers off the edge entirely).
+    label = _format_window_label(win, available_w=9)
+    assert label.startswith("[13% 24M]")
+
+
+def test_format_window_label_truncates_long_name_with_ellipsis(monkeypatch):
+    monkeypatch.setattr(
+        sysmon_module.launcher_mode, "get_apps",
+        lambda: [("Visual Studio Code", "code", "code")],
+    )
+    win = _win(app_id="code", cpu=10.0, rss_kb=1024)
+    label = _format_window_label(win, available_w=20)
+    assert label.startswith("[10% 1M] ")
+    assert label.endswith("…")
+
+
+def test_format_window_label_short_name_fits_untouched(monkeypatch):
+    monkeypatch.setattr(
+        sysmon_module.launcher_mode, "get_apps",
+        lambda: [("Firefox", "firefox", "firefox")],
+    )
+    win = _win(app_id="firefox", cpu=5.0, rss_kb=1024)
+    label = _format_window_label(win, available_w=40)
+    assert label == "[5% 1M] Firefox"
 
 
 # ---------- _format_stats_lines ----------
