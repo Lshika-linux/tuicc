@@ -400,6 +400,15 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
 
 # ---------- bottom diagnostics line ----------
 
+def _diagnostics_has_issues(diag: dict | None) -> bool:
+    """Shared by draw()'s own status dot and nav_items()'s
+    NavItem.preview_urgent — one definition of "this is actually a
+    problem" (real issues, not "all clear" and not "couldn't check")
+    so the two can never silently disagree with each other.
+    """
+    return diag is not None and diag["summary"] not in ("All clear", "Diagnostics unavailable")
+
+
 def _diagnostics_summary_text(diag: dict | None) -> str:
     if diag is None:
         return "checking..."
@@ -519,7 +528,7 @@ def draw(stdscr, box, ctx, module_name):
             # didn't read as a STATUS the way every other module's own
             # dot-led rows do.
             diag = payload
-            has_issues = diag is not None and diag["summary"] not in ("All clear", "Diagnostics unavailable")
+            has_issues = _diagnostics_has_issues(diag)
             is_row_selected = "sysmon:diagnostics" == ctx.selected_id
 
             if diag is None or diag["summary"] == "Diagnostics unavailable":
@@ -620,6 +629,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
                 focus_target=None,
                 target_kind="sysmon_diagnostics",
                 preview_text=_diagnostics_preview_text(diag, theme),
+                preview_urgent=_diagnostics_has_issues(diag),
             ))
 
     # peek items for the scrollable window section, same mechanism

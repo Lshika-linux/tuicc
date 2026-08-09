@@ -3,7 +3,7 @@ draw_box_outline/draw_filled_box need a real curses screen to test
 meaningfully, so they're left untested here.
 """
 
-from tuicc.render_utils import format_shortcut, centered_x, eighth_block_level
+from tuicc.render_utils import format_shortcut, centered_x, eighth_block_level, split_lines_into_columns
 
 
 def test_format_shortcut_ctrl_combo():
@@ -85,3 +85,52 @@ def test_centered_x_text_wider_than_box_clamps_to_box_x():
 
 def test_centered_x_respects_box_x_offset():
     assert centered_x(20, 10, "abcd") == 23
+
+
+# ---------- split_lines_into_columns ----------
+# draw_centered_lines' own overflow-handling math, pulled out pure —
+# see that function's own docstring for the live bug this fixes (a
+# 74-line diagnostics breakdown writing its first line onto the box's
+# own top border).
+
+def _lines(n):
+    return [(f"line{i}", 0) for i in range(n)]
+
+
+def test_split_lines_into_columns_fits_entirely_in_left_when_under_capacity():
+    left, right = split_lines_into_columns(_lines(3), max_rows=5)
+    assert len(left) == 3
+    assert right == []
+
+
+def test_split_lines_into_columns_splits_evenly_at_max_rows():
+    left, right = split_lines_into_columns(_lines(8), max_rows=5)
+    assert len(left) == 5
+    assert len(right) == 3
+    assert left[0] == ("line0", 0)
+    assert right[0] == ("line5", 0)
+
+
+def test_split_lines_into_columns_truncates_with_a_more_marker_past_capacity():
+    # capacity = max_rows * 2 = 10; 15 lines is 5 over.
+    left, right = split_lines_into_columns(_lines(15), max_rows=5)
+    total_shown = left + right
+    assert len(total_shown) == 10  # never more than 2 full columns
+    assert total_shown[-1][0] == "+6 more"  # 9 real lines shown + 1 marker slot = 10, 15-9=6 hidden
+
+
+def test_split_lines_into_columns_more_marker_reuses_last_lines_own_color():
+    # capacity = max_rows * 2 = 2; 3 lines is 1 over, so the marker
+    # takes the last of the 2 available slots.
+    lines = [("line0", 1), ("line1", 2), ("line2", 3)]
+    left, right = split_lines_into_columns(lines, max_rows=1)
+    total_shown = left + right
+    assert total_shown[-1] == ("+2 more", 1)  # color 1 = the last SHOWN real line's own color (line0)
+
+
+def test_split_lines_into_columns_empty_input():
+    assert split_lines_into_columns([], max_rows=5) == ([], [])
+
+
+def test_split_lines_into_columns_zero_max_rows_returns_empty():
+    assert split_lines_into_columns(_lines(3), max_rows=0) == ([], [])

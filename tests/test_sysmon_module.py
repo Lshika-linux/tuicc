@@ -10,12 +10,12 @@ from types import SimpleNamespace
 
 import tuicc.modules.sysmon as sysmon_module
 from tuicc.modules.sysmon import (
-    GRID_COL_WIDTH, _build_rows, _diagnostics_summary_text,
-    _format_stats_grid, _format_window_label, _friendly_app_name,
-    _selected_window_index, _window_action_positions, apply_nice_edit,
-    collapse, handle_action, handle_row, handle_nice_key, is_editing_nice,
-    is_expanded, nav_items, sort_windows_by_drain, start_nice_edit,
-    visible_window_ids,
+    GRID_COL_WIDTH, _build_rows, _diagnostics_has_issues,
+    _diagnostics_summary_text, _format_stats_grid, _format_window_label,
+    _friendly_app_name, _selected_window_index, _window_action_positions,
+    apply_nice_edit, collapse, handle_action, handle_row, handle_nice_key,
+    is_editing_nice, is_expanded, nav_items, sort_windows_by_drain,
+    start_nice_edit, visible_window_ids,
 )
 from tuicc.procmon import WindowStat
 
@@ -323,6 +323,24 @@ def test_diagnostics_summary_text_shows_summary():
     assert _diagnostics_summary_text({"summary": "All clear"}) == "All clear"
 
 
+# ---------- _diagnostics_has_issues ----------
+
+def test_diagnostics_has_issues_false_for_all_clear():
+    assert _diagnostics_has_issues({"summary": "All clear"}) is False
+
+
+def test_diagnostics_has_issues_false_when_unavailable():
+    assert _diagnostics_has_issues({"summary": "Diagnostics unavailable"}) is False
+
+
+def test_diagnostics_has_issues_false_when_not_polled_yet():
+    assert _diagnostics_has_issues(None) is False
+
+
+def test_diagnostics_has_issues_true_for_a_real_issue_count():
+    assert _diagnostics_has_issues({"summary": "3 issues"}) is True
+
+
 # ---------- _build_rows / nav_items ----------
 
 class _FakeStatus:
@@ -405,6 +423,20 @@ def test_nav_items_includes_diagnostics_row():
     diag_items = [it for it in items if it.target_kind == "sysmon_diagnostics"]
     assert len(diag_items) == 1
     assert diag_items[0].preview_text == [("No issues found", 0)]
+    assert diag_items[0].preview_urgent is False
+
+
+def test_nav_items_diagnostics_row_is_urgent_when_there_are_real_issues():
+    _reset_module_state()
+    ctx = _ctx(windows=[], diagnostics_data={
+        "summary": "2 issues", "failed_units": ["foo.service"], "oom_events": [], "general_errors": [],
+    })
+    box = (0, 0, 40, 12)
+
+    items = nav_items(box, ctx, "sysmon")
+
+    diag_item = next(it for it in items if it.target_kind == "sysmon_diagnostics")
+    assert diag_item.preview_urgent is True
 
 
 # ---------- handle_row / handle_action ----------

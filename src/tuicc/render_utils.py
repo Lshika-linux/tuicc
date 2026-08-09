@@ -56,18 +56,74 @@ def draw_centered_lines(stdscr, box, lines):
     show in place of its normal contents — a Y/N confirmation overlay,
     a preview of what an item would do — centered the same way
     everywhere instead of each caller inventing its own positioning.
+
+    When there are more lines than fit in one column, spills into a
+    second column side by side instead of overflowing past the box's
+    own border — found live: sysmon.py's diagnostics breakdown (a
+    single flapping driver's crash dump, 74 distinct dmesg lines) wrote
+    its very first line directly ONTO the box's own top border. The
+    original single-column centering math only clamped its starting
+    row to >= 0 (the SCREEN edge), not >= "the first row actually
+    inside this box's own border" — with more lines than the box had
+    rows for, that clamp landed exactly on the border row itself, not
+    one row below it. Genuinely too much even for two columns still
+    truncates, with a "+N more" marker as the last visible line, rather
+    than trying a third column.
     """
     x, y, w, h = box
     inner_w = max(w - 2, 0)
-    start_row = y + max((h - len(lines)) // 2, 0)
+    max_rows = max(h - 2, 0)  # rows actually inside the border (y+1 .. y+h-2)
+    if max_rows <= 0 or not lines:
+        return
 
+    if len(lines) <= max_rows:
+        _draw_centered_column(stdscr, x + 1, y + 1, inner_w, max_rows, lines, center_each_line=True)
+        return
+
+    # Two side-by-side columns, each getting half the inner width
+    # (minus a small gap between them) — left-aligned within its own
+    # column rather than individually centered per line, which would
+    # stagger unevenly against its neighbor; a shared left margin per
+    # column reads as one coherent block instead.
+    col_w = max((inner_w - 2) // 2, 1)
+    left_lines, right_lines = split_lines_into_columns(lines, max_rows)
+    _draw_centered_column(stdscr, x + 1, y + 1, col_w, max_rows, left_lines, center_each_line=False)
+    _draw_centered_column(stdscr, x + 1 + col_w + 2, y + 1, col_w, max_rows, right_lines, center_each_line=False)
+
+
+def split_lines_into_columns(lines: list, max_rows: int) -> tuple[list, list]:
+    """Pure column-split math for draw_centered_lines' overflow case —
+    separated out from the actual curses drawing so the truncation/
+    "+N more" logic is unit-testable without a real curses screen
+    (unlike draw_centered_lines itself, which needs one — see this
+    file's own module docstring on why curses-drawing functions are
+    otherwise left untested here).
+    """
+    if max_rows <= 0:
+        return [], []
+    capacity = max_rows * 2
+    if len(lines) > capacity:
+        shown = lines[:max(capacity - 1, 0)]
+        fallback_color = shown[-1][1] if shown else 0
+        shown = shown + [(f"+{len(lines) - len(shown)} more", fallback_color)]
+    else:
+        shown = lines
+    return shown[:max_rows], shown[max_rows:]
+
+
+def _draw_centered_column(stdscr, col_x, top_row, col_w, max_rows, lines, center_each_line):
+    """One column's worth of lines, vertically centered within its own
+    max_rows budget — shared by draw_centered_lines' single-column and
+    two-column paths above.
+    """
+    start_row = top_row + max((max_rows - len(lines)) // 2, 0)
     try:
         for i, (text, color) in enumerate(lines):
             row = start_row + i
-            if row < y or row >= y + h - 1:
+            if row < top_row or row >= top_row + max_rows:
                 continue
-            clipped = text[:inner_w]
-            col = centered_x(x + 1, inner_w, clipped)
+            clipped = text[:col_w]
+            col = centered_x(col_x, col_w, clipped) if center_each_line else col_x
             stdscr.addstr(row, col, clipped, color)
     except curses.error:
         pass

@@ -16,11 +16,25 @@ def draw(stdscr, box, ctx, module_name):
     theme = ctx.theme or {}
 
     is_active = module_name == ctx.active_module
-    outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
+    showing_preview = ctx.selected_item is not None and ctx.selected_item.preview_text is not None
+
+    # A preview marked urgent (NavItem.preview_urgent — sysmon.py's
+    # diagnostics row when it has real issues, not "all clear") colors
+    # the WHOLE border urgent, taking priority over the plain active/
+    # selected styling below — found live, asked for: the border is
+    # what signals "pay attention here" everywhere else in this
+    # codebase, so a preview showing a real problem should color that
+    # border too, not just the text inside it.
+    if showing_preview and ctx.selected_item.preview_urgent:
+        outer_color = theme.get("urgent", 0)
+    elif is_active:
+        outer_color = theme.get("border_selected", 0)
+    else:
+        outer_color = theme.get("border", 0)
 
     draw_box_outline(stdscr, y, x, h, w, outer_color)
 
-    if ctx.selected_item is not None and ctx.selected_item.preview_text is not None:
+    if showing_preview:
         draw_centered_lines(stdscr, box, ctx.selected_item.preview_text)
         return
 
