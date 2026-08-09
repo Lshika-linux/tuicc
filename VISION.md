@@ -430,7 +430,14 @@ Two modules:
   section's original interaction spec (Enter grabs, ←→ adjust, Enter/
   Esc releases, arrows free since Tab is canonical navigation) — a 4th
   `input_claim` (R2) consumer, since slider grab/release is a clean fit
-  for that mechanism unlike resize_mode's own deferred case. Visual
+  for that mechanism unlike resize_mode's own deferred case. **Update:
+  sliders did NOT land inside control after all — see R8.** Live
+  iteration with the user concluded a continuous gauge is a different
+  enough visual language from control's own dense toggle rows (next
+  bullet) that it deserved its own module (`bars.py`), not a slider
+  bolted onto this one; VOL/BRI display now lives there, the actual
+  ←→-adjust interaction this paragraph originally scoped is still not
+  built (R8's own display-only status). Visual
   rule for the whole module: ONE box, uniform dense rows (dot + label,
   the `_connection_dot` convention) — not one framed box per feature.
 - **media** — done (now-playing + transport + output switching).
@@ -495,6 +502,136 @@ are NOT in the default preset. Then rewrite README/wiki around the
 final philosophy (sections 1–2 of this document) — after R1–R6, half
 the current docs will be wrong.
 
+### R8 — Bars module (done) + push-worker resolution (gate before v0.1.0)
+A late addition, found live after R5/R7 both already referenced
+"sliders" as control's own unfinished business (see R5's own update
+note above) — a session of live back-and-forth on VOL/BRI/BAT display
+concluded it needed to be its own module, and along the way surfaced an
+open architecture question serious enough to need its own gate before
+v0.1.0 ships, not just quietly left half-built.
+
+**`bars.py` — done, display-only.** VOL/BRI/BAT as flat vertical
+gauges, deliberately NOT sharing control's "one box, dense toggle rows"
+visual language (a continuous fill is a different thing to look at than
+a dot + label) and deliberately NOT individually framed either — a
+per-bar `draw_box_outline()` box was tried live and rejected as "too
+much" for what's meant to read as a plain, dense readout, same
+instinct that keeps control's own toggles frame-free. Fill uses
+`render_utils.eighth_block_level()` (the exact same sub-cell technique
+`media.py`'s cava visualizer already used, pulled out into a shared
+function once bars needed it too) so a value moving between glyph steps
+reads as continuous motion, not a jump — but the FILLED value is
+quantized to the nearest `BAR_FILL_STEP` (5%) before it ever reaches
+that function, independent of box height: found live, the same real
+percentage change could look like a visible step on one box height and
+nothing on another, purely because `eighth_block_level`'s own
+`num_rows*8` resolution doesn't divide evenly into 100 and that
+remainder shifts with height — quantizing the source value first makes
+the visible step boundaries height-independent, the readout text above
+each bar stays exact regardless (never quantized, never rounded).
+Empty cells (a fully-empty row, or a partial glyph's own unpainted
+sliver) are never drawn at all, not even a track texture or a colored
+background — two earlier attempts at coloring "empty" (a sparse "░"
+texture, then a solid darkened background pair) both got visibly
+mismatched against each other in one way or another; the fix that
+actually worked was simpler than either: draw nothing, let it blend
+into the terminal's own background, so there's no separate shade to
+mismatch against in the first place. BAT distinguishes three states —
+`Charging` (accent glow) > `plugged` (a charger IS connected per
+`battery.get_ac_online()`, but this pack isn't accepting charge right
+now — e.g. a ThinkPad `charge_control` threshold pausing mid-range;
+shown via the label swapping from "BAT" to "AC", not a color change,
+found live after a color-based version was asked to be simplified) >
+plain (genuinely on battery, no charger). No interaction yet —
+`nav_items()` returns `[]` on purpose, same as `clock.py`; the
+←→-adjust interaction R5's own control section originally scoped for
+sliders is still not built, and is this module's own next piece of
+work once R8's push-worker question below is settled (grab/release
+naturally wants to know whether the value it's adjusting updates
+instantly or on a poll tick).
+
+**The open question this section exists to force a decision on:**
+charging-start detection is still not fast enough — confirmed
+unsatisfying by the user even after `battery`'s poll_interval was
+tightened to 0.3s (matching audio/brightness, which DID feel fine at
+that same interval). A `StatusWorker` (pull, poll_interval-based)
+counterpart, `PushWorker` (`push_worker.py`) + `CombinedStatus`
+(`combined_status.py`), was built as the fix: event-driven instead of
+polled, one dedicated thread per domain blocking in `domain.watch()`
+instead of a shared tick loop, same external `get()`/`get_error()`/
+`request_action()` shape as `StatusWorker` so no module needs to know
+which mechanism a given domain actually uses. `battery.watch()` was
+built as its pilot domain, using `select.poll()` on `/sys/class/
+power_supply/*/uevent` with `POLLPRI|POLLERR` — the low-level mechanism
+`upowerd`/`acpid` use internally, confirmed live to correctly detect
+the documented "first poll() fires spuriously, arm by reading, THEN it
+blocks for real changes" sysfs quirk on this session's own hardware.
+
+**It doesn't actually work, confirmed empirically, not theoretically:**
+a live monitor script watching `battery.watch()`'s own yields, run
+against several REAL charger unplug/replug cycles on the user's actual
+machine, never once saw a real kernel event — every yield was exactly
+`fallback_seconds` apart (the safety-net polling this generator also
+does, added specifically because a pure push design has no way to
+recover if the kernel simply never signals something changed), and the
+underlying `/sys` data hadn't changed between samples despite the
+physical action having genuinely happened. `select.poll()`'s documented
+support for the `power_supply` sysfs class evidently isn't reliably
+wired up for this attribute on this exact kernel/driver combination —
+not something user space can verify ahead of time, and not something
+to trust on other hardware without re-confirming live first. `battery`
+was reverted to a plain `StatusWorker` `Domain` (poll_interval=0.3);
+`PushWorker`/`CombinedStatus`/`battery.watch()` are all still in the
+repo, tested (`test_push_worker.py`, `test_combined_status.py`, the
+`watch()` tests in `test_battery.py`), but NOT wired into `main.py` —
+proven infrastructure with no domain currently using it.
+
+**This can't ship to v0.1.0 in that state** — half-built infrastructure
+sitting unused, with the actual UX problem (charging-start still slow)
+still open, is exactly the kind of thing this document's own "known
+limitations get documented, not fixed with complexity nobody hits"
+principle argues against tolerating indefinitely. Before v0.1.0 tags,
+one of two things has to actually happen:
+
+1. **Make it work for real**, via a DIFFERENT event source than sysfs
+   `poll()` — that specific mechanism is what failed empirically, not
+   necessarily "push in general". Two concrete candidates, in the order
+   worth trying them:
+   - **`pyudev`, monitoring the `power_supply` subsystem over netlink**
+     (`udevadm monitor --subsystem-match=power_supply` is the CLI
+     equivalent to manually confirm live first, cheaply, before writing
+     any code) — genuinely a different mechanism than kernfs
+     `sysfs_notify()`/`poll()`: udev's netlink broadcast happens when
+     udev itself processes a kernel uevent, a different code path
+     entirely, so today's negative result doesn't rule this out. No
+     new runtime dependency conceptually (`pyudev` wraps functionality
+     already present via `systemd`/`eudev` on any real Linux desktop)
+     but IS a new Python package dependency to actually add.
+   - **UPower D-Bus signals** (`org.freedesktop.UPower.Device`'s own
+     `PropertiesChanged`) — the standard mechanism real desktop
+     environments use for this exact problem, over the same `jeepney`
+     D-Bus pattern `iwd.py`/`bluez.py`/`mpris.py` already use, so no
+     new library dependency, only a new daemon dependency (`upowerd`,
+     near-universal on real Linux desktops but not guaranteed present).
+   Whichever one is tried, the acceptance bar is the SAME empirical one
+   that caught the sysfs attempt failing: a live monitor script against
+   several real charger unplug/replug cycles, not a "this should work
+   per the docs" assumption. Confirmed working — wire `battery` back
+   onto `PushWorker`, and this section's job is done.
+2. **Or delete it** — `push_worker.py`, `combined_status.py`,
+   `battery.watch()`, their tests — if neither candidate above pans out
+   either. Fast-poll (`StatusWorker` at whatever interval genuinely
+   feels acceptable) becomes the final, accepted answer for battery,
+   documented as a real hardware/kernel limitation rather than an
+   unfinished feature — and `PushWorker`/`CombinedStatus` stop being
+   speculative infrastructure carried forward on the hope of a future
+   use, which is its own kind of complexity this document's principles
+   don't want tolerated indefinitely either.
+
+Either outcome is an acceptable way to close this out — leaving it as
+"built, tested, unused, problem still open" is the one outcome that
+isn't.
+
 ## 5. Phase order
 
 1. **R1** lifecycle (small code, changes UX ground for everything) — done
@@ -510,6 +647,9 @@ the current docs will be wrong.
 5. **R6** system monitor (exercises R3 + fixture discipline)
 6. **R4** connectivity v2 agents (hardest, most infrastructure needed)
 7. **R7** default preset + docs
+8. **R8** bars module (done) + push-worker resolution — the actual
+   final gate: v0.1.0 does not tag until this section's own "make it
+   work or delete it" decision is made, whichever way it goes
 
 Each refactor: its own branch, tests green before merge to main,
 GitHub issues for R4–R6 so contributors can see the direction.
