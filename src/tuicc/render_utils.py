@@ -114,6 +114,33 @@ def draw_status_line(stdscr, term_width, text, color_pair):
         pass
 
 
+def eighth_block_level(value: int, max_value: int, row_idx: int, num_rows: int) -> int:
+    """value's height (0..max_value) as seen from just ONE physical output
+    row's own 0..8 slice, when the value is rendered as num_rows stacked
+    terminal rows, each with 8 sub-levels of vertical resolution via the
+    eighth-block glyphs (" ▁▂▃▄▅▆▇█"). Without this, a value only has
+    num_rows discrete visual steps (one per whole terminal cell) — moving
+    between two of them looks like a jump, not continuous motion, exactly
+    the "bars don't move consistently with the real percentage" problem
+    swcc's own vertical bars had. Scaling to num_rows*8 steps instead
+    fixes that at any bar height, including num_rows=1.
+
+    row_idx=0 is the TOPMOST row; row_idx=num_rows-1 is the BOTTOMMOST
+    (where a bar visually starts growing from). Pure function — no
+    curses, no state — shared by modules/media.py's cava visualizer
+    (this is where the math originally lived, as `_cava_row_level`,
+    before the bars module needed the exact same technique for its own
+    VOL/BRI/BAT fills) and modules/bars.py.
+    """
+    if num_rows <= 0 or max_value <= 0:
+        return 0
+    total_levels = num_rows * 8
+    scaled = value * total_levels // max_value
+    scaled = max(0, min(scaled, total_levels))
+    row_base = (num_rows - 1 - row_idx) * 8
+    return max(0, min(scaled - row_base, 8))
+
+
 def format_shortcut(key_name: str) -> str:
     """Turn a keybinds.py-style key spec into display text, e.g.
     "Ctrl+L" -> "[^L]". Shared so any module showing a keybind hint
