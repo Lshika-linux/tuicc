@@ -383,7 +383,25 @@ def _grid_row(cells: list[tuple[str, list[tuple[str, str]]]]) -> list[tuple[str,
     return segments
 
 
-def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> list[list[tuple[str, str]]]:
+def _severity_role(value: float | None, warning: float, urgent: float) -> str:
+    """"value" (normal), "warning" (degraded, theme.warning), or
+    "urgent" (bad, theme.urgent) — a value at/above `urgent` wins over
+    `warning` even if it also clears that lower bar. None (a poll that
+    hasn't completed, or a real error) is always "value" — unknown
+    isn't "bad", it's just unknown, same None-vs-0 discipline as
+    everywhere else in this module.
+    """
+    if value is None:
+        return "value"
+    if value >= urgent:
+        return "urgent"
+    if value >= warning:
+        return "warning"
+    return "value"
+
+
+def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None,
+                        thresholds: dict) -> list[list[tuple[str, str]]]:
     """Three side-by-side COLUMNS, grouped by what they're actually
     about, not three side-by-side ROWS — found live, asked for: CPU/
     CPUTEMP/HOT together (CPU-related), RAM/DISK together (capacity-
@@ -414,6 +432,22 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
     clarity against the HOT row right below it — same value, but the
     label alone didn't make clear it's specifically the CPU package,
     not "temperature" in general.
+
+    CPU/RAM/DISK/CPUTEMP/HOT values are colored by `thresholds`
+    (ctx.config.sysmon_thresholds — a real [sysmon] config.toml
+    section, not a hardcoded constant: what counts as "concerning" is
+    genuinely per-machine, see CONTRIBUTING.md's "no hardcoded personal
+    preferences" rule — found live, asked for directly: "chce to i
+    degraded a bad"). RAM/DISK are colored by their real usage PERCENT
+    even though the text itself shows used/available amounts, not a
+    bare percent. LOAD/SWAP are deliberately NOT threshold-colored:
+    LOAD's own "concerning" point depends on core count (a raw "2.0"
+    means opposite things on a 2-core vs 16-core machine) — not
+    implemented yet; SWAP already has VISION.md's own documented
+    reasoning for why a naive threshold on it would be misleading (the
+    kernel proactively swaps rarely-touched pages even with plenty of
+    free RAM — normal housekeeping reads identically to real thrashing
+    on a plain gauge).
     """
     def _pct(value):
         return f"{value:.0f}%" if value is not None else "?%"
@@ -422,28 +456,41 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
         return f"{value:.0f}°C" if value is not None else "?°C"
 
     cpu = sysinfo_data.get("cpu_percent") if sysinfo_data else None
+    cpu_role = _severity_role(cpu, thresholds["cpu_warning"], thresholds["cpu_urgent"])
+
     ram = sysinfo_data.get("ram") if sysinfo_data else None
     if ram:
         gib = 1024 * 1024  # ram's own values are in kB (see sysinfo.get_ram_info)
         ram_str = f"{ram['used_kb'] / gib:.1f}/{ram['available_kb'] / gib:.1f} GiB"
+        ram_role = _severity_role(ram["percent"], thresholds["ram_warning"], thresholds["ram_urgent"])
     else:
         ram_str = "?/? GiB"
+        ram_role = "value"
+
     disk = sysinfo_data.get("disk") if sysinfo_data else None
     if disk and disk.get("used") is not None and disk.get("free") is not None:
         disk_str = f"{disk['used'] / 1e9:.0f}/{disk['free'] / 1e9:.0f} GB"
+        disk_role = _severity_role(disk.get("percent"), thresholds["disk_warning"], thresholds["disk_urgent"])
     else:
         disk_str = "?/? GB"
+        disk_role = "value"
+
     load = sysinfo_data.get("load_average") if sysinfo_data else None
     load_str = f"{load[0]:.1f}/{load[1]:.1f}/{load[2]:.1f}" if load else "?/?/?"
 
     cpu_temp_entry = sensors_data.get("cpu_temp") if sensors_data else None
     hottest_entry = sensors_data.get("hottest") if sensors_data else None
     cpu_temp_str = _temp(cpu_temp_entry[0]) if cpu_temp_entry else "?°C"
+    cpu_temp_role = _severity_role(
+        cpu_temp_entry[0] if cpu_temp_entry else None, thresholds["temp_warning_c"], thresholds["temp_urgent_c"],
+    )
     if hottest_entry:
         hot_value, hot_chip, hot_feature = hottest_entry
         hot_str = f"{_temp(hot_value)} ({describe_sensor(hot_chip, hot_feature)})"
+        hot_role = _severity_role(hot_value, thresholds["temp_warning_c"], thresholds["temp_urgent_c"])
     else:
         hot_str = "?°C"
+        hot_role = "value"
     # THROTTLED is a CPU-thermal flag (core_throttle_count deltas, see
     # sysinfo.py), not a swap-related one — appended to HOT's own cell
     # specifically because that's the one cell in this whole grid with
@@ -455,7 +502,7 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
     # as "why is a CPU heat flag next to swap I/O" once actually asked.
     # Urgent-colored (its own segment, "urgent" role) so it actually
     # draws the eye once it's visible at all — found live, asked for.
-    hot_segments = [(hot_str, "value")]
+    hot_segments = [(hot_str, hot_role)]
     if sysinfo_data and sysinfo_data.get("throttled_recently"):
         hot_segments.append((" THROTTLED", "urgent"))
 
@@ -464,8 +511,8 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> 
     swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
 
     columns = [
-        [("CPU", [(_pct(cpu), "value")]), ("CPUTEMP", [(cpu_temp_str, "value")]), ("HOT", hot_segments)],
-        [("RAM", [(ram_str, "value")]), ("DISK", [(disk_str, "value")])],
+        [("CPU", [(_pct(cpu), cpu_role)]), ("CPUTEMP", [(cpu_temp_str, cpu_temp_role)]), ("HOT", hot_segments)],
+        [("RAM", [(ram_str, ram_role)]), ("DISK", [(disk_str, disk_role)])],
         [("LOAD", [(load_str, "value")]), ("SWAP", [(swap_str, "value")])],
     ]
     max_rows = max(len(col) for col in columns)
@@ -536,7 +583,7 @@ def _build_rows(ctx, box_h):
     rows = [("header", header_with_count("Windows", windows))]
     rows.extend(section_rows(windows, windows_error, selected_index, "window", "window"))
     rows.append(("spacer", None))
-    for line in _format_stats_grid(sysinfo_data, sensors_data):
+    for line in _format_stats_grid(sysinfo_data, sensors_data, ctx.config.sysmon_thresholds):
         rows.append(("stats_line", line))
     rows.append(("diagnostics", diagnostics_data))
     return rows
@@ -604,6 +651,7 @@ def draw(stdscr, box, ctx, module_name):
             role_colors = {
                 "label": theme.get("accent", 0),
                 "value": theme.get("text", 0),
+                "warning": theme.get("warning", 0),
                 "urgent": theme.get("urgent", 0),
             }
             try:

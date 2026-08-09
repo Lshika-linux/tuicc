@@ -194,6 +194,32 @@ bluetooth_backend = "bluez"
 # runs. "pactl" is the fallback for a plain PulseAudio setup instead.
 audio_backend = "wpctl"
 
+[sysmon]
+# Thresholds for the System module's own CPU/RAM/DISK/CPUTEMP/HOT
+# values — below *_warning, plain text color; at/above *_warning,
+# theme.warning (yellow by default); at/above *_urgent, theme.urgent
+# (red). What counts as "concerning" is genuinely per-machine: a beefy
+# desktop's normal 60% load reads very differently than the same 60%
+# on a thin, passively-cooled laptop, so these are real config values,
+# not something modules/sysmon.py assumes for you.
+# RAM/DISK are colored by their real usage PERCENT even though the
+# System box itself shows them as used/available amounts (e.g. "5.8/1.9
+# GiB"), not a bare percent — the percent is still what decides the
+# color.
+cpu_warning_percent = 70
+cpu_urgent_percent = 90
+ram_warning_percent = 75
+ram_urgent_percent = 90
+disk_warning_percent = 80
+disk_urgent_percent = 95
+# Applies to BOTH CPUTEMP (the CPU package reading) and HOT (whichever
+# sensor is hottest overall) — one shared pair of thresholds, not a
+# separate one per sensor type (a laptop's NVMe/chipset sensors don't
+# usually get their own meaningfully different "safe" ceiling in
+# practice, and a single pair keeps this section short).
+temp_warning_c = 75
+temp_urgent_c = 90
+
 [sessions]
 # Display name for each of the 3 save/load/delete slots — purely
 # cosmetic, doesn't affect which file a slot reads/writes

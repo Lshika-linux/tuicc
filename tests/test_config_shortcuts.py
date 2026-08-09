@@ -163,3 +163,44 @@ def test_invalid_shortcut_syntax_raises(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError):
         load_config()
+
+
+# ---------- sysmon_thresholds ----------
+# Reuses this file's own end-to-end load_config() harness rather than a
+# second BASE_TOML/monkeypatch setup — [sysmon] is absent from
+# BASE_TOML entirely, the same "existing config predating this section"
+# case every other test above already exercises for [wm]'s optional
+# self_app_id/return_to_origin keys.
+
+def test_sysmon_thresholds_default_when_section_absent(tmp_path, monkeypatch):
+    actions_toml = _action_toml("Lock", shortcut=None)
+    _write_config(tmp_path, monkeypatch, actions_toml)
+
+    cfg = load_config()
+
+    assert cfg.sysmon_thresholds == {
+        "cpu_warning": 70, "cpu_urgent": 90,
+        "ram_warning": 75, "ram_urgent": 90,
+        "disk_warning": 80, "disk_urgent": 95,
+        "temp_warning_c": 75, "temp_urgent_c": 90,
+    }
+
+
+def test_sysmon_thresholds_read_from_config_when_present(tmp_path, monkeypatch):
+    actions_toml = _action_toml("Lock", shortcut=None)
+    user_config = tmp_path / "config.toml"
+    user_config.write_text(
+        BASE_TOML.format(power_menu_block=actions_toml) + "\n[sysmon]\ncpu_warning_percent = 50\ncpu_urgent_percent = 80\n"
+    )
+    presets_dir = tmp_path / "presets"
+    presets_dir.mkdir()
+    (presets_dir / "1.toml").write_text(PRESET_TOML)
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", user_config)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", presets_dir)
+
+    cfg = load_config()
+
+    assert cfg.sysmon_thresholds["cpu_warning"] == 50
+    assert cfg.sysmon_thresholds["cpu_urgent"] == 80
+    # Untouched keys still fall back to their own packaged defaults.
+    assert cfg.sysmon_thresholds["ram_warning"] == 75

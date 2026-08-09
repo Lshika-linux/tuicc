@@ -80,6 +80,7 @@ class Config:
     global_shortcuts: dict
     session_names: dict
     control_toggles: list
+    sysmon_thresholds: dict
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -530,6 +531,25 @@ def load_config() -> Config:
     # desktop actually runs).
     audio_backend_name = user_data.get("audio", {}).get("audio_backend", "wpctl")
     control_toggles = _build_control_toggles(user_data)
+    # [sysmon] is newer still (R6) — same .get()-with-fallback reasoning
+    # as [audio] above. What counts as "concerning" CPU/RAM/disk/temp is
+    # genuinely per-machine/per-user (CONTRIBUTING.md's "no hardcoded
+    # personal preferences" rule) — a beefy desktop's normal 60% load is
+    # someone else's alarming 60% on a thin laptop — so these are real
+    # config values, not constants baked into modules/sysmon.py, found
+    # live, asked for directly ("chce to i degraded a bad"). Defaults
+    # below match the packaged config.toml's own [sysmon] section.
+    _sysmon_data = user_data.get("sysmon", {})
+    sysmon_thresholds = {
+        "cpu_warning": _sysmon_data.get("cpu_warning_percent", 70),
+        "cpu_urgent": _sysmon_data.get("cpu_urgent_percent", 90),
+        "ram_warning": _sysmon_data.get("ram_warning_percent", 75),
+        "ram_urgent": _sysmon_data.get("ram_urgent_percent", 90),
+        "disk_warning": _sysmon_data.get("disk_warning_percent", 80),
+        "disk_urgent": _sysmon_data.get("disk_urgent_percent", 95),
+        "temp_warning_c": _sysmon_data.get("temp_warning_c", 75),
+        "temp_urgent_c": _sysmon_data.get("temp_urgent_c", 90),
+    }
 
     return Config(
         layout=layout,
@@ -556,4 +576,5 @@ def load_config() -> Config:
         global_shortcuts=global_shortcuts,
         session_names=session_names,
         control_toggles=control_toggles,
+        sysmon_thresholds=sysmon_thresholds,
     )
