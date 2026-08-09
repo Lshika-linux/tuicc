@@ -65,25 +65,27 @@ from tuicc.modules import media as media_mode
 from tuicc.modules import sysmon as sysmon_mode
 
 
-def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider):
+def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, visible_slots):
     """Fills in `pid` for any procmon.WindowInfo currently missing one
     (i3 has no native pid on its own IPC tree — see providers/base.py's
     resolve_pid() docstring) by calling Provider.resolve_pid() here,
     main-thread, and ONLY for windows within sysmon.py's own currently-
-    visible VISIBLE_SLOTS scroll window (sysmon_mode.visible_window_ids)
-    — resolve_pid() is a real, possibly-slow on-demand X11 lookup on
-    i3, so doing it for every window on every frame regardless of
-    visibility would be wasted work for a long, mostly-scrolled-out-of-
-    view window list. Resolved pids are cached indefinitely per
-    window_id in `resolved_pid_cache` (main.py's own dict, not on the
-    WindowInfo objects themselves, which are rebuilt fresh every frame
-    from `state`) — a window that closes just stops appearing in
-    `windows` on a later frame; its now-orphaned cache entry is
-    harmless and small enough not to bother clearing, same accepted-
-    small-growth tradeoff Provider.no_focus_next_window's own
-    for_window rules already document (see CLAUDE.md).
+    visible scroll window (sysmon_mode.visible_window_ids, `visible_slots`
+    = cfg.sysmon_visible_slots — a real config.toml value, not a fixed
+    constant, see [sysmon]'s own visible_slots key) — resolve_pid() is a
+    real, possibly-slow on-demand X11 lookup on i3, so doing it for
+    every window on every frame regardless of visibility would be
+    wasted work for a long, mostly-scrolled-out-of-view window list.
+    Resolved pids are cached indefinitely per window_id in
+    `resolved_pid_cache` (main.py's own dict, not on the WindowInfo
+    objects themselves, which are rebuilt fresh every frame from
+    `state`) — a window that closes just stops appearing in `windows`
+    on a later frame; its now-orphaned cache entry is harmless and
+    small enough not to bother clearing, same accepted-small-growth
+    tradeoff Provider.no_focus_next_window's own for_window rules
+    already document (see CLAUDE.md).
     """
-    visible_ids = sysmon_mode.visible_window_ids(windows, selected_id)
+    visible_ids = sysmon_mode.visible_window_ids(windows, selected_id, visible_slots)
     resolved = []
     for w in windows:
         pid = w.pid
@@ -589,7 +591,7 @@ def main(stdscr):
                 procmon.flatten_windows(state), known_stats=status_worker.get("windows") or [],
             )
             pid_feed.set(_resolve_visible_pids(
-                windows_this_frame, selected_id, resolved_pid_cache, provider,
+                windows_this_frame, selected_id, resolved_pid_cache, provider, cfg.sysmon_visible_slots,
             ))
 
             if state.focused_region_id is not None and state.focused_region_id != last_focused_region_id:

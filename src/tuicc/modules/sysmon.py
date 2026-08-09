@@ -615,7 +615,8 @@ def _build_rows(ctx, box_h):
     selected_index = _selected_window_index(windows or [], ctx.selected_id, _expanded_window_id)
 
     rows = [("header", header_with_count("Windows", windows))]
-    rows.extend(section_rows(windows, windows_error, selected_index, "window", "window"))
+    rows.extend(section_rows(windows, windows_error, selected_index, "window", "window",
+                              visible_slots=ctx.config.sysmon_visible_slots))
     rows.append(("spacer", None))
     for line in _format_stats_grid(sysinfo_data, sensors_data, ctx.config.sysmon_blocks):
         rows.append(("stats_line", line))
@@ -814,7 +815,8 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     # peek items for the scrollable window section, same mechanism
     # media.py's own nav_items() uses for Now Playing/Output.
     selected_index = _selected_window_index(windows, ctx.selected_id, _expanded_window_id)
-    before_i, after_i = section_nav_indices(len(windows), selected_index)
+    before_i, after_i = section_nav_indices(len(windows), selected_index,
+                                             visible_slots=ctx.config.sysmon_visible_slots)
     window_items = [it for it in items if it.target_kind in ("sysmon_row", "sysmon_action")]
     other_items = [it for it in items if it.target_kind not in ("sysmon_row", "sysmon_action")]
     if before_i is not None and window_rows:

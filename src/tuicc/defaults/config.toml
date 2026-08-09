@@ -194,7 +194,19 @@ bluetooth_backend = "bluez"
 # runs. "pactl" is the fallback for a plain PulseAudio setup instead.
 audio_backend = "wpctl"
 
+[media]
+# How many rows the Now Playing / Output lists each show at once
+# before they start scrolling — same mechanic (and independently
+# configurable) as [sysmon]'s own window list below.
+visible_slots = 3
+
 [sysmon]
+# How many rows the window list (above the stats block below) shows at
+# once before it starts scrolling — same fixed-slot-plus-scroll
+# mechanic media's own Now Playing/Output lists use (see [media]
+# below), each with its own independent value, not one shared global.
+visible_slots = 3
+
 # Every value the System module's own stats block shows (CPU/RAM/DISK/
 # LOAD/CPUTEMP/HOT/SWAP) is configured below, one [[sysmon.block]]
 # entry per metric — the single source of truth for that box: which

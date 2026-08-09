@@ -224,7 +224,8 @@ class _FakeStatus:
 
 
 def _ctx(**status_kwargs):
-    return SimpleNamespace(status=_FakeStatus(**status_kwargs), theme={}, selected_id=None, cava=None)
+    return SimpleNamespace(status=_FakeStatus(**status_kwargs), theme={}, selected_id=None, cava=None,
+                            config=SimpleNamespace(media_visible_slots=3))
 
 
 def _kinds(rows):
@@ -302,6 +303,20 @@ def test_player_section_is_always_exactly_three_rows():
         rows = _build_rows(_ctx(snapshots={"media": players}), box_h=20)
         section = [(k, p) for k, p in rows if k == "player" or (k == "empty_slot" and "player" in p)]
         assert len(section) == 3, f"expected 3 rows for {len(players)} players, got {len(section)}"
+
+
+def test_player_section_respects_configured_visible_slots():
+    # Found live, asked for directly: "Počet viditelných řádků, visible
+    # slots a to same i pro media" — media_visible_slots is a real
+    # config.toml value, not the hardcoded windowed_list.py default.
+    _reset_module_state()
+    ctx = _ctx(snapshots={"media": [_player(bus_name=str(i)) for i in range(6)]})
+    ctx.config.media_visible_slots = 4
+
+    rows = _build_rows(ctx, box_h=20)
+
+    section = [(k, p) for k, p in rows if k == "player" or (k == "empty_slot" and "player" in p)]
+    assert len(section) == 4
 
 
 def test_output_section_is_always_exactly_three_rows():
@@ -471,6 +486,7 @@ def _fake_ctx_for_nav(players=None, sinks=None, selected_id=None):
     return SimpleNamespace(
         status=_FakeStatus(snapshots={"media": players, "audio": sinks}),
         theme={}, selected_id=selected_id, cava=None,
+        config=SimpleNamespace(media_visible_slots=3),
     )
 
 

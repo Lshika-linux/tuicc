@@ -58,8 +58,6 @@ from urllib.parse import urlparse
 from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, eighth_block_level
-from tuicc.windowed_list import VISIBLE_SLOTS
-from tuicc.windowed_list import window_start as _window_start
 from tuicc.windowed_list import section_nav_indices as _section_nav_indices
 from tuicc.windowed_list import section_rows as _section_rows
 from tuicc.windowed_list import header_with_count as _header_with_count
@@ -328,12 +326,16 @@ def _build_rows(ctx, box_h):
     selected_player_index = _selected_player_index(players or [], ctx.selected_id, _expanded_bus_name)
     selected_output_index = _selected_output_index(sinks or [], ctx.selected_id)
 
+    visible_slots = ctx.config.media_visible_slots
+
     rows = [("header", _header_with_count("Now Playing", players))]
-    rows.extend(_section_rows(players, media_error, selected_player_index, "player", "player"))
+    rows.extend(_section_rows(players, media_error, selected_player_index, "player", "player",
+                               visible_slots=visible_slots))
 
     rows.append(("spacer", None))
     rows.append(("header", _header_with_count("Output", sinks)))
-    rows.extend(_section_rows(sinks, audio_error, selected_output_index, "output_item", "output"))
+    rows.extend(_section_rows(sinks, audio_error, selected_output_index, "output_item", "output",
+                               visible_slots=visible_slots))
 
     # No separate rows for the cava visualizer — it's drawn INLINE to
     # the right of the "output_item" rows just added above (see draw()'s
@@ -427,7 +429,7 @@ def draw(stdscr, box, ctx, module_name):
     # than 3 outputs, still show the full 3-slot visualizer".
     sinks_for_cava = ctx.status.get("audio") if ctx.status is not None else None
     has_cava = ctx.cava is not None and bool(sinks_for_cava)
-    num_output_rows = VISIBLE_SLOTS if has_cava else 0
+    num_output_rows = ctx.config.media_visible_slots if has_cava else 0
     cava_running = ctx.cava is not None and ctx.cava.is_running()
     cava_frame = ctx.cava.get_frame() if cava_running else None
     output_row_index = 0  # incremented once per OUTPUT-SECTION row (real or empty) drawn below
@@ -693,15 +695,17 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             output_items.append(_output_row_nav_item(payload, box, row))
             output_rows.append(row)
 
+    visible_slots = ctx.config.media_visible_slots
+
     selected_player_index = _selected_player_index(players, ctx.selected_id, _expanded_bus_name)
-    before_i, after_i = _section_nav_indices(len(players), selected_player_index)
+    before_i, after_i = _section_nav_indices(len(players), selected_player_index, visible_slots=visible_slots)
     if before_i is not None and player_rows:
         player_items = _player_row_nav_items(players[before_i], box, player_rows[0]) + player_items
     if after_i is not None and player_rows:
         player_items = player_items + _player_row_nav_items(players[after_i], box, player_rows[-1])
 
     selected_output_index = _selected_output_index(sinks, ctx.selected_id)
-    before_i, after_i = _section_nav_indices(len(sinks), selected_output_index)
+    before_i, after_i = _section_nav_indices(len(sinks), selected_output_index, visible_slots=visible_slots)
     if before_i is not None and output_rows:
         output_items = [_output_row_nav_item(sinks[before_i], box, output_rows[0])] + output_items
     if after_i is not None and output_rows:

@@ -39,6 +39,7 @@ from pathlib import Path
 from tuicc.layout import Layout, ModuleBox, boxes_to_toml_data
 from tuicc.theme import resolve_color
 from tuicc.keybinds import resolve_key
+from tuicc.windowed_list import VISIBLE_SLOTS as DEFAULT_VISIBLE_SLOTS
 
 PACKAGE_DIR = Path(__file__).parent
 DEFAULT_CONFIG_PATH = PACKAGE_DIR / "defaults" / "config.toml"
@@ -81,6 +82,8 @@ class Config:
     session_names: dict
     control_toggles: list
     sysmon_blocks: list
+    sysmon_visible_slots: int
+    media_visible_slots: int
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -615,6 +618,17 @@ def load_config() -> Config:
     audio_backend_name = user_data.get("audio", {}).get("audio_backend", "wpctl")
     control_toggles = _build_control_toggles(user_data)
     sysmon_blocks = _build_sysmon_blocks(user_data)
+    # How many rows each fixed-slot-plus-scroll list shows at once
+    # before it starts scrolling (windowed_list.py's own VISIBLE_SLOTS,
+    # DEFAULT_VISIBLE_SLOTS here) — sysmon's window list and media's
+    # Now Playing/Output lists each get their own independent value
+    # (different boxes, different natural heights), not one shared
+    # global. Found live, asked for directly, same session as
+    # [[sysmon.block]]: "Počet viditelných řádků, visible slots a to
+    # same i pro media" (the visible-row count, and the same for media
+    # too).
+    sysmon_visible_slots = user_data.get("sysmon", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
+    media_visible_slots = user_data.get("media", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
 
     return Config(
         layout=layout,
@@ -642,4 +656,6 @@ def load_config() -> Config:
         session_names=session_names,
         control_toggles=control_toggles,
         sysmon_blocks=sysmon_blocks,
+        sysmon_visible_slots=sysmon_visible_slots,
+        media_visible_slots=media_visible_slots,
     )

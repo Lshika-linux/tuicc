@@ -568,7 +568,7 @@ def _ctx(windows=None, windows_error=None, sysinfo_data=None, sensors_data=None,
             errors={"windows": windows_error},
         ),
         theme={}, selected_id=selected_id,
-        config=SimpleNamespace(sysmon_blocks=_DEFAULT_BLOCKS),
+        config=SimpleNamespace(sysmon_blocks=_DEFAULT_BLOCKS, sysmon_visible_slots=3),
         pending_confirm=None,
     )
 
@@ -586,6 +586,21 @@ def test_build_rows_always_three_window_slots():
         rows = _build_rows(_ctx(windows=windows), box_h=20)
         section = [(k, p) for k, p in rows if k == "window" or (k == "empty_slot" and "window" in p)]
         assert len(section) == 3
+
+
+def test_build_rows_respects_configured_visible_slots():
+    # Found live, asked for directly: "Počet viditelných řádků, visible
+    # slots" — sysmon_visible_slots is a real config.toml value
+    # (cfg.sysmon_visible_slots), not the hardcoded windowed_list.py
+    # default.
+    _reset_module_state()
+    ctx = _ctx(windows=[_win(window_id=str(i)) for i in range(6)])
+    ctx.config.sysmon_visible_slots = 5
+
+    rows = _build_rows(ctx, box_h=20)
+
+    section = [(k, p) for k, p in rows if k == "window" or (k == "empty_slot" and "window" in p)]
+    assert len(section) == 5
 
 
 def test_build_rows_includes_stats_lines_and_diagnostics():

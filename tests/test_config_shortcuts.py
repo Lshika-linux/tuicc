@@ -182,3 +182,58 @@ def test_sysmon_blocks_default_when_section_absent(tmp_path, monkeypatch):
     cfg = load_config()
 
     assert cfg.sysmon_blocks == config_module.DEFAULT_SYSMON_BLOCKS
+
+
+# ---------- sysmon_visible_slots / media_visible_slots ----------
+# Found live, same session as [[sysmon.block]]: "Počet viditelných
+# řádků, visible slots a to same i pro media" (the visible-row count,
+# and the same for media too).
+
+def test_visible_slots_default_to_3_when_sections_absent(tmp_path, monkeypatch):
+    # Neither [sysmon] nor [media] appear in BASE_TOML at all.
+    actions_toml = _action_toml("Lock", shortcut=None)
+    _write_config(tmp_path, monkeypatch, actions_toml)
+
+    cfg = load_config()
+
+    assert cfg.sysmon_visible_slots == 3
+    assert cfg.media_visible_slots == 3
+
+
+def test_visible_slots_read_from_config_when_present(tmp_path, monkeypatch):
+    actions_toml = _action_toml("Lock", shortcut=None)
+    user_config = tmp_path / "config.toml"
+    user_config.write_text(
+        BASE_TOML.format(power_menu_block=actions_toml)
+        + "\n[sysmon]\nvisible_slots = 5\n\n[media]\nvisible_slots = 2\n"
+    )
+    presets_dir = tmp_path / "presets"
+    presets_dir.mkdir()
+    (presets_dir / "1.toml").write_text(PRESET_TOML)
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", user_config)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", presets_dir)
+
+    cfg = load_config()
+
+    assert cfg.sysmon_visible_slots == 5
+    assert cfg.media_visible_slots == 2
+
+
+def test_sysmon_visible_slots_independent_of_sysmon_blocks(tmp_path, monkeypatch):
+    # [sysmon] can set visible_slots without needing any [[block]]
+    # entries at all — the two are unrelated keys under the same table,
+    # and _build_sysmon_blocks() must still fall back to the packaged
+    # block layout.
+    actions_toml = _action_toml("Lock", shortcut=None)
+    user_config = tmp_path / "config.toml"
+    user_config.write_text(BASE_TOML.format(power_menu_block=actions_toml) + "\n[sysmon]\nvisible_slots = 7\n")
+    presets_dir = tmp_path / "presets"
+    presets_dir.mkdir()
+    (presets_dir / "1.toml").write_text(PRESET_TOML)
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", user_config)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", presets_dir)
+
+    cfg = load_config()
+
+    assert cfg.sysmon_visible_slots == 7
+    assert cfg.sysmon_blocks == config_module.DEFAULT_SYSMON_BLOCKS
