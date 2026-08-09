@@ -586,7 +586,7 @@ def main(stdscr):
             # pid-resolution below would decide "visible" using a
             # different order than what's actually about to be shown.
             windows_this_frame = sysmon_mode.sort_windows_by_drain(
-                procmon.flatten_windows(state), known_stats=status_worker.get("windows"),
+                procmon.flatten_windows(state), known_stats=status_worker.get("windows") or [],
             )
             pid_feed.set(_resolve_visible_pids(
                 windows_this_frame, selected_id, resolved_pid_cache, provider,
