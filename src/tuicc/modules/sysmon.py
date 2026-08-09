@@ -322,13 +322,44 @@ def _format_window_label(win_stat, available_w: int) -> str:
 
 # ---------- middle "compact stats" section ----------
 
-def _format_stats_lines(sysinfo_data: dict | None, sensors_data: dict | None) -> list[str]:
-    """Two fixed text lines — columns side by side, not one value per
-    line, agreed with the user specifically because the box's own row
-    budget can't fit one-value-per-line (see module docstring). Any
-    single value that's currently unknown (a poll that hasn't completed
-    yet, or a real poll error) shows as "?" rather than a misleading 0
-    — same None-vs-0 discipline as everywhere else in this codebase.
+# Fixed width per grid cell ("LABEL value", left-justified/truncated to
+# this) — found live, asked for ("uklidit spodní část, takhle je to
+# nevzhledné"): a loose run-on line of "LABEL value  LABEL value  ..."
+# with no fixed column boundaries read as cluttered and hard to scan.
+# A real 3-column table, values consistently starting at the same
+# column on every row, is what actually reads as tidy.
+GRID_COL_WIDTH = 18
+
+
+def _grid_row(cells: list[tuple[str, str]]) -> str:
+    """Joins (label, value) pairs into one row — every cell EXCEPT the
+    last is padded/truncated to GRID_COL_WIDTH so the next column lines
+    up; the last cell is left its natural length, since nothing needs
+    to align after it. Found live: HOT's own describe_sensor() label
+    ("58°C (CPU (Package id 0))") routinely runs past GRID_COL_WIDTH —
+    truncating it the same way the earlier, alignment-only columns need
+    to be truncated would cut off exactly the part that answers "why
+    am I looking at this sensor", the one thing this value exists to
+    show.
+    """
+    parts = []
+    for i, (label, value) in enumerate(cells):
+        text = f"{label:<4} {value}" if label else value
+        if i < len(cells) - 1:
+            text = text[:GRID_COL_WIDTH].ljust(GRID_COL_WIDTH)
+        parts.append(text)
+    return "".join(parts).rstrip()
+
+
+def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None) -> list[str]:
+    """Three fixed GRID_COL_WIDTH-column rows — CPU/RAM/DISK, then
+    LOAD/TEMP/HOT, then SWAP (+ a THROTTLED flag in the same row when
+    true, blank otherwise). Columns side by side, not one value per
+    line — the box's own row budget can't fit that (see module
+    docstring) — but now genuinely ALIGNED, not just space-separated.
+    Any single value that's currently unknown (a poll that hasn't
+    completed yet, or a real poll error) shows as "?" rather than a
+    misleading 0 — same None-vs-0 discipline as everywhere else.
     """
     def _pct(value):
         return f"{value:.0f}%" if value is not None else "?%"
@@ -341,9 +372,7 @@ def _format_stats_lines(sysinfo_data: dict | None, sensors_data: dict | None) ->
     disk = sysinfo_data.get("disk") if sysinfo_data else None
     disk_pct = disk.get("percent") if disk else None
     load = sysinfo_data.get("load_average") if sysinfo_data else None
-    load_str = f"{load[0]:.2f}/{load[1]:.2f}/{load[2]:.2f}" if load else "?/?/?"
-
-    line1 = f"CPU {_pct(cpu)}  RAM {_pct(ram)}  DISK {_pct(disk_pct)}  LOAD {load_str}"
+    load_str = f"{load[0]:.1f}/{load[1]:.1f}/{load[2]:.1f}" if load else "?/?/?"
 
     cpu_temp_entry = sensors_data.get("cpu_temp") if sensors_data else None
     hottest_entry = sensors_data.get("hottest") if sensors_data else None
@@ -356,21 +385,25 @@ def _format_stats_lines(sysinfo_data: dict | None, sensors_data: dict | None) ->
 
     swap_in = sysinfo_data.get("swap_in_kb_s") if sysinfo_data else None
     swap_out = sysinfo_data.get("swap_out_kb_s") if sysinfo_data else None
-    swap_str = f"{swap_in:.0f}/{swap_out:.0f} KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
+    swap_str = f"{swap_in:.0f}↓/{swap_out:.0f}↑ KB/s" if swap_in is not None and swap_out is not None else "?/? KB/s"
+    throttled = bool(sysinfo_data and sysinfo_data.get("throttled_recently"))
 
-    throttle_flag = "  THROTTLED" if (sysinfo_data and sysinfo_data.get("throttled_recently")) else ""
+    row1 = _grid_row([("CPU", _pct(cpu)), ("RAM", _pct(ram)), ("DISK", _pct(disk_pct))])
+    row2 = _grid_row([("LOAD", load_str), ("TEMP", cpu_temp_str), ("HOT", hot_str)])
+    row3_cells = [("SWAP", swap_str)]
+    if throttled:
+        row3_cells.append(("", "THROTTLED"))
+    row3 = _grid_row(row3_cells)
 
-    line2 = f"TEMP {cpu_temp_str}  HOT {hot_str}  SWAP {swap_str}{throttle_flag}"
-
-    return [line1, line2]
+    return [row1, row2, row3]
 
 
 # ---------- bottom diagnostics line ----------
 
 def _diagnostics_summary_text(diag: dict | None) -> str:
     if diag is None:
-        return "Diagnostics: checking..."
-    return f"Diagnostics: {diag['summary']}"
+        return "checking..."
+    return diag["summary"]
 
 
 def _diagnostics_preview_text(diag: dict | None, theme) -> list[tuple[str, int]] | None:
@@ -420,7 +453,7 @@ def _build_rows(ctx, box_h):
     rows = [("header", header_with_count("Windows", windows))]
     rows.extend(section_rows(windows, windows_error, selected_index, "window", "window"))
     rows.append(("spacer", None))
-    for line in _format_stats_lines(sysinfo_data, sensors_data):
+    for line in _format_stats_grid(sysinfo_data, sensors_data):
         rows.append(("stats_line", line))
     rows.append(("diagnostics", diagnostics_data))
     return rows
@@ -479,14 +512,29 @@ def draw(stdscr, box, ctx, module_name):
                 pass
 
         elif kind == "diagnostics":
+            # Same "●/○ dot signals status, independent of selection;
+            # text color signals selection" split control.py's own
+            # toggle rows already use — found live, asked for ("uklidit
+            # spodní část"): a plain "Diagnostics: All clear" text line
+            # didn't read as a STATUS the way every other module's own
+            # dot-led rows do.
             diag = payload
             has_issues = diag is not None and diag["summary"] not in ("All clear", "Diagnostics unavailable")
             is_row_selected = "sysmon:diagnostics" == ctx.selected_id
-            color = theme.get("urgent", 0) if has_issues else theme.get("text", 0)
-            if is_row_selected:
-                color = theme.get("selected", 0)
+
+            if diag is None or diag["summary"] == "Diagnostics unavailable":
+                dot, dot_color = "○", theme.get("text", 0) | curses.A_DIM
+            elif has_issues:
+                dot, dot_color = "●", theme.get("urgent", 0)
+            else:
+                dot, dot_color = "●", theme.get("accent", 0)
+
+            text_color = theme.get("selected", 0) if is_row_selected else theme.get("text", 0)
+            attr = curses.A_BOLD if is_row_selected else 0
+            rest = f" {_diagnostics_summary_text(diag)}"[:max(inner_w - 1, 0)]
             try:
-                stdscr.addstr(row, x + 2, _diagnostics_summary_text(diag)[:max(inner_w, 0)], color)
+                stdscr.addstr(row, x + 2, dot, dot_color)
+                stdscr.addstr(row, x + 3, rest, text_color | attr)
             except curses.error:
                 pass
 

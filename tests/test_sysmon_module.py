@@ -10,11 +10,12 @@ from types import SimpleNamespace
 
 import tuicc.modules.sysmon as sysmon_module
 from tuicc.modules.sysmon import (
-    _build_rows, _diagnostics_summary_text, _format_stats_lines,
-    _format_window_label, _friendly_app_name, _selected_window_index,
-    _window_action_positions, apply_nice_edit, collapse, handle_action,
-    handle_row, handle_nice_key, is_editing_nice, is_expanded, nav_items,
-    sort_windows_by_drain, start_nice_edit, visible_window_ids,
+    GRID_COL_WIDTH, _build_rows, _diagnostics_summary_text,
+    _format_stats_grid, _format_window_label, _friendly_app_name,
+    _selected_window_index, _window_action_positions, apply_nice_edit,
+    collapse, handle_action, handle_row, handle_nice_key, is_editing_nice,
+    is_expanded, nav_items, sort_windows_by_drain, start_nice_edit,
+    visible_window_ids,
 )
 from tuicc.procmon import WindowStat
 
@@ -268,46 +269,58 @@ def test_format_window_label_short_name_fits_untouched(monkeypatch):
     assert label == "[5% 1M] Firefox"
 
 
-# ---------- _format_stats_lines ----------
+# ---------- _format_stats_grid ----------
 
-def test_format_stats_lines_shows_unknown_as_question_marks():
-    lines = _format_stats_lines(sysinfo_data=None, sensors_data=None)
-    assert "CPU ?%" in lines[0]
-    assert "RAM ?%" in lines[0]
+def test_format_stats_grid_shows_unknown_as_question_marks():
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None)
+    assert "CPU" in rows[0] and "?%" in rows[0]
+    assert "RAM" in rows[0]
 
 
-def test_format_stats_lines_shows_real_values():
+def test_format_stats_grid_shows_real_values():
     sysinfo_data = {
         "cpu_percent": 23.4, "ram_percent": 61.0,
         "disk": {"percent": 45.0}, "load_average": (0.52, 0.58, 0.59),
         "throttled_recently": False, "swap_in_kb_s": 0.0, "swap_out_kb_s": 0.0,
     }
     sensors_data = {"cpu_temp": (58.0, "coretemp-isa-0000", "Package id 0"), "hottest": (58.0, "coretemp-isa-0000", "Package id 0")}
-    lines = _format_stats_lines(sysinfo_data, sensors_data)
-    assert "CPU 23%" in lines[0]
-    assert "RAM 61%" in lines[0]
-    assert "TEMP 58°C" in lines[1]
-    assert "CPU (Package id 0)" in lines[1]
+    rows = _format_stats_grid(sysinfo_data, sensors_data)
+    assert "CPU" in rows[0] and "23%" in rows[0]
+    assert "RAM" in rows[0] and "61%" in rows[0]
+    assert "DISK" in rows[0] and "45%" in rows[0]
+    assert "TEMP" in rows[1] and "58°C" in rows[1]
+    assert "CPU (Package id 0)" in rows[1]
 
 
-def test_format_stats_lines_shows_throttled_flag():
+def test_format_stats_grid_shows_throttled_flag_in_third_row():
     sysinfo_data = {
         "cpu_percent": None, "ram_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
         "swap_in_kb_s": None, "swap_out_kb_s": None,
     }
-    lines = _format_stats_lines(sysinfo_data, None)
-    assert "THROTTLED" in lines[1]
+    rows = _format_stats_grid(sysinfo_data, None)
+    assert "THROTTLED" in rows[2]
+
+
+def test_format_stats_grid_columns_are_fixed_width():
+    # The third column must always start at the same position
+    # regardless of how long any individual value in earlier columns
+    # is — that's the whole point of a real aligned grid.
+    rows = _format_stats_grid(sysinfo_data=None, sensors_data=None)
+    assert rows[0][GRID_COL_WIDTH:GRID_COL_WIDTH + 4] == "RAM "
 
 
 # ---------- _diagnostics_summary_text ----------
 
 def test_diagnostics_summary_text_none_shows_checking():
-    assert _diagnostics_summary_text(None) == "Diagnostics: checking..."
+    # No "Diagnostics: " prefix anymore — the row's own ●/○ status dot
+    # (draw()) carries that meaning now, same split control.py's own
+    # dot-led toggle rows already use.
+    assert _diagnostics_summary_text(None) == "checking..."
 
 
 def test_diagnostics_summary_text_shows_summary():
-    assert _diagnostics_summary_text({"summary": "All clear"}) == "Diagnostics: All clear"
+    assert _diagnostics_summary_text({"summary": "All clear"}) == "All clear"
 
 
 # ---------- _build_rows / nav_items ----------
@@ -355,7 +368,7 @@ def test_build_rows_includes_stats_lines_and_diagnostics():
     _reset_module_state()
     rows = _build_rows(_ctx(windows=[]), box_h=20)
     kinds = [k for k, _p in rows]
-    assert kinds.count("stats_line") == 2
+    assert kinds.count("stats_line") == 3
     assert "diagnostics" in kinds
 
 
