@@ -8,13 +8,17 @@ You summon tuicc with a key-combo, and you get modules to see and control the sy
 - your workspaces and what's in them (sidebar.py);
 - a live overview of what's on screen (preview.py);
 - an integrated app launcher (launcher.py);
-- which wifi/BT devices are connected (connectivity.py);
+- which wifi/BT devices are connected, and connecting to new ones (connectivity.py);
 - a way to save and restore open windows across workspaces (sessions.py);
 - system toggles — night light, power profiles, DND, whatever on/off-style
   shell commands your setup uses (control.py);
 - now-playing + transport controls for whatever's running over MPRIS, output
   switching, and an optional live audio visualizer (media.py);
-- a power menu (power_menu.py).
+- vertical VOL/BRI/BAT gauges (bars.py);
+- per-window CPU/RAM, overall system stats, and a diagnostics summary
+  (sysmon.py);
+- a power menu (power_menu.py);
+- a clock (clock.py).
 
 Missing something? 
 - See wiki, write a module!
@@ -28,7 +32,7 @@ Don´t like that it´s fullscreen?
 
 This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
 
-![tuicc's default layout — sidebar, sessions, launcher, preview, connectivity, media, system, bars](./screenshot.png)
+![tuicc's core layout (sidebar, sessions, launcher, preview, connectivity, power menu) with media/system/bars/control spawned in via F6 — those four aren't in the packaged default preset yet](./screenshot.png)
 https://github.com/Lshika-linux/tuicc
 
 ## Why
@@ -61,8 +65,9 @@ Right now it can:
 - Show wifi and bluetooth status, connect to known AND new networks (typing a passphrase when one's needed, via a real D-Bus agent registered with iwd/NetworkManager — see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference) for both supported backends) and pair new bluetooth devices
 - System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
 - See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
-  (control and media aren't in the default layout preset yet — spawn either with `F6`, or add a `[[box]]` for it to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
+- Vertical VOL/BRI/BAT gauges, display-only for now (no ←→-adjust interaction yet — see wiki for status)
 - A system module: CPU/RAM per open window (CLOSE/KILL/renice), a compact CPU/RAM/disk/load/temperature/swap stats grid, and a one-line diagnostics summary (failed systemd units, OOM kills, deduped journal errors) that expands into the real detail on hover
+  (control, media, bars, and the system module aren't in the packaged default layout preset yet — spawn any of them with `F6`, or add a `[[box]]` for one to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
 - A power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
 - Global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
 - Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
@@ -98,7 +103,7 @@ Not yet built:
 
 - scrollable-WM support (`scroll`/niri, see "Writing your own WM provider" below, most likely not in V0.1.0 tho :c unless someone would want to help);
 - a `quick_actions` module exists in the code but isn't wired into the default layout yet (reserved for something more open-ended later).
-- Volume/brightness sliders in the control module (the toggle/cycle side is done — a slider is a different interaction shape, still pending)
+- ←→-adjust interaction for the bars module's gauges (display-only for now, see above)
 
 ## Try it 
 
@@ -123,14 +128,17 @@ curl -fsSL https://raw.githubusercontent.com/Lshika-linux/tuicc/main/install.sh 
 What install.sh does:
 
 Clones tuicc into `~/.local/share/tuicc`, sets up a venv, detects sway
-vs i3 (asks if it can't tell), asks which terminal to run tuicc in and
+vs i3 (asks if it can't tell), detects which wifi backend is actually
+running — iwd or NetworkManager (asks if it can't tell; soft, unlike
+the WM detection — the packaged default works either way, this just
+saves you an edit), asks which terminal to run tuicc in and
 what keybind to summon it with (defaults: whichever terminal it's
 running in, `$mod+Tab`), asks whether to show tuicc fullscreen or as a
 plain floating window (default: fullscreen — the full experience out
 of the box, no i3/sway config expertise needed first; plain floating
 is better left as a tweak you opt into later, not the starting point),
 then seeds `~/.config/tuicc/config.toml` with `provider`/`self_app_id`/
-`fullscreen_only` all set to match (see "Summoning tuicc" below) and
+`fullscreen_only`/`wifi_backend` all set to match (see "Summoning tuicc" below) and
 installs a filled-in toggle script to `~/.local/bin/tuicc_toggle.py`.
 It offers (asks first — never does this silently) to append the WM
 config block and reload sway/i3 for you; say no and it just prints the
@@ -151,7 +159,7 @@ Quick navigation cheat sheet: Tab/Shift+Tab (or arrows) move between
 items, rolling into the next/previous module at either end; Left/Right
 jump straight to a module's first item; Enter runs the selected thing
 and dismisses tuicc (hides it, keeps it running) except for the
-launcher, connectivity, sessions, control, and media modules, which stay open; Escape
+launcher, connectivity, sessions, control, media, and system modules, which stay open; Escape
 does the same dismiss at the top level; typing anywhere opens the
 launcher. Full details, every key, and how it all actually decides
 where to go: [Keybindings](https://github.com/Lshika-linux/tuicc/wiki/Keybindings)
@@ -187,6 +195,23 @@ and the rest — is documented field-by-field in the wiki's
 [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference),
 including the reasoning behind choices like why `power_menu` and
 `quick_actions` take identical fields but stay in separate namespaces.
+
+### Required system daemons
+
+The connectivity module (in the default layout) needs these actually
+running, not just installed — every current sway/i3 desktop has them
+already, so this is rarely something you need to think about:
+
+- **iwd or NetworkManager** (`[network] wifi_backend`, default `iwd`)
+  — whichever one is your system's real wifi daemon; `install.sh`
+  detects which is running and sets this for you (see "Quick install"
+  above).
+- **bluez** (`bluetoothd`) — bluetooth's own standard daemon on Linux;
+  no alternative backend exists for this one.
+
+Neither missing/not-running crashes tuicc — the connectivity module
+shows a real error for that backend instead (e.g. `wifi_error`) and
+everything else keeps working.
 
 ### Optional external tools
 
@@ -298,6 +323,9 @@ src/tuicc/
 ├── navigation.py              # NavItem, tab-order/hotkey navigation
 ├── windowed_list.py            # fixed N-visible-slots + scrollable-via-peek-nav-items list
 │                              #   mechanic shared by media.py (Now Playing/Output) and sysmon.py (windows)
+├── title_condense.py            # window-title condensing shared by sidebar.py's detail line and
+│                              #   preview.py's own per-window labels — "what's actually running",
+│                              #   not just the app's own name repeated back
 ├── keybinds.py                 # config key names -> curses key codes
 ├── actions.py                   # region/window focus handlers shared across modules
 ├── context.py                    # RenderContext — everything a module needs per frame
@@ -342,7 +370,7 @@ src/tuicc/
 │   ├── power_menu.py                   # lock/logout/reboot/shutdown, user-defined
 │   ├── sessions.py                      # save/load/delete a named set of window positions
 │   ├── quick_actions.py                  # generic action list — not in the default layout yet
-│   └── clock.py                           # not in the default layout yet
+│   └── clock.py                           # time + date, no interaction
 └── providers/
     ├── base.py                # Provider contract every WM provider implements
     ├── registry.py             # provider name -> Provider class
@@ -350,12 +378,18 @@ src/tuicc/
     └── i3.py                     # i3 implementation
 
 src/tuicc/connectivity/
-├── base.py                # WifiBackend/BluetoothBackend contracts
-├── registry.py             # backend name -> backend class
-├── iwd.py                   # wifi via iwd, over D-Bus (not iwctl text parsing)
-├── bluez.py                  # bluetooth via bluetoothctl
-├── model.py                   # WifiNetwork/BluetoothDevice — the generic connectivity model
-└── util.py                     # shared helpers (e.g. stripping ANSI codes from CLI output)
+├── base.py                  # WifiBackend/WifiAgent/BluetoothBackend contracts
+├── registry.py               # backend/agent name -> class (WIFI_BACKENDS/WIFI_AGENTS/BLUETOOTH_BACKENDS)
+├── iwd.py                     # wifi via iwd, over D-Bus (not iwctl text parsing)
+├── iwd_agent.py                 # iwd's own D-Bus "Agent" — prompts for a wifi passphrase interactively
+├── networkmanager.py             # wifi via NetworkManager — the second selectable wifi backend
+├── networkmanager_agent.py         # NetworkManager's own D-Bus secret agent, same role as iwd_agent.py
+├── bluez.py                          # bluetooth via D-Bus (org.bluez), not bluetoothctl text parsing
+├── bluez_agent.py                      # bluez's own D-Bus pairing agent — confirms a new device's pairing
+├── agent_mailbox.py                      # cross-thread handoff between an agent's own dispatch loop and
+│                                        #   the render loop (shared by all three *_agent.py files above)
+├── model.py                                # WifiNetwork/BluetoothDevice — the generic connectivity model
+└── util.py                                   # shared D-Bus call helper + decode_ssid()
 
 src/tuicc/audio/
 ├── base.py                # AudioBackend contract
@@ -420,7 +454,7 @@ see this work on more than just sway and i3.
 ## Testing
 
 ```bash
-nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney])' --run 'PYTHONPATH=src pytest tests/ -v'
+nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney])' --run 'pytest tests/ -v'
 ```
 
 No live WM connection needed — providers are tested against recorded
