@@ -132,6 +132,56 @@ case "$WM" in
 esac
 bold "WM: $WM"
 
+# --- 3b. Detect (or ask for) the wifi backend ---------------------------
+
+# Soft, unlike WM detection above — tuicc's packaged default (iwd) is a
+# real, working config either way; getting this wrong at install time
+# just means wifi_error shows up in the connectivity module until you
+# fix wifi_backend in config.toml yourself, not a broken install. No
+# hard-error/exit path here for that reason.
+detect_wifi_backend() {
+    # NetworkManager wins even when iwd.service is ALSO active — a
+    # common real-world setup where NetworkManager itself uses iwd as
+    # its own backend (wifi.backend=iwd in NetworkManager.conf). In
+    # that case NetworkManager is what's actually driving wifi; tuicc
+    # talking to iwd's own D-Bus interface directly in parallel would
+    # make it a second, independent client fighting NetworkManager
+    # over the same Station/Network objects (Connect() calls, agent
+    # registration) — found by reasoning about the two backends'
+    # actual D-Bus surfaces, not live-reproduced (no such dual setup
+    # on this dev machine), but not worth risking either.
+    if systemctl is-active --quiet NetworkManager.service 2>/dev/null; then
+        echo "networkmanager"
+    elif systemctl is-active --quiet iwd.service 2>/dev/null; then
+        echo "iwd"
+    else
+        return 1
+    fi
+}
+
+echo
+WIFI_BACKEND="${TUICC_WIFI_BACKEND:-}"
+if [ -z "$WIFI_BACKEND" ]; then
+    DETECTED_WIFI_BACKEND="$(detect_wifi_backend || true)"
+    if [ -n "$DETECTED_WIFI_BACKEND" ]; then
+        ask "Wifi backend [detected: $DETECTED_WIFI_BACKEND — iwd/networkmanager]: "
+        WIFI_BACKEND="${REPLY:-$DETECTED_WIFI_BACKEND}"
+    else
+        note "Couldn't detect a running iwd or NetworkManager service (checked"
+        note "systemctl is-active — normal if you're installing ahead of time)."
+        ask "Wifi backend [default: iwd — iwd/networkmanager]: "
+        WIFI_BACKEND="${REPLY:-iwd}"
+    fi
+fi
+case "$WIFI_BACKEND" in
+    iwd|networkmanager) ;;
+    *)
+        echo "Error: expected 'iwd' or 'networkmanager', got '$WIFI_BACKEND'." >&2
+        exit 1
+        ;;
+esac
+bold "Wifi backend: $WIFI_BACKEND"
+
 # --- 4. Terminal ------------------------------------------------------
 
 # tuicc itself doesn't care what terminal it runs in — this only
@@ -238,15 +288,20 @@ bold "Fullscreen: $FULLSCREEN_ONLY"
 mkdir -p "$CONFIG_DIR"
 if [ -f "$CONFIG_DIR/config.toml" ]; then
     bold "$CONFIG_DIR/config.toml already exists — leaving it untouched."
-    note "Make sure [wm] provider = \"$WM\", self_app_id = \"$APP_ID\", and"
-    note "fullscreen_only = $FULLSCREEN_ONLY are set there yourself if you want"
-    note "the race-free marking and fullscreen behavior this script sets up."
+    note "Make sure [wm] provider = \"$WM\", self_app_id = \"$APP_ID\","
+    note "fullscreen_only = $FULLSCREEN_ONLY, and [network] wifi_backend ="
+    note "\"$WIFI_BACKEND\" are set there yourself if you want the race-free"
+    note "marking, fullscreen behavior, and wifi backend this script detected."
 else
-    bold "Seeding $CONFIG_DIR/config.toml (provider=$WM, self_app_id=$APP_ID, fullscreen_only=$FULLSCREEN_ONLY)..."
+    bold "Seeding $CONFIG_DIR/config.toml (provider=$WM, self_app_id=$APP_ID, fullscreen_only=$FULLSCREEN_ONLY, wifi_backend=$WIFI_BACKEND)..."
     cp "$INSTALL_DIR/src/tuicc/defaults/config.toml" "$CONFIG_DIR/config.toml"
     sed -i "s/^provider = .*/provider = \"$WM\"/" "$CONFIG_DIR/config.toml"
     sed -i "s/^self_app_id = .*/self_app_id = \"$APP_ID\"/" "$CONFIG_DIR/config.toml"
     sed -i "s/^fullscreen_only = .*/fullscreen_only = $FULLSCREEN_ONLY/" "$CONFIG_DIR/config.toml"
+    # Leaves the trailing "# \"iwd\" or \"networkmanager\"" comment intact —
+    # only the value part is matched, unlike the whole-line replaces above
+    # (none of which have a comment worth preserving).
+    sed -i "s/^wifi_backend = \"[^\"]*\"/wifi_backend = \"$WIFI_BACKEND\"/" "$CONFIG_DIR/config.toml"
     if [ "$WM" = "i3" ]; then
         # The packaged power-menu defaults assume sway (swaylock,
         # swaymsg exit) — see the comment above [[power_menu.action]]
