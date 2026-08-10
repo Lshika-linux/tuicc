@@ -1,17 +1,20 @@
-"""Tests for the iwd and bluez connectivity backends' pure logic —
-iwd talks to iwd directly over D-Bus (no CLI text to parse), so what's
-tested here is the pure data-shaping logic, separate from the D-Bus
-I/O itself. bluez still parses bluetoothctl's CLI text, so those tests
-remain fixture-based like before.
+"""Tests for the iwd and bluez connectivity backends' pure logic — both
+talk to their daemon directly over D-Bus now (no CLI text to parse for
+either), so what's tested here is the pure object-tree-parsing logic,
+separate from the D-Bus I/O itself.
 """
-
-import subprocess
 
 import pytest
 
+import tuicc.connectivity.bluez as bluez_module
 import tuicc.connectivity.iwd as iwd_module
-from tuicc.connectivity.iwd import IwdBackend, find_station_path_in_objects, _signal_to_percent
-from tuicc.connectivity.bluez import _run, parse_paired_devices_output, parse_info_output
+from tuicc.connectivity.iwd import IwdBackend, find_station_path_in_objects, _signal_to_percent, _connect_succeeded
+from tuicc.connectivity.bluez import (
+    BluezBackend,
+    find_adapter_path_in_objects,
+    find_device_path_in_objects,
+    find_devices_in_objects,
+)
 
 
 # ---------- iwd: find_station_path_in_objects ----------
@@ -60,76 +63,211 @@ def test_signal_to_percent_equal_dbm_gives_equal_percent():
     assert _signal_to_percent(-8300) == _signal_to_percent(-8300)
 
 
-# ---------- bluez: parse_paired_devices_output ----------
+# ---------- iwd: _connect_succeeded ----------
+# Found live: Network.Connect() itself returns cleanly (no D-Bus
+# error) even when the passphrase was wrong — ConnectedNetwork simply
+# never becomes the attempted network. See IwdBackend.connect()'s own
+# docstring for the full reproduction.
 
-PAIRED_DEVICES_OUTPUT = "Device 1C:6E:4C:9C:D0:41 MAJOR IV\n"
+def test_connect_succeeded_when_connected_network_matches():
+    station_props = {"ConnectedNetwork": ("o", "/net/connman/iwd/0/4/target_psk")}
 
-
-def test_parse_paired_devices_finds_device():
-    devices = parse_paired_devices_output(PAIRED_DEVICES_OUTPUT)
-    assert devices == [("1C:6E:4C:9C:D0:41", "MAJOR IV")]
-
-
-def test_parse_paired_devices_empty_output_returns_empty_list():
-    assert parse_paired_devices_output("") == []
+    assert _connect_succeeded(station_props, "/net/connman/iwd/0/4/target_psk") is True
 
 
-def test_parse_paired_devices_ignores_non_device_lines():
-    noisy = "Some unrelated log line\nDevice AA:BB:CC:DD:EE:FF Speaker\n"
-    devices = parse_paired_devices_output(noisy)
-    assert devices == [("AA:BB:CC:DD:EE:FF", "Speaker")]
+def test_connect_succeeded_false_when_connected_network_is_a_different_one():
+    # The exact wrong-passphrase case — Station stayed on (or reverted
+    # to) whatever it was connected to before, not the attempted one.
+    station_props = {"ConnectedNetwork": ("o", "/net/connman/iwd/0/4/other_psk")}
+
+    assert _connect_succeeded(station_props, "/net/connman/iwd/0/4/target_psk") is False
 
 
-# ---------- bluez: parse_info_output ----------
+def test_connect_succeeded_false_when_connected_network_absent():
+    # Not connected to anything at all after the attempt.
+    station_props = {}
 
-BLUETOOTH_INFO_CONNECTED_WITH_BATTERY = """Device 1C:6E:4C:9C:D0:41 (public)
-\tName: MAJOR IV
-\tAlias: MAJOR IV
-\tClass: 0x00240418 (2360344)
-\tIcon: audio-headphones
-\tPaired: yes
-\tBonded: yes
-\tTrusted: no
-\tBlocked: no
-\tConnected: yes
-\tLegacyPairing: no
-\tCablePairing: no
-\tBattery Percentage: 0x3c (60)
-"""
-
-BLUETOOTH_INFO_DISCONNECTED_NO_BATTERY = """Device AA:BB:CC:DD:EE:FF (public)
-\tName: Some Speaker
-\tConnected: no
-"""
+    assert _connect_succeeded(station_props, "/net/connman/iwd/0/4/target_psk") is False
 
 
-def test_parse_info_connected_with_battery():
-    info = parse_info_output(BLUETOOTH_INFO_CONNECTED_WITH_BATTERY)
+# ---------- bluez: find_devices_in_objects ----------
+# Fixture trimmed from a real `org.bluez` GetManagedObjects() reply
+# captured live against this machine's bluez (GATT service/characteristic
+# sub-objects stripped out — find_devices_in_objects only looks at
+# org.bluez.Device1/org.bluez.Battery1, same "real, live-captured
+# fixture" discipline R5's mpris.py fixture used). The Battery1 entry
+# on the second device is NOT from that live capture — no currently-
+# connected device on this machine exposes one — it's synthesized
+# from bluez's documented org.bluez.Battery1 shape (a single
+# `Percentage` byte property) to exercise that code path.
 
-    assert info["connected"] is True
-    assert info["battery"] == 60
+BLUEZ_MANAGED_OBJECTS = {
+    "/org/bluez": {
+        "org.bluez.AgentManager1": {},
+        "org.bluez.ProfileManager1": {},
+    },
+    "/org/bluez/hci0": {
+        "org.bluez.Adapter1": {
+            "Address": ("s", "D0:C6:37:61:24:D8"),
+            "Alias": ("s", "node1"),
+            "Powered": ("b", True),
+        },
+    },
+    "/org/bluez/hci0/dev_00_00_00_06_5A_52": {
+        "org.bluez.Device1": {
+            "Adapter": ("o", "/org/bluez/hci0"),
+            "Address": ("s", "00:00:00:06:5A:52"),
+            "AddressType": ("s", "public"),
+            "Alias": ("s", "SLRB 30 A1"),
+            "Name": ("s", "SLRB 30 A1"),
+            "Icon": ("s", "audio-headset"),
+            "Paired": ("b", True),
+            "Connected": ("b", False),
+            "Trusted": ("b", False),
+            "Blocked": ("b", False),
+        },
+    },
+    "/org/bluez/hci0/dev_1C_6E_4C_9C_D0_41": {
+        "org.bluez.Device1": {
+            "Adapter": ("o", "/org/bluez/hci0"),
+            "Address": ("s", "1C:6E:4C:9C:D0:41"),
+            "AddressType": ("s", "public"),
+            "Alias": ("s", "MAJOR IV"),
+            "Name": ("s", "MAJOR IV"),
+            "Icon": ("s", "audio-headphones"),
+            "Paired": ("b", True),
+            "Connected": ("b", True),
+            "Trusted": ("b", True),
+            "Blocked": ("b", False),
+        },
+        "org.bluez.Battery1": {
+            "Percentage": ("y", 60),
+        },
+    },
+    "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF": {
+        "org.bluez.Device1": {
+            "Adapter": ("o", "/org/bluez/hci0"),
+            "Address": ("s", "AA:BB:CC:DD:EE:FF"),
+            "AddressType": ("s", "random"),
+            "Alias": ("s", "AA-BB-CC-DD-EE-FF"),
+            "Paired": ("b", False),
+            "Connected": ("b", False),
+            "Trusted": ("b", False),
+            "Blocked": ("b", False),
+        },
+    },
+}
 
 
-def test_parse_info_disconnected_no_battery_field():
-    info = parse_info_output(BLUETOOTH_INFO_DISCONNECTED_NO_BATTERY)
+def test_find_devices_returns_one_per_device1_object():
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
 
-    assert info["connected"] is False
-    assert info["battery"] is None
+    assert {d.id for d in devices} == {
+        "00:00:00:06:5A:52", "1C:6E:4C:9C:D0:41", "AA:BB:CC:DD:EE:FF",
+    }
 
 
-def test_parse_info_empty_output_defaults_safely():
-    info = parse_info_output("")
+def test_find_devices_ignores_non_device_objects():
+    # /org/bluez and /org/bluez/hci0 have no org.bluez.Device1 interface
+    # at all — must not show up as (broken) devices.
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
 
-    assert info["connected"] is False
-    assert info["battery"] is None
+    assert all(d.id != "D0:C6:37:61:24:D8" for d in devices)
+
+
+def test_find_devices_includes_unpaired_devices():
+    # The whole point of the D-Bus rewrite (see bluez.py's own module
+    # docstring): unlike the old bluetoothctl-based `devices Paired`
+    # call, an unpaired device must still show up, marked as such.
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
+    unpaired = next(d for d in devices if d.id == "AA:BB:CC:DD:EE:FF")
+
+    assert unpaired.paired is False
+    assert unpaired.connected is False
+
+
+def test_find_devices_reads_paired_connected_correctly():
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
+    major_iv = next(d for d in devices if d.id == "1C:6E:4C:9C:D0:41")
+
+    assert major_iv.name == "MAJOR IV"
+    assert major_iv.paired is True
+    assert major_iv.connected is True
+
+
+def test_find_devices_reads_hover_preview_fields():
+    # Trusted/Blocked/Icon/AddressType — modules/connectivity.py's
+    # hover-preview info, zero extra D-Bus round trips (already in the
+    # same GetManagedObjects reply, see _device_from_props' own
+    # docstring).
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
+    major_iv = next(d for d in devices if d.id == "1C:6E:4C:9C:D0:41")
+
+    assert major_iv.trusted is True
+    assert major_iv.blocked is False
+    assert major_iv.icon == "audio-headphones"
+    assert major_iv.address_type == "public"
+
+
+def test_find_devices_icon_and_rssi_none_when_absent():
+    # AA:BB:CC:DD:EE:FF's fixture has no Icon/RSSI key at all — bluez
+    # only reports them once it actually has a value (a class-based
+    # guess, or an active scan sighting respectively).
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
+    unknown = next(d for d in devices if d.id == "AA:BB:CC:DD:EE:FF")
+
+    assert unknown.icon is None
+    assert unknown.rssi is None
+
+
+def test_find_devices_reads_battery_when_battery1_present():
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
+    major_iv = next(d for d in devices if d.id == "1C:6E:4C:9C:D0:41")
+
+    assert major_iv.battery == 60
+
+
+def test_find_devices_battery_none_when_battery1_absent():
+    devices = find_devices_in_objects(BLUEZ_MANAGED_OBJECTS)
+    slrb = next(d for d in devices if d.id == "00:00:00:06:5A:52")
+
+    assert slrb.battery is None
+
+
+def test_find_devices_empty_objects_returns_empty_list():
+    assert find_devices_in_objects({}) == []
+
+
+# ---------- bluez: find_device_path_in_objects ----------
+
+def test_find_device_path_matches_by_address():
+    path = find_device_path_in_objects(BLUEZ_MANAGED_OBJECTS, "1C:6E:4C:9C:D0:41")
+
+    assert path == "/org/bluez/hci0/dev_1C_6E_4C_9C_D0_41"
+
+
+def test_find_device_path_no_match_returns_none():
+    assert find_device_path_in_objects(BLUEZ_MANAGED_OBJECTS, "FF:FF:FF:FF:FF:FF") is None
+
+
+# ---------- bluez: find_adapter_path_in_objects ----------
+
+def test_find_adapter_path_finds_matching_object():
+    assert find_adapter_path_in_objects(BLUEZ_MANAGED_OBJECTS) == "/org/bluez/hci0"
+
+
+def test_find_adapter_path_no_adapter_returns_none():
+    assert find_adapter_path_in_objects({"/org/bluez": {"org.bluez.AgentManager1": {}}}) is None
 
 
 # ---------- no-silent-failure: real exceptions must propagate ----------
-# VISION.md's R3: found live that both backends had their OWN internal
+# VISION.md's R3: both backends used to have their OWN internal
 # except-and-hide-behind-[] before status_worker.StatusWorker's poll
 # wrapper ever got a chance to see a failure, making its last_error
-# mechanism unreachable for these two domains specifically. These
-# guard against that creeping back in.
+# mechanism unreachable for these two domains specifically. bluez.py's
+# D-Bus rewrite (R4) inherits iwd.py's own "no internal try/except"
+# discipline rather than reintroducing bluetoothctl's old one — this
+# guards against that creeping back in for bluez.py too.
 
 def test_iwd_get_networks_propagates_dbus_connection_failure(monkeypatch):
     def _raise(**kwargs):
@@ -141,21 +279,31 @@ def test_iwd_get_networks_propagates_dbus_connection_failure(monkeypatch):
         IwdBackend().get_networks()
 
 
-def test_bluez_run_propagates_missing_binary(monkeypatch):
-    def _raise(*args, **kwargs):
-        raise FileNotFoundError("bluetoothctl not found")
+def test_bluez_get_devices_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
 
-    monkeypatch.setattr(subprocess, "run", _raise)
+    monkeypatch.setattr(bluez_module, "open_dbus_connection", _raise)
 
-    with pytest.raises(FileNotFoundError):
-        _run(["bluetoothctl", "devices", "Paired"])
+    with pytest.raises(ConnectionError):
+        BluezBackend().get_devices()
 
 
-def test_bluez_run_propagates_timeout(monkeypatch):
-    def _raise(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd="bluetoothctl", timeout=5)
+def test_iwd_is_scanning_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
 
-    monkeypatch.setattr(subprocess, "run", _raise)
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
 
-    with pytest.raises(subprocess.TimeoutExpired):
-        _run(["bluetoothctl", "devices", "Paired"])
+    with pytest.raises(ConnectionError):
+        IwdBackend().is_scanning()
+
+
+def test_bluez_is_discovering_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(bluez_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        BluezBackend().is_discovering()

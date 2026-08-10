@@ -27,6 +27,23 @@ class WifiBackend(ABC):
     def disconnect(self) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def scan(self) -> None:
+        """Fire-and-forget: ask the backend to (re)scan for networks.
+        No return value — a scan's results show up via the next
+        get_networks() call, once the backend's own scan completes
+        (see IwdBackend.scan()'s docstring for why this doesn't wait).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_scanning(self) -> bool:
+        """Real ground truth for whether a scan is currently in
+        progress — see IwdBackend.is_scanning()'s own docstring for
+        why this needs to be its own poll, separate from scan() and
+        from get_networks()."""
+        raise NotImplementedError
+
 
 class BluetoothBackend(ABC):
     @abstractmethod
@@ -39,4 +56,23 @@ class BluetoothBackend(ABC):
 
     @abstractmethod
     def disconnect(self, device_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def start_discovery(self) -> None:
+        """Fire-and-forget: ask the backend to start scanning for
+        nearby devices. New devices show up via the next
+        get_devices() call, once discovered."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop_discovery(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_discovering(self) -> bool:
+        """Real ground truth for whether discovery is currently in
+        progress — see BluezBackend.is_discovering()'s own docstring
+        for why this needs to be its own poll, separate from
+        start_discovery() and from get_devices()."""
         raise NotImplementedError
