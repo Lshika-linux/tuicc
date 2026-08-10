@@ -1,6 +1,6 @@
 # TUI Command Center
 
-Minimal UI design, maximal control over everyday tasks.
+Minimal UI design, maximal control over everyday tasks. (A LOT OF SCREENSHOTS FURTHER DOWN)
 
 Built on a core that communicates with the WM (see lower, or wiki..), with everything else as **swappable modules**.
 
