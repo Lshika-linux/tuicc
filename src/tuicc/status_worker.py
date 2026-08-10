@@ -104,6 +104,12 @@ class StatusWorker:
         # very poll's own (likely successful) result before a caller
         # ever got a chance to read it.
         self._action_errors = {name: None for name in self._domains}
+        # Which request_action() pending_key the current _action_errors
+        # entry actually belongs to — see get_action_error_for()'s own
+        # docstring for why a plain per-DOMAIN error isn't enough for a
+        # domain whose items share one domain name (wifi/bluetooth:
+        # many networks/devices, one "wifi"/"bluetooth" domain each).
+        self._action_error_keys = {name: None for name in self._domains}
 
         self._action_queue = []
         self._pending = set()  # {(domain_name, key)}
@@ -171,6 +177,26 @@ class StatusWorker:
         with self._lock:
             return self._action_errors[domain_name]
 
+    def get_action_error_for(self, domain_name, key):
+        """Same as get_action_error(domain_name) above, but returns
+        None unless the error actually belongs to THIS specific key —
+        found live building modules/connectivity.py's hover-preview
+        "connection failed" message: get_action_error() alone is
+        domain-wide, which is exactly right for control.py (each
+        [[control.toggle]] gets its own "toggle:i" domain, one item
+        per domain) but wrong for wifi/bluetooth, where MANY networks/
+        devices share one "wifi"/"bluetooth" domain — without this,
+        selecting a different network after an earlier one's connect
+        attempt failed would still show that earlier network's stale
+        error, misattributed to whatever's selected now. `key` is the
+        same identity request_action()'s own `pending_key` param uses
+        (ssid/device_id here).
+        """
+        with self._lock:
+            if self._action_error_keys[domain_name] != key:
+                return None
+            return self._action_errors[domain_name]
+
     def is_pending(self, domain_name, key):
         with self._lock:
             return (domain_name, key) in self._pending
@@ -218,6 +244,7 @@ class StatusWorker:
                 domain = self._domains.get(domain_name)
                 with self._lock:
                     self._action_errors[domain_name] = None
+                    self._action_error_keys[domain_name] = pending_key
                 try:
                     if domain is not None:
                         action = domain.actions.get(action_name)

@@ -286,6 +286,72 @@ def test_get_action_error_survives_a_successful_poll_on_the_same_domain():
         worker.stop()
 
 
+# ---------- get_action_error_for() ----------
+# Found live building modules/connectivity.py's hover-preview: unlike
+# control.py (each [[control.toggle]] gets its own domain, one item
+# per domain — plain get_action_error() is already correctly scoped
+# there), wifi/bluetooth share ONE domain across many networks/devices,
+# so a plain per-domain error can't tell which ITEM it belongs to.
+
+def test_get_action_error_for_is_none_before_any_action():
+    worker = StatusWorker([_domain("wifi")])
+    assert worker.get_action_error_for("wifi", "Home") is None
+
+
+def test_get_action_error_for_matching_key_returns_the_error():
+    def _raise(arg):
+        raise RuntimeError("connect failed")
+
+    worker = StatusWorker([_domain("wifi", actions={"connect": _raise})], poll_interval=999)
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error_for("wifi", "Home") is not None)
+        assert worker.get_action_error_for("wifi", "Home") == "connect failed"
+    finally:
+        worker.stop()
+
+
+def test_get_action_error_for_different_key_is_none():
+    # The exact bug this exists to fix: selecting a DIFFERENT network
+    # after an earlier one's connect failed must not show that
+    # earlier network's stale error misattributed to the new selection.
+    def _raise(arg):
+        raise RuntimeError("connect failed")
+
+    worker = StatusWorker([_domain("wifi", actions={"connect": _raise})], poll_interval=999)
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error("wifi") is not None)
+        assert worker.get_action_error_for("wifi", "Office") is None
+    finally:
+        worker.stop()
+
+
+def test_get_action_error_for_a_later_successful_action_on_a_different_key_clears_it():
+    def _flaky(arg):
+        if arg == "Home":
+            raise RuntimeError("connect failed")
+
+    worker = StatusWorker([_domain("wifi", actions={"connect": _flaky})], poll_interval=999)
+    worker.start()
+    try:
+        worker.request_action("wifi", "connect", "Home")
+        _wait_until(lambda: worker.get_action_error_for("wifi", "Home") is not None)
+
+        worker.request_action("wifi", "connect", "Office")
+        _wait_until(lambda: not worker.is_pending("wifi", "Office"))
+        assert worker.get_action_error_for("wifi", "Office") is None
+        # Home's own error is also gone now — the ONE domain-wide error
+        # slot has moved on to Office's (successful) attempt, same
+        # "one slot, whoever acted most recently owns it" semantics
+        # get_action_error() itself already had.
+        assert worker.get_action_error_for("wifi", "Home") is None
+    finally:
+        worker.stop()
+
+
 # ---------- Domain.poll_interval: per-domain due checks ----------
 
 def test_domain_with_no_poll_interval_uses_the_shared_default():
