@@ -23,6 +23,7 @@ from jeepney import HeaderFields, MatchRule, MessageFlag, MessageType, new_error
 from jeepney.io.threading import DBusRouter, open_dbus_connection
 
 from tuicc.connectivity.agent_mailbox import AgentMailbox
+from tuicc.connectivity.base import WifiAgent
 from tuicc.connectivity.util import dbus_call
 
 BUS_NAME = "net.connman.iwd"
@@ -64,7 +65,7 @@ def build_reply_for(member, request, answer):
     return "error", UNKNOWN_METHOD_ERROR, ()
 
 
-class IwdAgent:
+class IwdAgent(WifiAgent):
     def __init__(self):
         self.mailbox = AgentMailbox()
         self._connection = None

@@ -30,8 +30,7 @@ from tuicc.config import (
 from tuicc.context import RenderContext
 from tuicc.actions import ActionContext, spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.providers.registry import build_provider
-from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
-from tuicc.connectivity.iwd_agent import IwdAgent
+from tuicc.connectivity.registry import build_wifi_backend, build_wifi_agent, build_bluetooth_backend
 from tuicc.connectivity.bluez_agent import BluezAgent
 from tuicc.audio.registry import build_audio_backend
 from tuicc.media.mpris import MprisBackend
@@ -122,14 +121,18 @@ def main(stdscr):
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
-    # VISION.md's R4 — an agent only makes sense paired 1:1 with its
-    # own protocol's backend, so it's gated on the same config key
-    # rather than constructed unconditionally (also correctly keeps a
-    # future NetworkManager backend from wrongly getting an iwd agent
-    # registered alongside it). See iwd_agent.py/bluez_agent.py's own
-    # module docstrings for why each needs its own dedicated thread
-    # rather than being a StatusWorker Domain.
-    iwd_agent = IwdAgent() if cfg.wifi_backend_name == "iwd" else None
+    # A wifi agent is always constructed — every registered WIFI_BACKENDS
+    # name has a matching WIFI_AGENTS entry (see registry.py's own
+    # WifiAgent docstring, enforced by test_registry.py), so there's no
+    # "no agent for this backend" case to guard against, unlike
+    # bluez_agent below. See iwd_agent.py/networkmanager_agent.py/
+    # bluez_agent.py's own module docstrings for why each needs its own
+    # dedicated thread rather than being a StatusWorker Domain.
+    wifi_agent = build_wifi_agent(cfg.wifi_backend_name)
+    # bluez_agent stays conditional: there's still only one bluetooth
+    # backend choice today, so this gate is defensive/future-proofing
+    # rather than a real branch — kept for parity with wifi's
+    # config-driven selection rather than hardcoding bluez.
     bluez_agent = BluezAgent() if cfg.bluetooth_backend_name == "bluez" else None
     audio_backend = build_audio_backend(cfg.audio_backend_name)
     media_backend = MprisBackend()
@@ -348,8 +351,7 @@ def main(stdscr):
     # (see its own docstring) rather than raised — surfaced via
     # get_error(), folded into wifi_error/bluetooth_error below rather
     # than crashing startup.
-    if iwd_agent is not None:
-        iwd_agent.start()
+    wifi_agent.start()
     if bluez_agent is not None:
         bluez_agent.start()
 
@@ -674,11 +676,11 @@ def main(stdscr):
             # start_passphrase_entry() again, silently wiping whatever
             # had just been typed back to empty before the next
             # keypress could even land.
-            if iwd_agent is not None and iwd_agent.mailbox.has_pending() and (
+            if wifi_agent.mailbox.has_pending() and (
                 connectivity_wants_input
                 or (input_claim == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
             ):
-                request = iwd_agent.mailbox.get_request()
+                request = wifi_agent.mailbox.get_request()
                 connectivity_mode.start_passphrase_entry(request.ssid)
                 input_claim = "connectivity_passphrase"
             elif bluez_agent is not None and bluez_agent.mailbox.has_pending() and (
@@ -690,7 +692,7 @@ def main(stdscr):
                 input_claim = "connectivity_pairing"
 
             agent_has_pending = (
-                (iwd_agent is not None and iwd_agent.mailbox.has_pending())
+                wifi_agent.mailbox.has_pending()
                 or (bluez_agent is not None and bluez_agent.mailbox.has_pending())
             )
             stdscr.timeout(
@@ -857,10 +859,10 @@ def main(stdscr):
                 # priority over an agent registration failure (backend
                 # fine, but unknown-network/unpaired-device connects
                 # silently keep failing) — the former is the more
-                # complete outage. See IwdAgent/BluezAgent.start()'s
+                # complete outage. See WifiAgent/BluezAgent.start()'s
                 # own docstrings for why a registration failure is
                 # caught rather than raised.
-                wifi_error=status_worker.get_error("wifi") or (iwd_agent.get_error() if iwd_agent else None),
+                wifi_error=status_worker.get_error("wifi") or wifi_agent.get_error(),
                 bluetooth_error=status_worker.get_error("bluetooth") or (bluez_agent.get_error() if bluez_agent else None),
                 status=status_worker,
                 session_preview=sessions_mode.expanded_preview(),
@@ -988,17 +990,17 @@ def main(stdscr):
                 # docstring); has_pending() going False here (NOT
                 # while waiting/showing an error, both handled above)
                 # is exactly that, not a bug.
-                if iwd_agent is None or not iwd_agent.mailbox.has_pending():
+                if not wifi_agent.mailbox.has_pending():
                     connectivity_mode.cancel_passphrase_entry()
                     input_claim = None
                 elif key == cfg.keybinds["confirm"]:
                     text = connectivity_mode.apply_passphrase()
                     if text is not None:
-                        iwd_agent.reply_passphrase(text)
+                        wifi_agent.reply_passphrase(text)
                         connectivity_mode.mark_passphrase_submitted()
                 elif key == 27:  # Escape
                     connectivity_mode.cancel_passphrase_entry()
-                    iwd_agent.cancel_current()
+                    wifi_agent.cancel_current()
                     input_claim = None
                 elif not connectivity_mode.handle_passphrase_key(key):
                     connectivity_mode.cancel_passphrase_entry()
@@ -1442,8 +1444,7 @@ def main(stdscr):
     finally:
         status_worker.stop()
         cava_reader.stop()
-        if iwd_agent is not None:
-            iwd_agent.stop()
+        wifi_agent.stop()
         if bluez_agent is not None:
             bluez_agent.stop()
 
