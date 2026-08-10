@@ -28,7 +28,7 @@ Don´t like that it´s fullscreen?
 
 This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
 
-![tuicc showing a workspace with overlapping floating windows](./screenshot.png)
+![tuicc's default layout — sidebar, sessions, launcher, preview, connectivity, media, system, bars](./screenshot.png)
 https://github.com/Lshika-linux/tuicc
 
 ## Why
@@ -58,20 +58,46 @@ Right now it can:
 - Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
 - Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, dismissing tuicc
 - Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
-- Show wifi and bluetooth status (known networks only — connecting to a new network needs a passphrase flow that isn't built yet) and toggle connections
+- Show wifi and bluetooth status, connect to known AND new networks (typing a passphrase when one's needed, via a real D-Bus agent registered with iwd/NetworkManager — see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference) for both supported backends) and pair new bluetooth devices
 - System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
 - See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
   (control and media aren't in the default layout preset yet — spawn either with `F6`, or add a `[[box]]` for it to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
+- A system module: CPU/RAM per open window (CLOSE/KILL/renice), a compact CPU/RAM/disk/load/temperature/swap stats grid, and a one-line diagnostics summary (failed systemd units, OOM kills, deduped journal errors) that expands into the real detail on hover
 - A power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
 - Global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
 - Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
 - Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM, covering everything from provider parsing to layout math to config validation
 
+## A closer look
+
+**Control shows you the exact command before it runs.** Hover any toggle and the preview shows what will actually execute — including whether it goes through a real shell (`shell_true`), not just the friendly label.
+
+![Control module's hover preview showing the exact shell command about to run, with a SHELL=TRUE warning](./screenshots/control-preview.png)
+
+**Destructive actions ask first.** Anything with `confirm = true` — shutdown, reboot, logout, or your own quick actions — shows a plain Y/N prompt before it runs anything.
+
+![Power menu's Y/N confirmation before shutting down](./screenshots/power-menu-confirm.png)
+
+**Loading a session tells you exactly what's about to change.** Windows that would spawn show up in red under the workspace they're headed for, right alongside what's already there — so you know before you commit whether a workspace's existing windows are about to get replaced.
+
+![Sessions module previewing incoming windows in red against each workspace's current contents](./screenshots/sessions-preview.png)
+
+**Hover the WiFi header for the full scan list.** The list itself only shows a few rows at a time, but hovering "WiFi" shows every network tuicc currently sees.
+
+![Hovering WiFi's header to preview all available networks at once](./screenshots/wifi-available-networks.png)
+
+**Media's lists scroll too.** Now Playing and Output both use the same fixed-slot-plus-scroll list every scrollable module here shares — 3 visible rows by default, independently configurable per module via `visible_slots` in `config.toml`.
+
+![Media module's Now Playing and Output lists](./screenshots/media-scrollable.png)
+
+**System gives you a live per-window resource readout, plus what's actually wrong on the machine.** CPU/RAM per open window (with CLOSE/KILL/NICE actions), a compact CPU/RAM/DISK/LOAD/temperature/swap stats grid, and a one-line diagnostics summary — failed systemd units, OOM kills, and deduped journal errors — that expands on hover into the real detail behind each issue.
+
+![System module's per-window stats and diagnostics summary, with an expanded issue detail](./screenshots/system-info.png)
+
 Not yet built:
 
 - scrollable-WM support (`scroll`/niri, see "Writing your own WM provider" below, most likely not in V0.1.0 tho :c unless someone would want to help);
 - a `quick_actions` module exists in the code but isn't wired into the default layout yet (reserved for something more open-ended later).
-- System info/process monitor module (CPU/RAM per window, kill a runaway process from the list)
 - Volume/brightness sliders in the control module (the toggle/cycle side is done — a slider is a different interaction shape, still pending)
 
 ## Try it 
