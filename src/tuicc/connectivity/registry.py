@@ -14,14 +14,18 @@ implementation to register alongside).
 from tuicc.connectivity.base import WifiBackend, WifiAgent, BluetoothBackend
 from tuicc.connectivity.iwd import IwdBackend
 from tuicc.connectivity.iwd_agent import IwdAgent
+from tuicc.connectivity.networkmanager import NetworkManagerBackend
+from tuicc.connectivity.networkmanager_agent import NetworkManagerAgent
 from tuicc.connectivity.bluez import BluezBackend
 
 WIFI_BACKENDS = {
     "iwd": IwdBackend,
+    "networkmanager": NetworkManagerBackend,
 }
 
 WIFI_AGENTS = {
     "iwd": IwdAgent,
+    "networkmanager": NetworkManagerAgent,
 }
 
 BLUETOOTH_BACKENDS = {

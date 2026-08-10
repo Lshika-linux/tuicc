@@ -557,16 +557,22 @@ _WIFI_SECURITY_LABELS = {
     "open": "Open (no security)",
     "psk": "WPA/WPA2-Personal",
     "8021x": "Enterprise (802.1x)",
+    # "wep"/"sae"/"owe" — concepts iwd's own Network.Type has no
+    # equivalent of, only reachable via the NetworkManager backend's
+    # own classify_security() (see networkmanager.py's own docstring).
+    "wep": "WEP",
+    "sae": "WPA3-Personal (SAE)",
+    "owe": "Enhanced Open (OWE)",
 }
 
 
 def _security_label(security):
     if security is None:
         return "unknown"
-    # Falls back to the raw iwd string for any Type value not in the
-    # small known set above, rather than guessing at a label that
-    # might be wrong — same "degrade honestly, don't overclaim"
-    # instinct as everywhere else in this codebase.
+    # Falls back to the raw backend string for any Type/security value
+    # not in the small known set above, rather than guessing at a
+    # label that might be wrong — same "degrade honestly, don't
+    # overclaim" instinct as everywhere else in this codebase.
     return _WIFI_SECURITY_LABELS.get(security, security)
 
 

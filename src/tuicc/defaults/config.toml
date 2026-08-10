@@ -185,7 +185,7 @@ browser_apps = ["librewolf", "firefox", "chromium", "chrome", "google-chrome"]
 browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]
 
 [network]
-wifi_backend = "iwd"
+wifi_backend = "iwd"  # "iwd" or "networkmanager"
 bluetooth_backend = "bluez"
 
 [connectivity]

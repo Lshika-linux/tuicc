@@ -32,3 +32,24 @@ def dbus_call(connection, bus_name, path, interface, member, signature="", body=
     msg = new_method_call(addr, member, signature, body)
     reply = connection.send_and_get_reply(msg, timeout=timeout)
     return reply.body
+
+
+def decode_ssid(ssid_bytes: bytes) -> str:
+    """NetworkManager's own AccessPoint.Ssid (and the ssid embedded in
+    a saved connection profile's 802-11-wireless.ssid setting) is `ay`
+    — a raw byte array, not a string — unlike iwd, which already hands
+    back a decoded Name string. 802.11 doesn't actually guarantee an
+    SSID is valid UTF-8 (real devices with non-UTF-8 SSIDs exist, if
+    rare), so this is a real edge case, not just ceremony — tolerant
+    decode (replacing anything invalid) rather than letting a raw,
+    malformed SSID crash network enumeration entirely.
+
+    Shared between networkmanager.py (AP enumeration) and
+    networkmanager_agent.py (decoding the ssid straight out of
+    GetSecrets' own connection dict, no extra D-Bus round trip needed
+    for that) — deliberately a narrow exception to iwd.py/iwd_agent.py's
+    own precedent of NOT sharing constants between a backend and its
+    agent (BUS_NAME is duplicated in both today): this is real, tested
+    logic with an edge case, not a bare constant.
+    """
+    return bytes(ssid_bytes).decode("utf-8", errors="replace")

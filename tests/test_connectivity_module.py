@@ -298,10 +298,22 @@ def test_security_label_known_values():
     assert _security_label("8021x") == "Enterprise (802.1x)"
 
 
+def test_security_label_networkmanager_only_values():
+    # Reachable only via the NetworkManager backend's own
+    # classify_security() — iwd's Network.Type has no equivalent.
+    assert _security_label("wep") == "WEP"
+    assert _security_label("sae") == "WPA3-Personal (SAE)"
+    assert _security_label("owe") == "Enhanced Open (OWE)"
+
+
 def test_security_label_unknown_value_falls_back_to_raw_string():
-    # A future iwd Type value this mapping doesn't know about yet must
-    # still show SOMETHING real, not crash or silently say "unknown".
-    assert _security_label("sae") == "sae"
+    # A future backend security value this mapping doesn't know about
+    # yet must still show SOMETHING real, not crash or silently say
+    # "unknown". "sae" used to be this test's example until
+    # networkmanager.py's classify_security() made it a real,
+    # recognized token (see _WIFI_SECURITY_LABELS) — swapped for a
+    # token that stays genuinely unrecognized.
+    assert _security_label("wpa3-enterprise-suite-b") == "wpa3-enterprise-suite-b"
 
 
 def test_security_label_none_is_unknown():
