@@ -84,6 +84,7 @@ class Config:
     sysmon_blocks: list
     sysmon_visible_slots: int
     media_visible_slots: int
+    connectivity_visible_slots: int
 
 def ensure_user_config_exists() -> None:
     if not USER_CONFIG_PATH.exists():
@@ -629,6 +630,14 @@ def load_config() -> Config:
     # too).
     sysmon_visible_slots = user_data.get("sysmon", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
     media_visible_slots = user_data.get("media", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
+    # connectivity.py's WiFi/Bluetooth sections (VISION.md's R4 follow-
+    # up — the box had no scrolling at all before this, WiFi hard-capped
+    # at a fixed row count with a static "+N more" line, Bluetooth not
+    # capped at all) share ONE value between the two sections, same as
+    # media.py's Now Playing/Output do — not one independent value per
+    # section the way sysmon/media's own OWN boxes get, since both
+    # sections live in the same box here.
+    connectivity_visible_slots = user_data.get("connectivity", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
 
     return Config(
         layout=layout,
@@ -658,4 +667,5 @@ def load_config() -> Config:
         sysmon_blocks=sysmon_blocks,
         sysmon_visible_slots=sysmon_visible_slots,
         media_visible_slots=media_visible_slots,
+        connectivity_visible_slots=connectivity_visible_slots,
     )

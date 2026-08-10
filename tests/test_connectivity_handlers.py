@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from tuicc.actions import ActionContext
 from tuicc.connectivity.model import WifiNetwork, BluetoothDevice
-from tuicc.modules.connectivity import handle_wifi, handle_bluetooth
+from tuicc.modules.connectivity import handle_wifi, handle_bluetooth, handle_wifi_scan, handle_bluetooth_discover
 
 
 class _FakeConnectivity:
@@ -17,6 +17,8 @@ class _FakeConnectivity:
         self.wifi_disconnect_calls = []
         self.bluetooth_connect_calls = []
         self.bluetooth_disconnect_calls = []
+        self.wifi_scan_calls = []
+        self.bluetooth_discover_calls = []
 
     def get(self, domain_name):
         return self._snapshots[domain_name]
@@ -25,8 +27,10 @@ class _FakeConnectivity:
         calls = {
             ("wifi", "connect"): self.wifi_connect_calls,
             ("wifi", "disconnect"): self.wifi_disconnect_calls,
+            ("wifi", "scan"): self.wifi_scan_calls,
             ("bluetooth", "connect"): self.bluetooth_connect_calls,
             ("bluetooth", "disconnect"): self.bluetooth_disconnect_calls,
+            ("bluetooth", "discover"): self.bluetooth_discover_calls,
         }[(domain_name, action_name)]
         calls.append(arg)
 
@@ -80,3 +84,27 @@ def test_handle_bluetooth_disconnects_when_already_connected():
 
     assert connectivity.bluetooth_disconnect_calls == ["AA"]
     assert connectivity.bluetooth_connect_calls == []
+
+
+# ---------- handle_wifi_scan / handle_bluetooth_discover ----------
+
+def test_handle_wifi_scan_requests_scan_action():
+    connectivity = _FakeConnectivity()
+    ctx = ActionContext(provider=None, status=connectivity)
+    item = SimpleNamespace(focus_target=None)
+
+    should_dismiss, pending = handle_wifi_scan(ctx, item, cfg=None)
+
+    assert connectivity.wifi_scan_calls == [None]
+    assert (should_dismiss, pending) == (False, None)
+
+
+def test_handle_bluetooth_discover_requests_discover_action():
+    connectivity = _FakeConnectivity()
+    ctx = ActionContext(provider=None, status=connectivity)
+    item = SimpleNamespace(focus_target=None)
+
+    should_dismiss, pending = handle_bluetooth_discover(ctx, item, cfg=None)
+
+    assert connectivity.bluetooth_discover_calls == [None]
+    assert (should_dismiss, pending) == (False, None)

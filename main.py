@@ -3,6 +3,7 @@
 import curses
 import sys
 import time
+
 import locale
 from pathlib import Path
 
@@ -30,6 +31,8 @@ from tuicc.context import RenderContext
 from tuicc.actions import ActionContext, spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.providers.registry import build_provider
 from tuicc.connectivity.registry import build_wifi_backend, build_bluetooth_backend
+from tuicc.connectivity.iwd_agent import IwdAgent
+from tuicc.connectivity.bluez_agent import BluezAgent
 from tuicc.audio.registry import build_audio_backend
 from tuicc.media.mpris import MprisBackend
 from tuicc.media.cava import CavaReader
@@ -63,6 +66,8 @@ from tuicc.modules import launcher as launcher_mode
 from tuicc.modules import sessions as sessions_mode
 from tuicc.modules import media as media_mode
 from tuicc.modules import sysmon as sysmon_mode
+from tuicc.modules import connectivity as connectivity_mode
+from tuicc.modules import sidebar as sidebar_mode
 
 
 def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, visible_slots):
@@ -117,6 +122,15 @@ def main(stdscr):
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
+    # VISION.md's R4 — an agent only makes sense paired 1:1 with its
+    # own protocol's backend, so it's gated on the same config key
+    # rather than constructed unconditionally (also correctly keeps a
+    # future NetworkManager backend from wrongly getting an iwd agent
+    # registered alongside it). See iwd_agent.py/bluez_agent.py's own
+    # module docstrings for why each needs its own dedicated thread
+    # rather than being a StatusWorker Domain.
+    iwd_agent = IwdAgent() if cfg.wifi_backend_name == "iwd" else None
+    bluez_agent = BluezAgent() if cfg.bluetooth_backend_name == "bluez" else None
     audio_backend = build_audio_backend(cfg.audio_backend_name)
     media_backend = MprisBackend()
     # VISION.md's R6 (system monitor) — see procmon.py's own module
@@ -148,6 +162,10 @@ def main(stdscr):
                 # same as ConnectivityWorker's old wifi_disconnect
                 # dispatch discarded it too.
                 "disconnect": lambda ssid: wifi_backend.disconnect(),
+                # VISION.md's R4 — modules/connectivity.py's dedicated
+                # "Scan" NavItem/handler. arg is always None (see
+                # handle_wifi_scan), unused here same as disconnect above.
+                "scan": lambda _arg: wifi_backend.scan(),
             },
         ),
         Domain(
@@ -156,7 +174,34 @@ def main(stdscr):
             actions={
                 "connect": bluetooth_backend.connect,
                 "disconnect": bluetooth_backend.disconnect,
+                # VISION.md's R4 — modules/connectivity.py's dedicated
+                # "Discover" NavItem/handler.
+                "discover": lambda _arg: bluetooth_backend.start_discovery(),
             },
+        ),
+        # Their own tiny read-only Domains, not folded into "wifi"/
+        # "bluetooth" above — found live, reported directly: the
+        # "Scanning…"/"Discovering…" label only ever flickered, since
+        # scan()/start_discovery() are fire-and-forget and
+        # StatusWorker.is_pending() only reflects the brief window that
+        # ONE D-Bus call takes, nowhere near the real scan/discovery
+        # duration. is_scanning()/is_discovering() poll the daemon's
+        # own real Scanning/Discovering property instead — see their
+        # own docstrings in iwd.py/bluez.py. Short poll_interval (not
+        # the 5s shared default) so the label catches up promptly —
+        # same reasoning audio/media/battery/brightness's own
+        # poll_interval overrides give.
+        Domain(
+            name="wifi_scanning",
+            poll=wifi_backend.is_scanning,
+            actions={},
+            poll_interval=0.5,
+        ),
+        Domain(
+            name="bluetooth_discovering",
+            poll=bluetooth_backend.is_discovering,
+            actions={},
+            poll_interval=0.5,
         ),
         Domain(
             name="audio",
@@ -294,6 +339,19 @@ def main(stdscr):
     # here), not wired up "just in case" in the meantime.
     status_worker = StatusWorker(domains)
     status_worker.start()
+
+    # Unconditional, unlike cava_reader below (lazy) — an agent must be
+    # registered before any connect attempt can trigger a callback,
+    # there's no "only start once something's happening" analog for a
+    # D-Bus agent the way cava has "only run while something's
+    # playing". A registration failure is caught inside start() itself
+    # (see its own docstring) rather than raised — surfaced via
+    # get_error(), folded into wifi_error/bluetooth_error below rather
+    # than crashing startup.
+    if iwd_agent is not None:
+        iwd_agent.start()
+    if bluez_agent is not None:
+        bluez_agent.start()
 
     # NOT a Domain — cava is a continuous stream, not a periodic
     # poll-and-snapshot, so it isn't wired through StatusWorker at all
@@ -544,9 +602,100 @@ def main(stdscr):
             else:
                 cava_reader.stop()
 
+            # VISION.md's R4 — a live iwd/bluez agent callback claims
+            # input at the highest priority of anything in this file
+            # (ahead of sessions_naming/sysmon_nice/help_colors below):
+            # unlike an in-progress rename, a pending passphrase/pairing
+            # prompt can be silently cancelled by the daemon itself at
+            # any moment (network went away, the daemon's own timeout
+            # fired — see agent_mailbox.py's module docstring), so it
+            # deserves more urgency than risking it expire unanswered
+            # while the user finishes an unrelated edit. Gated the same
+            # way every other hijack tier is implicitly gated (only
+            # reachable when nothing else already owns input) so it
+            # can't steal a keystroke out from under an already-open
+            # session.
+            # Resolves a "waiting for the real connect/pair result"
+            # overlay (see modules/connectivity.py's mark_passphrase_
+            # submitted()/mark_pairing_submitted() docstrings) — checked
+            # every frame, not just on keypress, so a result that
+            # arrives while the user isn't pressing anything is still
+            # noticed promptly (StatusWorker.has_pending() being true
+            # for the whole wait already keeps the render loop on its
+            # fast 50ms tick, see stdscr.timeout()'s own condition
+            # below). Found live, reported directly ("gaslightuje tě že
+            # se ani nic nedělo"): the original version closed this
+            # overlay the instant Enter was pressed, before iwd had
+            # even tried the (possibly wrong) passphrase.
+            if connectivity_mode.is_entering_passphrase() and connectivity_mode.is_passphrase_waiting():
+                ssid = connectivity_mode.entering_passphrase_ssid()
+                if not status_worker.is_pending("wifi", ssid):
+                    error = status_worker.get_action_error_for("wifi", ssid)
+                    if error:
+                        connectivity_mode.set_passphrase_error(error)
+                    else:
+                        connectivity_mode.cancel_passphrase_entry()
+                        input_claim = None
+            if connectivity_mode.is_confirming_pairing() and connectivity_mode.is_pairing_waiting():
+                pairing_request = connectivity_mode.current_pairing_request()
+                if not status_worker.is_pending("bluetooth", pairing_request.device_id):
+                    error = status_worker.get_action_error_for("bluetooth", pairing_request.device_id)
+                    if error:
+                        connectivity_mode.set_pairing_error(error)
+                    else:
+                        connectivity_mode.cancel_pairing_confirm()
+                        input_claim = None
+
+            connectivity_wants_input = (
+                input_claim is None and pending_confirm is None
+                and not resize.active and not spawn_picker.active and not help_state.active
+            )
+            # Also fires while ALREADY in one of these two tiers, not
+            # just when claiming input fresh — a wrong passphrase makes
+            # iwd call RequestPassphrase a SECOND time (a retry), which
+            # publishes a brand new AgentMailbox request while
+            # input_claim is still "connectivity_passphrase" from the
+            # first attempt; without this, that second request would
+            # never be noticed (the "claim fresh" branch only runs
+            # while input_claim is None). See modules/connectivity.py's
+            # start_passphrase_entry()'s own docstring.
+            #
+            # ONLY once we're actually waiting/showing an error
+            # (mark_passphrase_submitted()/mark_pairing_submitted()
+            # already called) — NOT while the user is still typing.
+            # AgentMailbox.get_request() (used above and below) never
+            # pops the request, so has_pending() stays True for the
+            # WHOLE time the original prompt sits there unanswered —
+            # found live, reported directly ("prompt nechce brát
+            # input"): gating on input_claim alone made this fire every
+            # single frame while typing, since the mailbox's own
+            # pending request never changes until it's actually
+            # submitted — each frame's re-fire called
+            # start_passphrase_entry() again, silently wiping whatever
+            # had just been typed back to empty before the next
+            # keypress could even land.
+            if iwd_agent is not None and iwd_agent.mailbox.has_pending() and (
+                connectivity_wants_input
+                or (input_claim == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
+            ):
+                request = iwd_agent.mailbox.get_request()
+                connectivity_mode.start_passphrase_entry(request.ssid)
+                input_claim = "connectivity_passphrase"
+            elif bluez_agent is not None and bluez_agent.mailbox.has_pending() and (
+                connectivity_wants_input
+                or (input_claim == "connectivity_pairing" and connectivity_mode.is_pairing_waiting())
+            ):
+                request = bluez_agent.mailbox.get_request()
+                connectivity_mode.start_pairing_confirm(request)
+                input_claim = "connectivity_pairing"
+
+            agent_has_pending = (
+                (iwd_agent is not None and iwd_agent.mailbox.has_pending())
+                or (bluez_agent is not None and bluez_agent.mailbox.has_pending())
+            )
             stdscr.timeout(
                 50 if (moves.entries or action_ctx.restore_queue or status_worker.has_pending()
-                       or resize_message is not None)
+                       or resize_message is not None or agent_has_pending)
                 else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
                 # 300, not 1000 — found live, reported by the user: even
@@ -704,8 +853,15 @@ def main(stdscr):
                 search_selected_index=launcher.search_selected_index,
                 wifi_networks=status_worker.get("wifi"),
                 bluetooth_devices=status_worker.get("bluetooth"),
-                wifi_error=status_worker.get_error("wifi"),
-                bluetooth_error=status_worker.get_error("bluetooth"),
+                # A poll failure (backend unreachable at all) takes
+                # priority over an agent registration failure (backend
+                # fine, but unknown-network/unpaired-device connects
+                # silently keep failing) — the former is the more
+                # complete outage. See IwdAgent/BluezAgent.start()'s
+                # own docstrings for why a registration failure is
+                # caught rather than raised.
+                wifi_error=status_worker.get_error("wifi") or (iwd_agent.get_error() if iwd_agent else None),
+                bluetooth_error=status_worker.get_error("bluetooth") or (bluez_agent.get_error() if bluez_agent else None),
                 status=status_worker,
                 session_preview=sessions_mode.expanded_preview(),
                 control_colors=control_colors,
@@ -804,6 +960,82 @@ def main(stdscr):
                     provider.dismiss_self()
                 continue
 
+            if input_claim == "connectivity_passphrase":
+                # First (highest-priority) of R4's two new input_claim
+                # consumers — see the "connectivity_wants_input" block
+                # above for why these sit ahead of sessions_naming/
+                # sysmon_nice/help_colors.
+                if connectivity_mode.is_passphrase_waiting():
+                    # Resolution happens in the top-of-loop check above
+                    # (every frame, not keypress-driven) — this just
+                    # swallows stray keys while the real connect
+                    # attempt is still in flight.
+                    continue
+                if connectivity_mode.passphrase_error() is not None:
+                    # A resolved failure, already shown — any key
+                    # dismisses back to normal navigation. A genuine
+                    # retry means Enter on the network row again (a
+                    # fresh connect() attempt, possibly a fresh
+                    # RequestPassphrase too) — the original request
+                    # this overlay was answering is long since resolved
+                    # one way or another, there's nothing left to
+                    # resubmit here.
+                    connectivity_mode.cancel_passphrase_entry()
+                    input_claim = None
+                    continue
+                # The daemon can end this on its own at any time
+                # (Cancel/Release — see agent_mailbox.py's module
+                # docstring); has_pending() going False here (NOT
+                # while waiting/showing an error, both handled above)
+                # is exactly that, not a bug.
+                if iwd_agent is None or not iwd_agent.mailbox.has_pending():
+                    connectivity_mode.cancel_passphrase_entry()
+                    input_claim = None
+                elif key == cfg.keybinds["confirm"]:
+                    text = connectivity_mode.apply_passphrase()
+                    if text is not None:
+                        iwd_agent.reply_passphrase(text)
+                        connectivity_mode.mark_passphrase_submitted()
+                elif key == 27:  # Escape
+                    connectivity_mode.cancel_passphrase_entry()
+                    iwd_agent.cancel_current()
+                    input_claim = None
+                elif not connectivity_mode.handle_passphrase_key(key):
+                    connectivity_mode.cancel_passphrase_entry()
+                    input_claim = None
+                continue
+
+            if input_claim == "connectivity_pairing":
+                # Second of R4's two new input_claim consumers — plain
+                # yes/no, not typed text, so it's resolved directly
+                # here with confirm_yes/confirm_no rather than a
+                # handle_*_key()/apply_*() pair, same convention
+                # handle_pending_confirm() already uses. Only the
+                # ACCEPT path waits for a real result — confirm_no/
+                # Escape are the user's own explicit choice, nothing
+                # further to report about those.
+                if connectivity_mode.is_pairing_waiting():
+                    continue
+                if connectivity_mode.pairing_error() is not None:
+                    connectivity_mode.cancel_pairing_confirm()
+                    input_claim = None
+                    continue
+                if bluez_agent is None or not bluez_agent.mailbox.has_pending():
+                    connectivity_mode.cancel_pairing_confirm()
+                    input_claim = None
+                elif key == cfg.keybinds["confirm_yes"]:
+                    bluez_agent.reply_pairing(True)
+                    connectivity_mode.mark_pairing_submitted()
+                elif key == cfg.keybinds["confirm_no"]:
+                    bluez_agent.reply_pairing(False)
+                    connectivity_mode.cancel_pairing_confirm()
+                    input_claim = None
+                elif key == 27:  # Escape — same as an explicit reject
+                    bluez_agent.cancel_current()
+                    connectivity_mode.cancel_pairing_confirm()
+                    input_claim = None
+                continue
+
             if input_claim == "sessions_naming":
                 # Second consumer of R2's input_claim (see its own
                 # comment near where it's declared) — a narrow key-
@@ -889,7 +1121,26 @@ def main(stdscr):
                 continue
 
             if input_claim == "launcher":
-                if key == cfg.keybinds["confirm"]:
+                # Up/Down shift the ambient-typing launch target
+                # (focus_id) without leaving typing mode — found live,
+                # asked for directly: launching from anywhere always
+                # targeted focus_id regardless of which module you'd
+                # been browsing, with no way to see (let alone change)
+                # that target while typing. Left/Right are already
+                # spoken for by launcher_mode.handle_typing_key itself
+                # (they move which search RESULT is selected); arrow
+                # keys never collide with typed characters (outside the
+                # printable range that function checks), including
+                # under vim_mode — vim's own j/k duplicates are a
+                # separate keybind (cfg.keybinds["vim_down"/"vim_up"]),
+                # not checked here, so they still type normally.
+                if key == cfg.keybinds["up"]:
+                    current = focus_id if focus_id is not None else state.focused_region_id
+                    focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
+                elif key == cfg.keybinds["down"]:
+                    current = focus_id if focus_id is not None else state.focused_region_id
+                    focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, 1)
+                elif key == cfg.keybinds["confirm"]:
                     selected = launcher_mode.resolve_selected(launcher)
                     if selected is not None:
                         cmd, app_id_hint = selected
@@ -1191,6 +1442,10 @@ def main(stdscr):
     finally:
         status_worker.stop()
         cava_reader.stop()
+        if iwd_agent is not None:
+            iwd_agent.stop()
+        if bluez_agent is not None:
+            bluez_agent.stop()
 
 
 if __name__ == "__main__":

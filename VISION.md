@@ -349,7 +349,7 @@ for wifi/bluetooth/every control.toggle); `main.py`'s `"audio"`/
 its own interval elapsing or (unchanged from before) immediately after
 an action targeting it was just processed.
 
-### R4 — Connectivity v2: D-Bus agent pattern
+### R4 — Connectivity v2: D-Bus agent pattern — done
 The hardest, most-unlocking piece — land it late, with infrastructure
 proven. Passphrase (iwd) and pairing (BlueZ) are callback-driven: tuicc
 registers agent objects (`net.connman.iwd.Agent`, `org.bluez.Agent1`)
@@ -361,6 +361,95 @@ bluetoothctl CLI parsing to org.bluez D-Bus (jeepney pattern exists in
 iwd.py); add scanning (StartDiscovery / Station.Scan) surfaced via the
 pending/blink mechanism; agent unregister goes in the R1 try/finally.
 Backends stay behind grown-but-compatible ABCs.
+
+**jeepney vs. a purpose-built agent library, decided with the user
+before implementation started:** `dbus-next`/`dasbus` both offer a
+decorator-based service-export API that would've meant noticeably less
+glue code for the agent objects specifically — genuinely considered,
+not dismissed out of hand. Stayed on `jeepney` anyway: `dbus-next` is
+asyncio-first, a second concurrency model alongside tuicc's existing
+plain-threading (`StatusWorker`) one purely for this one piece; `dasbus`
+pulls in PyGObject/GLib, a real install-risk C dependency for exactly
+the minimal sway/i3 setups this project targets (no guarantee of a
+full desktop environment being present). Running two different D-Bus
+libraries for one subsystem (connectivity) was also judged a real,
+ongoing contributor-confusion cost on its own. Confirmed directly
+against jeepney 0.9.0's own test suite (not assumed) that the needed
+primitives — `receive()`/`new_method_return()`/`new_error()` — are
+real, exercised code, not unproven surface; the only actual cost is
+~30 lines of manual dispatch instead of a decorator, same order of
+magnitude as other glue already in this codebase.
+
+**Built:** `agent_mailbox.py` (`AgentMailbox`, the thread-safe request/
+answer handoff — see its own module docstring), `iwd_agent.py`/
+`bluez_agent.py` (the two agents, each a `CavaReader`-style dedicated
+background object, not a `StatusWorker` `Domain` — an agent has to
+listen indefinitely, which would stall every other domain on
+`StatusWorker`'s one shared thread). MVP scope, as planned: the common
+paths implemented for real (iwd's `RequestPassphrase`; bluez's
+`RequestConfirmation`/`RequestAuthorization`, capability
+`"KeyboardDisplay"`), rarer/legacy methods (EAP username+password,
+PIN-code entry, passkey display/typing) reply with a real D-Bus error
+rather than silently doing nothing. `bluez.py` fully migrated off
+`bluetoothctl` onto D-Bus, `get_devices()` no longer filters out
+unpaired devices, `iwd.py`'s `get_networks()` no longer filters out
+unknown networks — both now carry a `known`/`paired` flag through
+instead. New/unpaired items get a dim `" (new)"` suffix (the connected/
+disconnected dot was already fully claimed). Enter on an unpaired
+bluetooth device does `Pair()` then `Connect()` in one keypress — no
+separate "Pair" action — mirroring how `Connect()` on an unknown wifi
+network already drives `RequestPassphrase`; this was a real design
+decision, not an obvious default, confirmed with the user before
+building it. The two new prompts (`"connectivity_passphrase"`/
+`"connectivity_pairing"` `input_claim` values) sit at the HIGHEST
+priority of any hijack tier in `main.py` — ahead of `sessions_naming`/
+`sysmon_nice`/`help_colors` — since a daemon-cancellable live callback
+was judged to deserve more urgency than an in-progress edit.
+Scan/discover are dedicated `NavItem` rows (`wifi_scan`/
+`bluetooth_discover` target_kinds), not a keybind, matching every other
+"second distinct action on the same list" in this codebase (sysmon's
+CLOSE vs KILL); refresh after a scan deliberately does NOT watch a
+`PropertiesChanged` signal — the next regular `StatusWorker` poll tick
+picks up whatever's found, simplest option, chosen explicitly over a
+signal-watching alternative.
+
+**Two real deviations found live, during implementation, from what was
+designed on paper — worth knowing before touching this area again:**
+- `AgentMailbox`'s first design had the agent's own dispatch thread
+  call a blocking `wait_for_answer()` right after publishing a request,
+  then build+send the reply itself once unblocked. Found, mid-build,
+  to be a real starvation bug: that's the SAME thread that has to
+  notice the daemon sending `Cancel`/`Release` on that exact request
+  (network went away, the daemon's own timeout fired) — if it's
+  blocked inside `wait_for_answer()`, it can never get back to
+  `queue.get()` to see the cancellation that's supposed to end that
+  same wait. Redesigned to a non-blocking `pop_request()` instead:
+  whichever side ends the request's life (the render thread replying
+  with the user's real answer, the render thread replying with a
+  Canceled/Rejected error on Escape, or the dispatch loop itself on a
+  daemon-sent Cancel/Release, which sends no reply at all) does so
+  directly, and the dispatch thread never blocks on anything but its
+  own `queue.get()`.
+- `bluez.py`'s `start_discovery()` almost shipped using the same
+  short-lived "open a connection, make one call, close it" pattern
+  every other method on that backend uses. Found live, testing against
+  this session's own real bluez: bluez ties a discovery session to the
+  CALLING client's own D-Bus connection — it ends automatically the
+  instant that connection closes, meaning discovery would have run for
+  roughly the duration of one D-Bus round-trip, not any meaningful
+  window. Fixed by running `StartDiscovery` → wait → `StopDiscovery` on
+  its own background thread that holds the connection open for a real
+  `DISCOVERY_WINDOW_SECONDS` (15s) window, early-cancellable via
+  `stop_discovery()`'s own `threading.Event` — not a blocking call on
+  `StatusWorker`'s shared action-dispatch thread, which would have
+  stalled every other domain for the same window.
+
+**NetworkManager, as a second wifi backend, was explicitly kept out of
+this pass** (agreed with the user before Plan Mode started) — the
+registry pattern (`connectivity/registry.py`) already supports adding
+it later with zero rework to anything built here; a real gap for users
+who don't run iwd, worth treating as an immediate, separate follow-up
+rather than something this section resolves.
 
 ### R5 — Control + Media modules
 Two domains, two backend packages (do NOT merge them — same lesson as
@@ -481,7 +570,7 @@ needs plain color, not also dimmed — the thinnest block glyph (▁) with
 
 Both feed off StatusWorker (polling, action queue, pending blink).
 
-### R6 — System monitor module
+### R6 — System monitor module — done
 Entity list = windows from WMState (pid via `Window.pid` on sway,
 `provider.resolve_pid()` on i3). RAM from `/proc/<pid>/status` (VmRSS);
 CPU% as utime+stime delta between StatusWorker samples (~2s) — never in
@@ -802,8 +891,9 @@ isn't.
 4. **R5** control + media (fast visible wins, exercise R3 three times)
    — done, including the CAVA-style visualizer follow-on (control's
    volume/brightness sliders still excepted, see R5's own section)
-5. **R6** system monitor (exercises R3 + fixture discipline)
+5. **R6** system monitor (exercises R3 + fixture discipline) — done
 6. **R4** connectivity v2 agents (hardest, most infrastructure needed)
+   — done
 7. **R7** default preset + docs
 8. **R8** bars module (done) + push-worker resolution — the actual
    final gate: v0.1.0 does not tag until this section's own "make it

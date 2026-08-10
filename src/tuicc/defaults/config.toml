@@ -188,6 +188,13 @@ browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]
 wifi_backend = "iwd"
 bluetooth_backend = "bluez"
 
+[connectivity]
+# How many rows the WiFi / Bluetooth sections each show at once before
+# they start scrolling — one shared value for both (they live in the
+# same box), same fixed-slot-plus-scroll mechanic [media]/[sysmon]
+# below use for their own lists.
+visible_slots = 3
+
 [audio]
 # "wpctl" (WirePlumber's own CLI) — the primary backend, since
 # PipeWire/WirePlumber is what every current sway/i3 desktop actually

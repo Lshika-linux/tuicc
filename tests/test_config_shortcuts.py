@@ -190,7 +190,8 @@ def test_sysmon_blocks_default_when_section_absent(tmp_path, monkeypatch):
 # and the same for media too).
 
 def test_visible_slots_default_to_3_when_sections_absent(tmp_path, monkeypatch):
-    # Neither [sysmon] nor [media] appear in BASE_TOML at all.
+    # Neither [sysmon] nor [media] nor [connectivity] appear in
+    # BASE_TOML at all.
     actions_toml = _action_toml("Lock", shortcut=None)
     _write_config(tmp_path, monkeypatch, actions_toml)
 
@@ -198,6 +199,7 @@ def test_visible_slots_default_to_3_when_sections_absent(tmp_path, monkeypatch):
 
     assert cfg.sysmon_visible_slots == 3
     assert cfg.media_visible_slots == 3
+    assert cfg.connectivity_visible_slots == 3
 
 
 def test_visible_slots_read_from_config_when_present(tmp_path, monkeypatch):
@@ -205,7 +207,7 @@ def test_visible_slots_read_from_config_when_present(tmp_path, monkeypatch):
     user_config = tmp_path / "config.toml"
     user_config.write_text(
         BASE_TOML.format(power_menu_block=actions_toml)
-        + "\n[sysmon]\nvisible_slots = 5\n\n[media]\nvisible_slots = 2\n"
+        + "\n[sysmon]\nvisible_slots = 5\n\n[media]\nvisible_slots = 2\n\n[connectivity]\nvisible_slots = 4\n"
     )
     presets_dir = tmp_path / "presets"
     presets_dir.mkdir()
@@ -217,6 +219,7 @@ def test_visible_slots_read_from_config_when_present(tmp_path, monkeypatch):
 
     assert cfg.sysmon_visible_slots == 5
     assert cfg.media_visible_slots == 2
+    assert cfg.connectivity_visible_slots == 4
 
 
 def test_sysmon_visible_slots_independent_of_sysmon_blocks(tmp_path, monkeypatch):
