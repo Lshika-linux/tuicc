@@ -7,7 +7,7 @@ drawing code is left untested here.
 from types import SimpleNamespace
 
 from tuicc.model import Region, Window, WMState
-from tuicc.modules.sidebar import nav_items, _slot_height, _preview_apps_for
+from tuicc.modules.sidebar import nav_items, _slot_height, _preview_apps_for, shift_workspace_id
 
 
 def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
@@ -116,3 +116,40 @@ def test_nav_items_subsequent_slot_offset_accounts_for_preview_height():
     # slot 2 starts right after slot 1's inflated height, not the
     # un-inflated one.
     assert items[1].rect[1] == 6
+
+
+# ---------- shift_workspace_id ----------
+# Found live, asked for directly: Up/Down while typing in the launcher
+# (VISION.md's R4-follow-up connectivity session) move the ambient-
+# typing launch target — see main.py's own "launcher" input_claim tier.
+
+def test_shift_workspace_id_moves_forward():
+    assert shift_workspace_id("2", total_workspaces=5, delta=1) == "3"
+
+
+def test_shift_workspace_id_moves_backward():
+    assert shift_workspace_id("2", total_workspaces=5, delta=-1) == "1"
+
+
+def test_shift_workspace_id_wraps_forward_past_the_last_slot():
+    assert shift_workspace_id("5", total_workspaces=5, delta=1) == "1"
+
+
+def test_shift_workspace_id_wraps_backward_past_the_first_slot():
+    assert shift_workspace_id("1", total_workspaces=5, delta=-1) == "5"
+
+
+def test_shift_workspace_id_none_current_defaults_to_slot_one():
+    assert shift_workspace_id(None, total_workspaces=5, delta=1) == "2"
+
+
+def test_shift_workspace_id_non_numeric_current_defaults_to_slot_one():
+    # This codebase's sidebar only ever models numbered 1..total_workspaces
+    # slots (see _build_slots) — a non-numeric region id (e.g. a named
+    # sway workspace) already doesn't fit that model elsewhere either.
+    assert shift_workspace_id("web", total_workspaces=5, delta=1) == "2"
+
+
+def test_shift_workspace_id_single_workspace_wraps_to_itself():
+    assert shift_workspace_id("1", total_workspaces=1, delta=1) == "1"
+    assert shift_workspace_id("1", total_workspaces=1, delta=-1) == "1"
