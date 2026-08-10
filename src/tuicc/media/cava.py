@@ -39,7 +39,7 @@ ASCII_MAX_RANGE = 64
 # method = pipewire, not left to cava's own auto-detection order — every
 # current sway/i3 desktop this project targets runs PipeWire (same
 # reasoning audio/wpctl.py's own primary-backend choice gives).
-# mono/average, not stereo: decided with the user before building this,
+# mono/average, not stereo: a deliberate choice made before building this,
 # see VISION.md's R5 backlog entry — 2 rows are spent on finer VERTICAL
 # resolution per bar, not on a left/right channel split.
 _CONFIG_TEMPLATE = """\

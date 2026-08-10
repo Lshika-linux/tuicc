@@ -58,8 +58,8 @@ def _is_binary(states: list[dict]) -> bool:
     information the dot already carries. An N-way cycle (3+ states,
     e.g. Performance Mode's power-saver/balanced/performance) can't:
     a single filled dot doesn't distinguish which of 3+ states it is
-    even with a per-state color (found live — the user kept the
-    bracket text for those, only asked to drop it for plain toggles).
+    even with a per-state color (found live — the bracket text stays
+    for those, only dropped for plain toggles).
     """
     return len(states) == 2
 

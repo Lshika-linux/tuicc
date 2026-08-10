@@ -11,9 +11,7 @@ push domain needs to BLOCK waiting for an external event (a kernel
 poll() call, a subprocess's streamed output, ...) for however long that
 takes, which doesn't fit a shared fixed-tick loop without multiplexing
 every domain's own wait mechanism together — real complexity for no
-benefit when a domain can just own its own thread instead. Found live,
-this session: "why not just have a pull worker and a push worker" was
-the user's own framing, and it's the right one — two independent,
+benefit when a domain can just own its own thread instead — two independent,
 narrow abstractions instead of one generic one trying to do both badly.
 
 Each PushDomain gets its OWN dedicated thread, blocked in domain.watch()

@@ -126,7 +126,7 @@ class BarSpec:
                             # isn't presently accepting charge (a
                             # ThinkPad charge_control threshold pausing
                             # mid-range, or already topped off) — found
-                            # live, reported by the user: without this,
+                            # live: without this,
                             # "plugged in but paused" and "genuinely
                             # running on battery alone" looked
                             # IDENTICAL (both just a plain percentage),

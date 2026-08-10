@@ -1,7 +1,6 @@
 """CPU/board temperature reading via `sensors -j` (lm-sensors) —
-VISION.md's R6 system monitor's own CPU-temp stat, plus the
-"hottest sensor overall" line the user specifically asked for a way to
-explain (a bare "32.9°C" doesn't say WHICH sensor that even is —
+VISION.md's R6 system monitor's own CPU-temp stat, plus a
+"hottest sensor overall" line that explains it (a bare "32.9°C" doesn't say WHICH sensor that even is —
 CPU package? NVMe drive? WiFi chip? — describe_sensor() below exists
 so the module can show "Hottest: NVMe (Composite) 32.9°C", not just the
 number).
@@ -14,7 +13,7 @@ permanently (same reasoning CavaReader's own `_binary_missing` flag
 gives) so it stops re-attempting the subprocess spawn every poll
 interval forever.
 
-Live-verified against this session's own sandbox (T480, NixOS):
+Live-verified against a real sandbox (T480, NixOS):
 `sensors -j` can exit non-zero (stderr: "ERROR: Can't get value of
 subfeature temp2_input: Can't read" — one dead sensor on this exact
 machine) while STILL printing fully valid, usable JSON on stdout for

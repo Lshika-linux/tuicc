@@ -2,7 +2,7 @@
 parse_metadata) — mpris.py talks to players directly over D-Bus (no CLI
 text to parse), so what's tested here is the pure data-shaping logic,
 separate from the D-Bus I/O itself, same split test_connectivity.py
-uses for iwd.py. Fixtures are real data captured live this session
+uses for iwd.py. Fixtures are real data captured live
 (Firefox playing a YouTube tab, org.mpris.MediaPlayer2.firefox — note
 mpris:length and mpris:artUrl are genuinely absent, not trimmed for
 brevity).

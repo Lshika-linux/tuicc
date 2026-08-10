@@ -1,5 +1,5 @@
 """Tests for sensors.py. The multi-chip fixture below is REAL `sensors
--j` output captured live off this session's own sandbox (T480, NixOS,
+-j` output captured live off a real sandbox (T480, NixOS,
 Intel coretemp + acpitz + nvme + iwlwifi + thinkpad_acpi all present
 simultaneously) — not a hand-constructed guess at the JSON shape, same
 "verify against real hardware data" standard battery.py's own
@@ -15,7 +15,7 @@ from tuicc.sensors import (
     find_hottest_sensor, parse_sensors_json,
 )
 
-# Captured live via `sensors -j` on this session's own sandbox.
+# Captured live via `sensors -j` on a real sandbox.
 REAL_SENSORS_JSON = json.dumps({
     "iwlwifi_1-virtual-0": {"Adapter": "Virtual device", "temp1": {"temp1_input": 46.0}},
     "thinkpad-isa-0000": {

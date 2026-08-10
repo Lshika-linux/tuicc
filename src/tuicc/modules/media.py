@@ -6,7 +6,7 @@ not a player one).
 
 Now-playing rows use the same two-level browsing/expanded model
 sessions.py established (see that module's own docstring for the full
-reasoning) — found live with the user: three always-active transport
+reasoning) — found live: three always-active transport
 NavItems per row, positioned near the box's right edge, interacted
 badly with `tab_order`'s default "columns_first" ordering (sorts by
 x first) — a row visually near the top of the box could still land
@@ -129,8 +129,7 @@ def _pending_blink_style(theme):
 
 
 def _source_label(player) -> str:
-    """The short "where is this playing from" tag — found live, asked
-    for after the user tested the module: a browser's current domain
+    """The short "where is this playing from" tag — found live: a browser's current domain
     (e.g. "youtube.com") when a real URL is available (MPRIS's own
     xesam:url — already fetched for exactly this), otherwise the app's
     own DesktopEntry (shorter/more uniform than Identity, e.g.
@@ -273,9 +272,8 @@ def _reconcile_expanded_state(players: list) -> None:
 # "[empty - ...]" placeholder, see windowed_list.section_rows). Found
 # live, asked for: the box's own content height should never silently
 # vary just because more or fewer players/sinks happen to exist right
-# now — same "no silent truncation, no surprise reflow" principle a
-# longer design discussion with the user converged on for this exact
-# module first, before generalizing into windowed_list.py (now shared
+# now — same "no silent truncation, no surprise reflow" principle
+# this module settled on first, before generalizing into windowed_list.py (now shared
 # with modules/sysmon.py's own window list, see that module's own
 # docstring).
 

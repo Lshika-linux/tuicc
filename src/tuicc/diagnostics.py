@@ -1,6 +1,6 @@
 """Failed-systemd-units + OOM + general dmesg/journalctl error scanning
 — VISION.md's R6 system monitor's bottom "diagnostics" line. This is
-the passive/read-only v1 scope agreed with the user: a summary
+a deliberately passive/read-only v1 scope: a summary
 ("All clear" / "N issues") plus a deduplicated breakdown modules/
 sysmon.py shows in preview.py on hover — no "run this in a terminal"
 action (explicitly deferred to backlog, post-v0.1.0).
@@ -14,7 +14,7 @@ rest of this codebase takes for optional system integrations:
   log lines, split into OOM-kill events and everything else
   (classify via is_oom_message), each deduplicated (dedupe_general_
   errors) since a single flapping driver can log the identical line
-  many times in a row — live-verified on this session's own sandbox
+  many times in a row — live-verified on a real sandbox
   (a Bluetooth firmware retry loop logging the exact same line
   repeatedly within the same short window).
 
@@ -55,7 +55,7 @@ def parse_journal_lines(text: str) -> list[dict]:
     input. `identifier` falls back through SYSLOG_IDENTIFIER ->
     _COMM -> _SYSTEMD_UNIT -> "unknown", whichever the specific log
     source actually populated (not every subsystem sets all three,
-    confirmed against this session's own live journal — bluetoothd's
+    confirmed against a real live journal — bluetoothd's
     own lines set SYSLOG_IDENTIFIER, kernel lines don't).
     """
     entries = []
@@ -82,8 +82,8 @@ def parse_journal_lines(text: str) -> list[dict]:
 
 def is_oom_message(message: str) -> bool:
     """A dedicated OOM category, not just lumped into "general errors"
-    — the user specifically wants to know their machine started
-    reaping processes for memory pressure, a categorically different
+    — knowing a machine started
+    reaping processes for memory pressure is a categorically different
     (and more urgent) signal than an arbitrary logged error.
     """
     lowered = message.lower()
@@ -92,8 +92,8 @@ def is_oom_message(message: str) -> bool:
 
 def dedupe_general_errors(entries: list[dict]) -> list[dict]:
     """Collapses repeated (identifier, message) pairs into one entry
-    with a "count" plus first/last-seen timestamps — found live, asked
-    for: this exact session's own journal has the identical "Bluetooth:
+    with a "count" plus first/last-seen timestamps — found live: a real
+    journal has had the identical "Bluetooth:
     hci0: Reading supported features failed (-16)" kernel line appear
     multiple times within the same short window (a driver retry loop),
     and showing that as N separate diagnostic lines would bury
@@ -129,7 +129,7 @@ def get_failed_units(runner=subprocess.run) -> list[str] | None:
     error (same "degraded, not broken" tolerance the Provider
     contract's optional methods get). `systemctl --failed --output=
     json` exits 0 whether or not any unit is actually failed (confirmed
-    live on this session's own machine) — a genuine failure (e.g. can't
+    live) — a genuine failure (e.g. can't
     reach the system bus) surfaces via whatever exception subprocess/
     json parsing raises instead, propagating to StatusWorker's own
     poll-error capture same as everywhere else.

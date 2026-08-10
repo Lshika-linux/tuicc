@@ -104,7 +104,7 @@ def _run_detached_detecting_quick_failure(
     waits up to window_seconds to see whether it's ALREADY exited.
     Found live building this module: a toggle's command can fail
     almost instantly (gammastep exiting right away for lack of a
-    configured GeoClue2 provider, on this session's own test machine)
+    configured GeoClue2 provider, on a real test machine)
     with zero visible feedback — the toggle just silently stayed in
     its old state, StatusWorker's own action-error swallowing (fixed
     alongside this) meant even a real exception wouldn't have helped,

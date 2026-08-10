@@ -107,14 +107,14 @@ def get_ac_online(base_path: str = POWER_SUPPLY_PATH) -> bool | None:
     accepting charge — a charger can be fully connected with every pack
     correctly declining to charge, e.g. a ThinkPad's charge_control
     threshold keeping a pack between 40-80%, see aggregate()'s own
-    docstring). Found live, reported by the user: without this, tuicc
+    docstring). Found live: without this, tuicc
     had no way to show "plugged in" at all — only "actively charging" or
     a plain percentage, and the plain-percentage case reads identically
     to "genuinely unplugged, draining" even when a charger really is
     connected.
 
     Every entry under base_path is checked, not just one hardcoded name
-    ("AC") — found live, this session's own machine exposes charging
+    ("AC") — found live, a real ThinkPad exposes charging
     via BOTH a traditional `AC` (type=Mains) node AND two USB-C PD ports
     (type=USB, one online, one not) simultaneously; hardcoding "AC"
     alone would have missed USB-C-only charging setups entirely. Any
@@ -209,7 +209,7 @@ def watch(stop_event, base_path: str = POWER_SUPPLY_PATH, poll_timeout: float = 
     "something about it changed".
 
     NOT CURRENTLY WIRED IN (main.py reverted "battery" to a plain fast
-    poll Domain) — found live, empirically, on this session's own real
+    poll Domain) — found live, empirically, on real
     hardware (T480, NixOS): select.poll() never fired ONCE across
     several real charger unplug/replug cycles, confirmed by running
     this generator with a 30s fallback_seconds and a live logger — every
@@ -227,7 +227,7 @@ def watch(stop_event, base_path: str = POWER_SUPPLY_PATH, poll_timeout: float = 
     primary mechanism anymore.
 
     ALSO yields on its own every fallback_seconds even with no kernel
-    event detected — found live, reported by the user: a charging-start
+    event detected — found live: a charging-start
     still went completely undetected, even after a long wait, on real
     hardware. sysfs_notify() on power_supply's `uevent` attribute is
     only actually called when the underlying driver reports a change via
@@ -239,11 +239,11 @@ def watch(stop_event, base_path: str = POWER_SUPPLY_PATH, poll_timeout: float = 
     something changed; this fallback bounds the worst case to
     fallback_seconds instead of leaving it open-ended/silently broken —
     still push-first (instant when the kernel notification DOES fire,
-    confirmed live it does for at least SOME changes on this session's
-    own hardware), with polling only as the safety net under it, not the
+    confirmed live it does for at least SOME changes on real
+    hardware), with polling only as the safety net under it, not the
     primary mechanism.
 
-    Sysfs poll() quirk, confirmed live on this session's own machine
+    Sysfs poll() quirk, confirmed live on a real machine
     (T480, BAT0+BAT1) before relying on it: the FIRST poll() call after
     opening/registering a freshly-opened attribute fires immediately and
     unconditionally — not a real change, just how the kernel's poll

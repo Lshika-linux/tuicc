@@ -2,13 +2,13 @@
 /sys/class/power_supply tree built under tmp_path (see its own
 docstring for why base_path is a parameter) — no monkeypatching of os
 internals needed. aggregate() is tested directly against BatteryPack
-values, including a real pair captured live off this session's own
+values, including a real pair captured live off a real
 sandbox (T480, BAT0+BAT1) — see aggregate()'s own docstring for why
 energy-weighted vs plain-average genuinely disagree on real hardware,
 not just in a contrived fixture. watch()'s "no packs" branch is a plain
 fake-tree test like the rest of this file; its REAL select.poll()
 behavior can only be verified against a real /sys tree (see its own
-test's skipif) — this session's own sandbox happens to have one
+test's skipif) — a real sandbox happens to have one
 (BAT0+BAT1), confirmed live before relying on it (see watch()'s own
 docstring for the exact live-verified sysfs poll() quirk).
 """
@@ -131,7 +131,7 @@ def test_get_ac_online_false_when_present_but_not_online(tmp_path):
 
 
 def test_get_ac_online_multiple_sources_any_online_wins(tmp_path):
-    # This session's own real machine: an "AC" node plus TWO USB-C PD
+    # A real ThinkPad: an "AC" node plus TWO USB-C PD
     # ports, only one of which is online at a time — hardcoding "AC"
     # alone would have missed this shape entirely (see get_ac_online's
     # own docstring).
@@ -192,7 +192,7 @@ def test_aggregate_falls_back_to_percent_average_when_energy_missing_on_any_pack
 
 
 def test_aggregate_real_t480_values_diverge_from_plain_average():
-    """Captured live off this session's own sandbox: BAT0 at 6%/22.62Wh
+    """Captured live off a real sandbox: BAT0 at 6%/22.62Wh
     full, BAT1 at 15%/68.7Wh full. A plain percent average reads ~10-11%;
     the real combined charge (energy-weighted) is meaningfully different
     — this is the concrete case that motivated picking energy-weighting
@@ -211,7 +211,7 @@ def test_aggregate_real_t480_values_diverge_from_plain_average():
 
 
 def test_aggregate_status_charging_wins_over_not_charging():
-    # exactly this session's live machine state: BAT0 "Not charging"
+    # A real machine state: BAT0 "Not charging"
     # (topped off), BAT1 "Charging" — the combined status must read
     # "Charging", not get overridden by BAT0's own non-charging report.
     bat0 = BatteryPack(name="BAT0", percent=6, status="Not charging",
@@ -271,13 +271,13 @@ def test_watch_stops_promptly_once_stop_event_is_set_before_starting(tmp_path):
 
 def test_watch_falls_back_to_yielding_even_without_a_real_kernel_event(tmp_path):
     # A plain regular file (not real sysfs) registered for POLLPRI|
-    # POLLERR reliably just times out — confirmed live, this session —
+    # POLLERR reliably just times out — confirmed live —
     # so every yield seen here MUST come from the fallback path, not a
     # spurious "first poll" fire the way real sysfs has (see watch()'s
     # own docstring) — this is exactly what makes the fallback
     # deterministically testable without real hardware: the fix for
     # "charging start went undetected even after a long wait" (found
-    # live, reported by the user) is that this generator no longer
+    # live) is that this generator no longer
     # depends SOLELY on a kernel notification that might just never
     # come on some driver/kernel.
     (tmp_path / "BAT0").mkdir()
@@ -295,8 +295,8 @@ def test_watch_falls_back_to_yielding_even_without_a_real_kernel_event(tmp_path)
 
 @pytest.mark.skipif(not get_packs(), reason="needs real battery hardware (BAT*) present in /sys")
 def test_watch_real_hardware_setup_does_not_crash_and_stop_event_terminates_it():
-    """Live/integration check, not a full behavior test — this session's
-    own sandbox happens to have real battery hardware (BAT0+BAT1), see
+    """Live/integration check, not a full behavior test — a real
+    sandbox happens to have real battery hardware (BAT0+BAT1), see
     this file's own module docstring for what was verified manually
     against it (the spurious-first-poll() quirk watch()'s own docstring
     describes). Can't simulate a real AC plug/unplug in a test, so this

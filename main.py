@@ -247,8 +247,8 @@ def main(stdscr):
             poll_interval=1,
         ),
         # Tried as a push domain (battery.watch(), select.poll() on
-        # /sys/class/power_supply/*/uevent) — reverted, see this
-        # session's own live finding below. Back to a plain fast poll,
+        # /sys/class/power_supply/*/uevent) — reverted, see
+        # battery.py's own live finding. Back to a plain fast poll,
         # same mechanism proven to work for VOL/BRI.
         Domain(
             name="battery",
@@ -716,7 +716,7 @@ def main(stdscr):
                        or resize_message is not None or agent_has_pending)
                 else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
-                # 300, not 1000 — found live, reported by the user: even
+                # 300, not 1000 — found live: even
                 # with a Domain's own poll_interval tightened (battery/
                 # brightness/audio/media all poll at 1s now), the render
                 # loop itself only ever LOOKS at a fresh StatusWorker

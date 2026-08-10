@@ -221,9 +221,8 @@ def test_sysmon_blocks_default_when_section_absent(tmp_path, monkeypatch):
 
 
 # ---------- sysmon_visible_slots / media_visible_slots ----------
-# Found live, same session as [[sysmon.block]]: "Počet viditelných
-# řádků, visible slots a to same i pro media" (the visible-row count,
-# and the same for media too).
+# sysmon's window list and media's Now Playing/Output lists each get
+# their own independent visible-row-count value.
 
 def test_visible_slots_default_to_3_when_sections_absent(tmp_path, monkeypatch):
     # Neither [sysmon] nor [media] nor [connectivity] appear in

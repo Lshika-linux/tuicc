@@ -636,10 +636,7 @@ def load_config() -> Config:
     # DEFAULT_VISIBLE_SLOTS here) — sysmon's window list and media's
     # Now Playing/Output lists each get their own independent value
     # (different boxes, different natural heights), not one shared
-    # global. Found live, asked for directly, same session as
-    # [[sysmon.block]]: "Počet viditelných řádků, visible slots a to
-    # same i pro media" (the visible-row count, and the same for media
-    # too).
+    # global.
     sysmon_visible_slots = user_data.get("sysmon", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
     media_visible_slots = user_data.get("media", {}).get("visible_slots", DEFAULT_VISIBLE_SLOTS)
     # connectivity.py's WiFi/Bluetooth sections (VISION.md's R4 follow-

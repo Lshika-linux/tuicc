@@ -185,7 +185,7 @@ def test_nav_items_preview_shows_current_and_next_state():
 
 
 def test_nav_items_preview_shows_the_command_that_will_run():
-    # Requested by the user after a live test: a line between the
+    # A line between the
     # description and the SHELL=TRUE warning, showing exactly what
     # will execute — same "show the real command" idea as
     # quick_actions.py's own preview_text.

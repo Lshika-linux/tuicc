@@ -8,7 +8,7 @@ as iwd.py's own connect()/disconnect() today.
 The one piece of stop() that IS worth testing despite that: whether it
 replies to a still-pending request before tearing the connection down
 — see IwdAgent.stop()'s own docstring for why (found live, suspected
-trigger for a real iwd crash this session). A stub router/thread
+trigger for a real iwd crash). A stub router/thread
 stands in for the live D-Bus objects; jeepney's own message
 construction builds a realistic enough fake incoming call for
 new_error() to consume.

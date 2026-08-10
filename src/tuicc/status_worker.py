@@ -32,7 +32,7 @@ this WAS left as a known, deliberately deferred gap when R3 first
 landed ("revisit if that turns out to matter in practice"), and it did:
 found live building R5's control module — a toggle's command failing
 fast (gammastep exiting immediately for lack of a GeoClue2 provider,
-on this session's own test machine) produced zero visible feedback,
+on a real test machine) produced zero visible feedback,
 the toggle just silently stayed in its old state. _action_errors is
 its own dict, not reused from poll's `_errors` above, because _run()
 always re-polls every domain in the same loop iteration right after
@@ -75,7 +75,7 @@ class Domain:
     # connected bluetooth device on its own, tuicc didn't initiate it —
     # see main.py's own audio/media Domain construction) and media
     # (a song changing mid-playback) both felt "stuck" at the 5s shared
-    # default, reported directly by the user testing it live.
+    # default when tested live.
     poll_interval: float | None = None
 
 

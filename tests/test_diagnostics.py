@@ -1,5 +1,5 @@
 """Tests for diagnostics.py. The journal-line fixtures below are REAL
-`journalctl -p err -o json` lines captured live off this session's own
+`journalctl -p err -o json` lines captured live off a real
 sandbox (T480, NixOS) — including the exact repeated-Bluetooth-line
 case that motivated dedupe_general_errors() in the first place, not a
 hand-built guess at the shape.

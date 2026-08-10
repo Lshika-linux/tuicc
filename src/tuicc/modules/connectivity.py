@@ -48,8 +48,8 @@ def _signal_bars(signal):
     way to tell at a glance "is this 1 out of 4, or is the rest of the
     scale just not there?" without comparing against a strong row
     elsewhere. Plain Unicode Geometric Shapes (▮ U+25AE / ▯ U+25AF),
-    not a Nerd Font icon — considered and explicitly rejected building
-    this feature (see the session's own discussion): tuicc's own
+    not a Nerd Font icon — a Nerd Font icon was considered and
+    explicitly rejected building this feature: tuicc's own
     established convention is symbols any reasonable monospace font
     already has (●○⚠↻•), and a signal indicator specifically is exactly
     the kind of thing that must never render as a broken tofu box.
