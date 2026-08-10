@@ -548,6 +548,18 @@ def load_config() -> Config:
     keybinds = {}
     for action, key_name in user_data["navigation"]["keys"].items():
         keybinds[action] = resolve_key(key_name)
+    # new_preset was added after [navigation.keys] otherwise stopped
+    # gaining entries — ensure_user_config_exists() only ever copies the
+    # packaged default ONCE, never merges newly-added keys into an
+    # existing user config.toml, so anyone who set theirs up before this
+    # key existed would hit a bare KeyError the first time main.py reads
+    # cfg.keybinds["new_preset"], same as every other keybind access in
+    # this codebase (no .get() fallback anywhere else either — this one
+    # gets a narrow exception specifically because it's new, not because
+    # the general pattern should be defensive everywhere). Same
+    # unconfigurable-but-working fallback shape as [wm]'s self_app_id/
+    # return_to_origin/fullscreen_only above.
+    keybinds.setdefault("new_preset", resolve_key("F5"))
 
     quick_actions = []
     for action_data in user_data["quick_actions"]["action"]:

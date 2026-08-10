@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from tuicc.config import (
     load_config,
     save_layout_to_preset,
+    save_new_preset,
     available_preset_numbers,
     set_active_preset,
     set_theme_color,
@@ -516,6 +517,21 @@ def main(stdscr):
             active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
             resize_message = f"preset {next_number}"
             resize_message_until = time.monotonic() + 3.0
+        resize_mode.exit_edit_mode(resize)
+
+    def do_new_preset():
+        # Forks the CURRENT layout into a brand-new preset slot rather
+        # than overwriting the active one (that's F3/do_save_layout) —
+        # save_new_preset() picks the next free preset number and never
+        # touches an existing file. Unlike do_cycle_preset(), cfg.layout
+        # itself doesn't change (same boxes, just saved under a new
+        # number), so active_module stays valid — no need to reset it.
+        nonlocal resize_message, resize_message_until
+        new_number = save_new_preset(cfg.layout)
+        set_active_preset(new_number)
+        cfg.preset_number = new_number
+        resize_message = f"Saved as new preset {new_number}"
+        resize_message_until = time.monotonic() + 3.0
         resize_mode.exit_edit_mode(resize)
 
     def do_enter_help():
@@ -1270,6 +1286,9 @@ def main(stdscr):
                 elif key == cfg.keybinds["cycle_preset"]:
                     resize_mode.commit_box_editing(resize)
                     do_cycle_preset()
+                elif key == cfg.keybinds["new_preset"]:
+                    resize_mode.commit_box_editing(resize)
+                    do_new_preset()
                 elif key == cfg.keybinds["help"]:
                     resize_mode.commit_box_editing(resize)
                     do_enter_help()
@@ -1396,6 +1415,8 @@ def main(stdscr):
                 do_save_layout()
             elif key == cfg.keybinds["cycle_preset"]:
                 do_cycle_preset()
+            elif key == cfg.keybinds["new_preset"]:
+                do_new_preset()
             elif key == cfg.keybinds["help"]:
                 do_enter_help()
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:

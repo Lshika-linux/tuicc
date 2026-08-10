@@ -11,6 +11,7 @@ import pytest
 
 import tuicc.config as config_module
 from tuicc.config import load_config
+from tuicc.keybinds import resolve_key
 
 
 BASE_TOML = """
@@ -125,6 +126,41 @@ def test_self_app_id_and_return_to_origin_default_when_absent_from_wm_section(tm
 
     assert cfg.self_app_id is None
     assert cfg.return_to_origin is False
+
+
+def test_new_preset_keybind_defaults_to_f5_when_absent(tmp_path, monkeypatch):
+    # BASE_TOML's [navigation.keys] predates new_preset entirely (same
+    # sparse-on-purpose fixture as the self_app_id test above) — a real
+    # existing user config.toml from before this key existed. Unlike
+    # every other keybind (a bare KeyError at USE time, not load time,
+    # is the norm — see config.py's own comment), new_preset gets a
+    # narrow fallback specifically because it's newly added, so
+    # load_config() must resolve it to "F5" rather than just omitting
+    # it from cfg.keybinds.
+    actions_toml = _action_toml("Lock", shortcut=None)
+    _write_config(tmp_path, monkeypatch, actions_toml)
+
+    cfg = load_config()
+
+    assert cfg.keybinds["new_preset"] == resolve_key("F5")
+
+
+def test_new_preset_keybind_respects_explicit_config_value(tmp_path, monkeypatch):
+    user_config = tmp_path / "config.toml"
+    user_config.write_text(
+        BASE_TOML.replace('confirm = "Enter"', 'confirm = "Enter"\nnew_preset = "F9"').format(
+            power_menu_block=_action_toml("Lock", shortcut=None)
+        )
+    )
+    presets_dir = tmp_path / "presets"
+    presets_dir.mkdir()
+    (presets_dir / "1.toml").write_text(PRESET_TOML)
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", user_config)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", presets_dir)
+
+    cfg = load_config()
+
+    assert cfg.keybinds["new_preset"] == resolve_key("F9")
 
 
 def test_action_without_shortcut_is_not_in_global_shortcuts(tmp_path, monkeypatch):

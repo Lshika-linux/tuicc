@@ -65,13 +65,19 @@ vim_down = "j"
 # module leaves the whole session. F3: overwrites the active preset
 # file in place with the current layout and leaves the session. F4:
 # cycles through every preset that exists, switching to each live, and
-# leaves the session. F6: pick a module not currently on screen and
-# spawn it (centered, ready to move) — works standalone or from inside
-# the session, dropping straight into moving the new module.
+# leaves the session. F5: saves the current layout as a brand-new
+# preset (never overwrites an existing one — picks the next free
+# number), switches to it as the active preset, and leaves the
+# session — use this to fork a layout you like into a new slot before
+# trying something different with it. F6: pick a module not currently
+# on screen and spawn it (centered, ready to move) — works standalone
+# or from inside the session, dropping straight into moving the new
+# module.
 help = "F1"
 resize = "F2"
 save_layout = "F3"
 cycle_preset = "F4"
+new_preset = "F5"
 spawn_box = "F6"
 move_toggle = "m"
 delete_box = "Delete"
