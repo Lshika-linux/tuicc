@@ -1,4 +1,8 @@
-"""Preview module: shows windows of the currently focused workspace.
+"""Preview module: shows windows of the currently focused workspace,
+each drawn as a scaled-down box at its real relative position — which
+means overlapping windows (tiled splits sharing an edge, or a floating
+window sitting on top of a tiled one) commonly produce overlapping
+boxes here too, not just an edge case.
 
 ---
 IMPORTANT: Each module owns both how it draws itself and where its own focusable
@@ -8,7 +12,8 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_filled_box, draw_centered_lines
+from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x
+from tuicc.title_condense import condense_title
 
 
 def draw(stdscr, box, ctx, module_name):
@@ -32,7 +37,15 @@ def draw(stdscr, box, ctx, module_name):
     else:
         outer_color = theme.get("border", 0)
 
-    draw_box_outline(stdscr, y, x, h, w, outer_color)
+    # Camera-viewfinder corner marks for the module's OWN outer box —
+    # asked for live, specifically the opposite of _draw_window()'s own
+    # per-window boxes below (which stay full outlines): this is the
+    # one box in the module that never overlaps anything else, so
+    # there's no "competing lines" problem to solve here, just the
+    # look itself. arm=2, bigger than _draw_window()'s implicit
+    # default — a large box reads better with a proportionally longer
+    # corner arm than a small one would.
+    draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:
         draw_centered_lines(stdscr, box, ctx.selected_item.preview_text)
@@ -54,15 +67,79 @@ def draw(stdscr, box, ctx, module_name):
     for window in tiled:
         is_selected = f"preview:{window.id}" == ctx.selected_id
         border_color = theme.get("selected", 0) if is_selected else theme.get("border", 0)
-        _draw_window(stdscr, window, x, y, w, h, border_color, theme.get("text", 0))
+        _draw_window(stdscr, window, x, y, w, h, border_color, theme.get("text", 0), ctx.config)
 
     for window in floating:
         is_selected = f"preview:{window.id}" == ctx.selected_id
         color = theme.get("selected", 0) if is_selected else theme.get("accent", 0)
-        _draw_window(stdscr, window, x, y, w, h, color, color, filled=True)
+        _draw_window(stdscr, window, x, y, w, h, color, color, ctx.config, filled=True)
 
 
-def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, filled=False):
+def _window_label(window, cfg):
+    """Pure logic: what to draw as a window's label inside its preview
+    box — "[app_id] detail" (e.g. "[kitty] htop", "[kitty] cava" for
+    two windows that would otherwise both just show "kitty") when the
+    condensed title adds something real beyond the app's own name,
+    falling back to plain, unbracketed app_id otherwise (a window
+    whose title never adds anything, or a fresh terminal whose title
+    still just IS its app_id). Found live: two kitty windows here both
+    showed as plain "kitty" even though sidebar.py's own detail line
+    already condensed the SAME windows down to "htop"/"cava" — this
+    module just never used that logic (see title_condense.py's own
+    module docstring for where it lives now, shared between both).
+    Truncated to fit the box's own width same as any label here, by
+    the caller.
+    """
+    detail = condense_title(window.app_id, window.title, cfg)
+    if detail and detail.lower() != window.app_id.lower():
+        return f"[{window.app_id}] {detail}"
+    return window.app_id
+
+
+def _corner_label(window):
+    """Pure logic: the compact per-corner identifier — the app_id's
+    own first letter, uppercased, in brackets ("[K]" for kitty, "[F]"
+    for firefox, "[C]" for code). Small enough to survive even a tight
+    overlap between two windows' corners, where the full label (see
+    _window_label(), drawn once, centered) would get lost entirely.
+    Falls back to "[?]" for the pathological case of an app_id with no
+    characters at all — a real WM shouldn't ever report that, but
+    label drawing shouldn't crash if one somehow did.
+    """
+    app_id = window.app_id or ""
+    letter = app_id[0].upper() if app_id else "?"
+    return f"[{letter}]"
+
+
+def _corner_positions(win_y, win_x, win_h, win_w, label_len):
+    """Pure logic: the four (row, col) positions to draw a label at,
+    one per corner of a box whose outline occupies rows
+    win_y..win_y+win_h-1 and columns win_x..win_x+win_w-1 — inset by
+    one cell from the border on every side, with the right-hand corners
+    right-aligning the label so its END sits flush against that inset,
+    not its start.
+
+    Repeating the SAME label in all four corners (not just top-left,
+    the only one this module used to draw originally) is deliberate:
+    preview boxes commonly overlap (see modules/preview.py's own
+    docstring — a real htop/cava pair did this live), and an
+    overlapping window's own border can hide whichever single corner a
+    label would otherwise be confined to. Asked for live.
+
+    Degenerate/tiny boxes naturally produce duplicate or off-box
+    positions here (e.g. top and bottom coinciding when win_h is
+    small) — harmless, the caller's own curses.error guard around
+    each addstr already handled exactly this for the single-corner
+    case and keeps handling it here.
+    """
+    top = win_y + 1
+    bottom = win_y + win_h - 2
+    left = win_x + 1
+    right = win_x + win_w - 1 - label_len
+    return [(top, left), (top, right), (bottom, left), (bottom, right)]
+
+
+def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, cfg, filled=False):
     rx, ry, rw, rh = window.rect
 
     win_x = x + 1 + round(rx * (w - 2))
@@ -75,8 +152,23 @@ def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, filled=Fa
 
     draw_box_outline(stdscr, win_y, win_x, win_h, win_w, border_color)
 
+    # Corner labels (dimmed — identifying detail, not something that
+    # should visually compete with the window's own border/selection
+    # color the way full-brightness text would) survive tight overlap
+    # between windows; the full label below, shown once in the center,
+    # is where the real detail (what's actually running) lives.
+    corner_label = _corner_label(window)[:max(win_w - 2, 0)]
+    for row, col in _corner_positions(win_y, win_x, win_h, win_w, len(corner_label)):
+        try:
+            stdscr.addstr(row, col, corner_label, text_color | curses.A_DIM)
+        except curses.error:
+            pass
+
+    full_label = _window_label(window, cfg)[:max(win_w - 2, 0)]
     try:
-        stdscr.addstr(win_y + 1, win_x + 1, window.app_id[:max(win_w - 2, 0)], text_color)
+        center_row = win_y + win_h // 2
+        center_col = centered_x(win_x + 1, max(win_w - 2, 0), full_label)
+        stdscr.addstr(center_row, center_col, full_label, text_color)
     except curses.error:
         pass
 

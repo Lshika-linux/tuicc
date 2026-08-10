@@ -35,6 +35,40 @@ def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
         pass
 
 
+def draw_corner_marks(stdscr, y, x, h, w, color_pair=0, arm=1):
+    """Open corner brackets — a short horizontal + vertical arm at each
+    of a box's 4 corners — instead of draw_box_outline()'s full
+    rectangle. A minimalist alternative border style (seen in swcc's
+    own window preview), asked for specifically to cut visual clutter
+    where full outlines would otherwise cross/compete with each other
+    in a dense area — modules/preview.py's per-window boxes commonly
+    overlap.
+
+    arm is clamped so opposite corners' arms never touch/overlap on a
+    small box (leaves at least one gap cell between them on each
+    side) — degrades to a bare corner glyph with no arm at all (arm=0)
+    on a box too small for any arm to fit, rather than drawing
+    something visually wrong.
+    """
+    if h < 1 or w < 1:
+        return
+
+    arm = max(0, min(arm, (w - 1) // 2, (h - 1) // 2))
+
+    try:
+        stdscr.addstr(y, x, "┌" + "─" * arm, color_pair)
+        stdscr.addstr(y, x + w - 1 - arm, "─" * arm + "┐", color_pair)
+        stdscr.addstr(y + h - 1, x, "└" + "─" * arm, color_pair)
+        stdscr.addstr(y + h - 1, x + w - 1 - arm, "─" * arm + "┘", color_pair)
+        for i in range(1, arm + 1):
+            stdscr.addstr(y + i, x, "│", color_pair)
+            stdscr.addstr(y + i, x + w - 1, "│", color_pair)
+            stdscr.addstr(y + h - 1 - i, x, "│", color_pair)
+            stdscr.addstr(y + h - 1 - i, x + w - 1, "│", color_pair)
+    except curses.error:
+        pass
+
+
 def draw_filled_box(stdscr, y, x, h, w, color_pair=0):
     if h < 1 or w < 1:
         return

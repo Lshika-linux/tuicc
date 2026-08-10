@@ -166,11 +166,13 @@ date_format = "%a %d.%m."
 
 [title_condense]
 # Controls the extra detail line the sidebar shows under each window,
-# beneath its app name — see modules/sidebar.py's own _condense_title()
-# for the real logic this config only supplies the app lists for. The
-# goal is to show whatever the window's OWN title adds beyond its app
-# name, not the raw title verbatim (which is usually redundant —
-# most apps put their own name right back into the title bar).
+# beneath its app name — and, since it's the same shared logic, what
+# the Preview module's own per-window minimap labels show too (see
+# title_condense.py's own condense_title() for the real logic this
+# config only supplies the app lists for). The goal is to show
+# whatever the window's OWN title adds beyond its app name, not the
+# raw title verbatim (which is usually redundant — most apps put their
+# own name right back into the title bar).
 #
 # Matching is by app_id (sway) / WM_CLASS (i3), lowercased, against the
 # three lists below — every app_id falls into exactly one of three

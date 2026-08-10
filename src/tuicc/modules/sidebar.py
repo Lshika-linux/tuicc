@@ -8,46 +8,10 @@ items are — the core never guesses a module's internal layout.
 """
 
 import curses
-import re
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
-
-
-_TITLE_SPLIT_RE = re.compile(r"\s+[-—–|]\s+")
-
-
-def _condense_title(app, title, cfg):
-    """Condensed window title — only the part that adds information
-    beyond the app's own name. Empty string = nothing useful to show.
-
-    Which app_ids count as "terminal" or "browser" comes from
-    [title_condense] in config.toml, not hardcoded here — the shape of
-    the heuristic (terminals show the full title, browsers show just
-    the site name, everything else shows its first segment) is generic
-    across WMs and users, but *which apps* fall into which bucket is
-    specific to whoever's config it is.
-    """
-    app_l = (app or "").lower()
-    title = (title or "").strip()
-    if not title:
-        return ""
-
-    if app_l in cfg.terminal_apps:
-        return title
-
-    parts = [p.strip() for p in _TITLE_SPLIT_RE.split(title) if p.strip()]
-    if not parts:
-        return title
-
-    if app_l in cfg.browser_apps:
-        segs = [p for p in parts if p.lower() not in cfg.browser_title_names] or parts
-        return segs[-1]
-
-    first = parts[0]
-    if first.lower() == app_l:
-        return ""
-    return first
+from tuicc.title_condense import condense_title
 
 
 def _slot_height(region, preview_count=0):
@@ -145,7 +109,7 @@ def draw(stdscr, box, ctx, module_name):
         if region is not None:
             for i, window in enumerate(region.windows):
                 app = window.app_id
-                detail = _condense_title(app, window.title, ctx.config)
+                detail = condense_title(app, window.title, ctx.config)
                 available = max(w - 4, 0)
 
                 try:
