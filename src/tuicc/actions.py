@@ -223,20 +223,25 @@ def dispatch_action(ctx, handlers, item, cfg):
 
 
 def handle_pending_confirm(ctx, pending, key, cfg):
-    """Resolves a y/n confirm dialog. On confirm_yes: runs whichever
-    action `pending` describes — branching on `"restore_entries" in
-    pending`, not a discriminator field, matching how sessions.py/
-    power_menu.py/quick_actions.py all build this dict — and returns
-    (pending["dismiss_after_confirm"], None). On confirm_no: returns
-    (False, None). Any other key leaves the dialog open, unchanged:
-    (False, pending). Same (should_dismiss, pending) return order as
-    dispatch_action/every handler, for consistency within this file.
+    """Resolves a y/n confirm dialog. On confirm_yes (OR confirm — the
+    same Enter used to confirm everything else, accepted here too since
+    "yes" is itself a kind of confirm and pressing Enter reads as
+    intuitive muscle memory once you're used to it elsewhere in tuicc;
+    confirm_no has no such alternate, only its own bound key answers
+    "no"): runs whichever action `pending` describes — branching on
+    `"restore_entries" in pending`, not a discriminator field, matching
+    how sessions.py/power_menu.py/quick_actions.py all build this dict
+    — and returns (pending["dismiss_after_confirm"], None). On
+    confirm_no: returns (False, None). Any other key leaves the dialog
+    open, unchanged: (False, pending). Same (should_dismiss, pending)
+    return order as dispatch_action/every handler, for consistency
+    within this file.
 
     The caller still calls provider.dismiss_self() and does its own
     dismissed=True bookkeeping when should_dismiss comes back True —
     neither is reachable from the dict alone.
     """
-    if key == cfg.keybinds["confirm_yes"]:
+    if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
         if "restore_entries" in pending:
             if "kill_regions" in pending:
                 kill_regions = set(pending["kill_regions"])

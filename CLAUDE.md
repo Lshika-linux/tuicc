@@ -188,9 +188,17 @@ this session; don't invent a different one.
   works from anywhere — see "Global shortcuts bypass normal input
   routing" above). `confirm_text` shows if set; otherwise a plain Y/N.
 - While a confirm dialog is open: only `confirm_yes`/`confirm_no`
-  (config-bound keys, default `y`/`n`) do anything — every other key,
+  (config-bound keys, default `y`/`n`) do anything, **plus `confirm`
+  (Enter) as an alternate to `confirm_yes` specifically** — "yes" is
+  itself a kind of confirm, and Enter already means confirm everywhere
+  else in tuicc, so it's accepted here too; `confirm_no` has no such
+  alternate, only its own bound key answers "no". Every other key,
   including global shortcuts, must leave the dialog open unchanged
-  (see `handle_pending_confirm()`'s "any other key" branch).
+  (see `handle_pending_confirm()`'s "any other key" branch). The same
+  confirm-or-confirm_yes pattern applies at the other two Y/N sites in
+  the codebase too — bluetooth pairing confirm and resize mode's
+  delete-box confirm (both in `main.py`) — not just the general
+  `pending_confirm` dict `handle_pending_confirm()` resolves.
 - `confirm_yes` runs the action, then dismisses tuicc **unless**
   `exit_after = false` was set on that action (default: dismiss).
   `confirm_no` cancels — no command runs, dialog closes, tuicc does not

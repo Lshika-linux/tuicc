@@ -1025,7 +1025,9 @@ def main(stdscr):
                 if bluez_agent is None or not bluez_agent.mailbox.has_pending():
                     connectivity_mode.cancel_pairing_confirm()
                     input_claim = None
-                elif key == cfg.keybinds["confirm_yes"]:
+                # confirm_yes OR confirm (Enter) — see
+                # handle_pending_confirm()'s own docstring for why.
+                elif key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
                     bluez_agent.reply_pairing(True)
                     connectivity_mode.mark_pairing_submitted()
                 elif key == cfg.keybinds["confirm_no"]:
@@ -1203,7 +1205,9 @@ def main(stdscr):
             # working exactly as outside the session.
             if resize.active and not resize.editing:
                 if resize.confirm_delete:
-                    if key == cfg.keybinds["confirm_yes"]:
+                    # confirm_yes OR confirm (Enter) — see
+                    # handle_pending_confirm()'s own docstring for why.
+                    if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
                         deleted_name = resize.box.name
                         resize_mode.confirm_delete_yes(resize, cfg.layout.boxes)
                         if active_module == deleted_name:
@@ -1228,7 +1232,9 @@ def main(stdscr):
 
             elif resize.active and resize.editing:
                 if resize.confirm_delete:
-                    if key == cfg.keybinds["confirm_yes"]:
+                    # confirm_yes OR confirm (Enter) — see
+                    # handle_pending_confirm()'s own docstring for why.
+                    if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
                         deleted_name = resize.box.name
                         resize_mode.confirm_delete_yes(resize, cfg.layout.boxes)
                         if active_module == deleted_name:

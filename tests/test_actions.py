@@ -18,7 +18,7 @@ from tuicc.actions import (
 
 class _FakeConfig:
     """Just enough of Config to exercise handle_pending_confirm's key lookups."""
-    keybinds = {"confirm_yes": ord("y"), "confirm_no": ord("n")}
+    keybinds = {"confirm_yes": ord("y"), "confirm_no": ord("n"), "confirm": 10}
 
 
 _cfg = _FakeConfig()
@@ -266,6 +266,22 @@ def test_handle_pending_confirm_yes_command_shaped_spawns_it(monkeypatch):
     pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
 
     should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("y"), _cfg)
+
+    assert calls[0][0] == ["swaylock"]
+    assert (should_dismiss, new_pending) == (True, None)
+
+
+def test_handle_pending_confirm_confirm_key_also_answers_yes(monkeypatch):
+    # Enter (cfg.keybinds["confirm"]) is accepted as an alternate to the
+    # dedicated confirm_yes key — "yes" is itself a kind of confirm, and
+    # Enter already means confirm everywhere else in tuicc. confirm_no
+    # gets no such alternate (see the docstring).
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
+    ctx = ActionContext(provider=_FakeProvider(), status=None)
+    pending = {"command": "swaylock", "shell_true": False, "dismiss_after_confirm": True}
+
+    should_dismiss, new_pending = handle_pending_confirm(ctx, pending, _cfg.keybinds["confirm"], _cfg)
 
     assert calls[0][0] == ["swaylock"]
     assert (should_dismiss, new_pending) == (True, None)
