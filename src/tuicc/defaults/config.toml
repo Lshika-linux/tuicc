@@ -2,29 +2,91 @@
 # Which preset to use — see src/tuicc/presets/ for available numbers.
 preset = 1
 
-
 [navigation]
+
 # How Tab cycles through items: "columns_first" (top to bottom, then
-# next column) or "rows_first" (left to right, then next row).
-# leave default.. useful only if you wanted a horizontal sidebar
-# [horizontal sidebar module not built yet, but planned]
+# next column) or "rows_first" (left to right, then next row). Leave
+# at the default unless you're building a horizontal sidebar — no
+# horizontal sidebar module exists yet, but the setting is here ready
+# for when one does.
 tab_order = "columns_first"
-# switch to true only if plan to use vim controls. they collide w the smooth
-# start writing from anywhere to launch, so Vim keybind users need to press the 
-# "insert" button first to type
+
+# Only turn this on if you actually use vim-style h/j/k/l navigation.
+# Those four letters collide with "type anywhere to search apps" (the
+# ambient launcher), so vim_mode users need to press "insert" first to
+# start typing instead of just typing.
 vim_mode = false
 
+[navigation.keys]
+# Named keys: Left, Right, Up, Down, Tab, Shift+Tab, Enter, Escape,
+# Space. Or any single character, e.g. "h", "j", "k", "l".
+#
+# Tab/Shift+Tab (+ Down/Up as duplicates) move to the next/previous
+# item, rolling into the next/previous module once you run past either
+# end of the current one. Left/Right (+ Down/Up's siblings) jump
+# straight to the next/previous module's first item instead of
+# stepping through the rest of the current one. vim_left/vim_right/
+# vim_up/vim_down below duplicate left/right/up/down again, but only
+# take effect when vim_mode = true (see below) — left as plain
+# characters otherwise, they'd steal 4 letters from "type anywhere to
+# search apps" for everyone, not just vim users.
+left = "Left"
+right = "Right"
+up = "Up"
+down = "Down"
+tab = "Tab"
+previous = "Shift+Tab"
+confirm = "Enter"
+
+# Answering a Y/N confirmation dialog (e.g. before shutdown/reboot).
+# The on-screen hint always reflects whatever you bind here.
+confirm_yes = "y"
+confirm_no = "n"
+
+# Only used when vim_mode = true below (ambient typing is disabled in
+# that mode specifically so h/j/k/l etc. don't collide with it) —
+# press this to start typing into the launcher instead.
+insert = "i"
+
+# Also only used when vim_mode = true — see the note above the
+# left/right/up/down keys.
+vim_left = "h"
+vim_right = "l"
+vim_up = "k"
+vim_down = "j"
+
+# F1: opens the help menu (what tuicc is, a resize-mode reference, a
+# keybinds reference, and a live color editor). F2: opens a persistent
+# edit session — arrows/Tab/Shift+Tab pick a module, confirm
+# enters resizing/moving it (arrows resize w/h or move x/y, toggled by
+# move_toggle; confirm keeps the change and returns to picking another
+# module; Escape reverts it); Del removes a module (asks y/n first,
+# works whether or not one is being edited); Escape while picking a
+# module leaves the whole session. F3: overwrites the active preset
+# file in place with the current layout and leaves the session. F4:
+# cycles through every preset that exists, switching to each live, and
+# leaves the session. F6: pick a module not currently on screen and
+# spawn it (centered, ready to move) — works standalone or from inside
+# the session, dropping straight into moving the new module.
+help = "F1"
+resize = "F2"
+save_layout = "F3"
+cycle_preset = "F4"
+spawn_box = "F6"
+move_toggle = "m"
+delete_box = "Delete"
 
 [wm]
-# Which WM provider to use. Built in: "sway", "i3". See README for how to
-# add your own.
+# Which WM provider to use. Built in: "sway", "i3". See README/WIKI for
+# how to add your own.
 provider = "sway"
-# How many workspace slots the sidebar always shows, regardless of how
-# many are actually in use.
-# "Only show real workspaces" is NOT a feature, would introduce complexity that
-# I do not want. You're ofc free to alter the code.
 
+# How many workspace slots the sidebar always shows, regardless of how
+# many are actually in use. "Only show real workspaces" is deliberately
+# NOT a feature — it would add complexity this project doesn't want by
+# default. You're of course free to change that in the code yourself.
 total_workspaces = 10
+
 # Strongly recommended, not just for rapid multi-launch edge cases.
 # If your launch command gives tuicc's window a known, stable app_id
 # (e.g. `kitty --app-id tuicc_scratch ...` — see README's "Summoning
@@ -39,7 +101,9 @@ total_workspaces = 10
 # sets this to match your launch command automatically — only leave
 # it "" if you're hand-rolling your own launcher and deliberately
 # accepting the risk.
+# IF YOU'RE CHANGING THIS, BE SURE YOU KNOW WHAT YOU'RE DOING! 
 self_app_id = ""
+
 # When Escape dismisses tuicc from the top level (no menu/mode open),
 # also return WM focus to wherever it was right before you summoned
 # tuicc. Off by default: a scratchpad summon (sway/i3, see README)
@@ -47,6 +111,7 @@ self_app_id = ""
 # for WMs with no scratchpad-equivalent (e.g. niri's dedicated-
 # workspace style).
 return_to_origin = false
+
 # On by default: the full tuicc experience (see README's "Summoning
 # tuicc" section — install.sh sets this up for you, matching whichever
 # answer you gave its own fullscreen prompt) is meant to be fullscreen
@@ -69,6 +134,17 @@ fullscreen_only = true
 # a named color (black, red, green, yellow, blue, magenta, cyan, white),
 # a hex string ("#7dd3fc"), or an [R, G, B] list (e.g. [125, 211, 252]).
 # Hex and RGB are approximated to the nearest of curses's 256 colors.
+#
+# A named color is NOT a fixed RGB — it resolves to one of the 8
+# standard ANSI palette slots (see theme.py's own NAMED_COLORS), and
+# your terminal emulator decides what that slot actually renders as.
+# Plenty of terminal color schemes remap those 8 slots to something
+# other than their "obvious" color — e.g. "yellow" showing up as a
+# shade of pink is a real, reported case, not a bug here. Use a hex
+# string (or [R, G, B]) instead of a named color for any role where
+# you want the exact color you set, regardless of terminal theme —
+# the 256-color cube those approximate to is far less commonly
+# remapped by terminal themes than the base 8/16 ANSI slots are.
 background = "inherit"
 border = "#808080"
 border_selected = "white"
@@ -78,109 +154,58 @@ selected = "blue"
 warning = "yellow"
 urgent = "red"
 
-[navigation.keys]
-# Named keys: Left, Right, Up, Down, Tab, Shift+Tab, Enter, Escape,
-# Space. Or any single character, e.g. "h", "j", "k", "l".
-#
-# Tab/Shift+Tab (+ Down/Up as duplicates) move to the next/previous
-# item, rolling into the next/previous module once you run past either
-# end of the current one. Left/Right (+ Down/Up's siblings) jump
-# straight to the next/previous module's first item instead of
-# stepping through the rest of the current one. vim_left/vim_right/
-# vim_up/vim_down below duplicate left/right/up/down again, but only
-# take effect when vim_mode = true (see below) — left as plain
-# characters otherwise, they'd steal 4 letters from "type anywhere to
-# search apps" for everyone, not just vim users.
-left = "Left"
-right = "Right"
-up = "Up"
-down = "Down"
-tab = "Tab"
-previous = "Shift+Tab"
-confirm = "Enter"
-# Answering a Y/N confirmation dialog (e.g. before shutdown/reboot).
-# The on-screen hint always reflects whatever you bind here.
-confirm_yes = "y"
-confirm_no = "n"
-# Only used when vim_mode = true below (ambient typing is disabled in
-# that mode specifically so h/j/k/l etc. don't collide with it) —
-# press this to start typing into the launcher instead.
-insert = "i"
-# Also only used when vim_mode = true — see the note above the
-# left/right/up/down keys.
-vim_left = "h"
-vim_right = "l"
-vim_up = "k"
-vim_down = "j"
-# F1: opens the help menu (what tuicc is, a resize-mode reference, a
-# keybinds reference, and a live color editor). F2: opens a persistent
-# edit session — arrows/Tab/Shift+Tab pick a module, confirm
-# enters resizing/moving it (arrows resize w/h or move x/y, toggled by
-# move_toggle; confirm keeps the change and returns to picking another
-# module; Escape reverts it); Del removes a module (asks y/n first,
-# works whether or not one is being edited); Escape while picking a
-# module leaves the whole session. F3: overwrites the active preset
-# file in place with the current layout and leaves the session. F4:
-# cycles through every preset that exists, switching to each live, and
-# leaves the session. F6: pick a module not currently on screen and
-# spawn it (centered, ready to move) — works standalone or from inside
-# the session, dropping straight into moving the new module.
-help = "F1"
-resize = "F2"
-save_layout = "F3"
-cycle_preset = "F4"
-spawn_box = "F6"
-move_toggle = "m"
-delete_box = "Delete"
-
-
-[[quick_actions.action]]
-# label is shown, icon is optional (leave "" for none), command runs
-# on Enter, confirm=true asks y/n before running (use for destructive
-# actions like shutdown).
-# shell_true = true only if command needs real shell syntax (pipes,
-# ;, &&, $VARS) — otherwise it runs as plain arguments, no shell
-# involved. Off by default: safer, and most commands don't need it.
-# exit_after = false to keep tuicc open after this action runs (or
-# after its confirmation is answered) — defaults to true (dismiss),
-# meant for one-off, non-destructive actions like restarting a bar.
-label = "== LOCK =="
-icon = ""
-command = "swaylock"
-confirm = false
-shell_true = false
-
-[[quick_actions.action]]
-label = "== LOGOUT =="
-icon = ""
-command = "swaymsg exit"
-confirm = true
-shell_true = false
-
-[[quick_actions.action]]
-label = "== REBOOT =="
-icon = ""
-command = "systemctl reboot"
-confirm = true
-shell_true = false
-
-[[quick_actions.action]]
-label = "== SHUTDOWN =="
-icon = ""
-command = "systemctl poweroff"
-confirm = true
-shell_true = false
-
 [clock]
 time_format = "%H:%M:%S"
 date_format = "%a %d.%m."
 
 [title_condense]
-# App IDs classified as terminals: their window title is shown in full
-# (it's usually the running command or cwd, which is exactly useful).
+# Controls the extra detail line the sidebar shows under each window,
+# beneath its app name — see modules/sidebar.py's own _condense_title()
+# for the real logic this config only supplies the app lists for. The
+# goal is to show whatever the window's OWN title adds beyond its app
+# name, not the raw title verbatim (which is usually redundant —
+# most apps put their own name right back into the title bar).
+#
+# Matching is by app_id (sway) / WM_CLASS (i3), lowercased, against the
+# three lists below — every app_id falls into exactly one of three
+# buckets, decided in this order:
+#
+# 1. terminal_apps: shown in FULL, untouched. A terminal's title is
+#    usually the running command or the cwd — genuinely useful, not
+#    redundant — so nothing is trimmed at all.
+#    Example: app_id "kitty", title "nvim ~/tuicc/main.py" -> shown
+#    exactly as-is: "nvim ~/tuicc/main.py".
+#
+# 2. browser_apps: the title is split on " - "/" — "/" – "/" | "
+#    (surrounded by whitespace), any resulting segment that matches
+#    browser_title_names (case-insensitive — this is where the
+#    browser's OWN name shows up, since most browsers append it to
+#    every tab's title) is dropped, and the LAST remaining segment is
+#    shown — usually the site name, since browser titles are
+#    conventionally "Page Title - Site Name - Browser Name".
+#    Example: app_id "firefox", title "Issue #42 - tuicc - GitHub -
+#    Mozilla Firefox" -> split into ["Issue #42 - tuicc", "GitHub",
+#    "Mozilla Firefox"], "Mozilla Firefox" dropped (matches
+#    browser_title_names), last of what's left is shown: "GitHub".
+#
+# 3. Anything else (not in either list above): same "-"/"—"/"–"/"|"
+#    split, but the FIRST segment is shown instead of the last — and
+#    if that first segment, lowercased, is just the app_id again
+#    (title added literally nothing beyond the app's own name), the
+#    detail line is left empty rather than showing a redundant repeat.
+#    Example: app_id "thunderbird", title "Inbox - Mozilla Thunderbird"
+#    -> first segment "Inbox" doesn't match the app_id -> shown:
+#    "Inbox". A window whose title is JUST "Mozilla Thunderbird" (no
+#    " - " at all) has one segment, "mozilla thunderbird", which does
+#    NOT equal the app_id "thunderbird" either in this exact case (only
+#    an EXACT lowercased match against app_id is stripped, not a
+#    substring/contains check) — so it would still show that segment
+#    rather than going empty; this heuristic catches the common "App -
+#    <detail>" shape, not every possible restatement of the app's name.
+#
+# Add your own apps to whichever list fits, or leave an app out of all
+# three to get bucket 3's generic first-segment behavior for it.
 terminal_apps = ["kitty", "alacritty", "foot", "wezterm", "st", "urxvt", "xterm", "ghostty"]
-# App IDs classified as browsers: only the site/page name is shown,
-# not the browser's own name repeated in every title.
 browser_apps = ["librewolf", "firefox", "chromium", "chrome", "google-chrome"]
 browser_title_names = ["librewolf", "mozilla firefox", "firefox", "chromium"]
 
@@ -305,16 +330,53 @@ name_1 = "Slot 1"
 name_2 = "Slot 2"
 name_3 = "Slot 3"
 
+[[quick_actions.action]]
+# label is shown, icon is optional (leave "" for none), command runs
+# on Enter, confirm=true asks y/n before running (use for destructive
+# actions like shutdown).
+# shell_true = true only if command needs real shell syntax (pipes,
+# ;, &&, $VARS) — otherwise it runs as plain arguments, no shell
+# involved. Off by default: safer, and most commands don't need it.
+# exit_after = false to keep tuicc open after this action runs (or
+# after its confirmation is answered) — defaults to true (dismiss),
+# meant for one-off, non-destructive actions like restarting a bar.
+label = "== LOCK =="
+icon = ""
+command = "swaylock"
+confirm = false
+shell_true = false
+
+[[quick_actions.action]]
+label = "== LOGOUT =="
+icon = ""
+command = "swaymsg exit"
+confirm = true
+shell_true = false
+
+[[quick_actions.action]]
+label = "== REBOOT =="
+icon = ""
+command = "systemctl reboot"
+confirm = true
+shell_true = false
+
+[[quick_actions.action]]
+label = "== SHUTDOWN =="
+icon = ""
+command = "systemctl poweroff"
+confirm = true
+shell_true = false
+
 [[power_menu.action]]
 # shell_true = true only if command needs real shell syntax (pipes,
-# ;, &&, $VARS) \u2014 otherwise it runs as plain arguments, no shell
+# ;, &&, $VARS) — otherwise it runs as plain arguments, no shell
 # involved. Off by default: safer, and most commands don't need it.
 #
-# Lock/Logout below assume sway (swaylock/swaymsg) \u2014 running on i3?
+# Lock/Logout below assume sway (swaylock/swaymsg) — running on i3?
 # Swap them for i3lock (or whatever locker you use) and "i3-msg exit"
 # before you rely on this. install.sh does this for you automatically
 # if you use it; a plain git-clone setup needs this edited by hand,
-# same as [wm] provider below.
+# same as [wm] provider above.
 label = "Lock"
 shortcut = "Ctrl+L"
 icon = "\uf023"
