@@ -1,3 +1,12 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Local, live-testing dev tools — not shipped code, deliberately never
+# committed (see media_scroll_test.py's own docstring). Named
+# explicitly, not a broad pattern, so a future *_test.py that IS meant
+# to ship (tests/ has its own, unrelated naming convention) never gets
+# silently swallowed by this.
+media_scroll_test.py
+run_scroll_test.sh
+spawn_test_windows.py
