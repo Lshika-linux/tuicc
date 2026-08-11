@@ -1,0 +1,4 @@
+{
+  "_comment": "includeCoAuthoredBy is false because the maintainer bears responsibility for all shipped code; attribution trailers would misrepresent where accountability sits.",
+  "includeCoAuthoredBy": false
+}
