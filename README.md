@@ -340,7 +340,7 @@ src/tuicc/
 │                                        #   wifi/bluetooth/audio/media/every control.toggle/sysmon's own domains
 ├── push_worker.py                        # PushWorker/CombinedStatus — event-driven counterpart to
 ├── combined_status.py                    #   StatusWorker, built+tested but NOT currently wired into
-│                                        #   main.py — see VISION.md's R8 for the open question this gates
+│                                        #   main.py — see CLAUDE/VISION.md's R8 for the open question this gates
 ├── control.py                            # backend for [[control.toggle]] — status_command + per-state command
 ├── brightness.py                          # brightnessctl wrapper (backend only, not wired into a module yet)
 ├── battery.py                              # /sys/class/power_supply reader — backs bars.py's BAT gauge
