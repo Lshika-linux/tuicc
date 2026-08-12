@@ -1,102 +1,13 @@
 # TUI Command Center
 
-## Important PSA 
-
-Hello, my name is Rafi, I am the single maintainer of tuicc.. also a paramedic - definitely not a professional developer.
-I am actively refining the tuicc concept since 01 2026, decided to learn modular infrastructure, so tuicc could serve others
-
-IMPORTANT AI USE DISCLAMER:
-I am learning Python and WM architecture along the way. Since I don't have human code reviewers, AI writes code, but I review everything, try to understand every line, and catch BS to the best of my ability before committing. At least 3 different AI chatbots cross-check the codebase regularly. I am building this, I own the architecture, and I'm learning every single day.
-
-To any human with experience in development who reads this - If you see something wrong in the code, let me know. Please, I want to create tuicc with solid code. Any feedback is extremely valuable to me. Reddit wont talk to me. 
-
-THIS README IS WRITTEN BY ME! (Claude helps me by adding new features, and with keeping this README up to date, but i revisit and rewrite in my own words.)
-
-Some things on the way:
-- v0.1.0 once I confirm sway+i3 variants are behaving predictably enough for daily use
-- docstring rework - they are annoyingly long, AI style. It's painful to look at, I need to make them bearable, move context to own document.
-- Wiki actually written by me - WIKI IS USEFUL AND UP TO DATE! but right now its written by AI with me just reading through it and editing the worst slop. This is the tradeoff I chose to still bring you up to date documentation for now :c
-
-- TUICC should work in most any terminal, but is developed using Kitty
-
-
-## TUI Command Center
-
-Minimal UI design, maximal control over everyday tasks. (A LOT OF SCREENSHOTS FURTHER DOWN)
+Minimal UI design, maximal control over everyday tasks. 
 
 Built on a core that communicates with the WM (see lower, or wiki..), with everything else as **swappable modules**.
 
 Controlled with Tab/Shift+Tab, arrows and Enter
 
-You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
-- your workspaces and what's in them (sidebar.py);
-- a live overview of what's on screen (preview.py);
-- an integrated app launcher (launcher.py);
-- which wifi/BT devices are connected, and connecting to new ones (connectivity.py);
-- a way to save and restore open windows across workspaces (sessions.py);
-- system toggles — night light, power profiles, DND, whatever on/off-style
-  shell commands your setup uses (control.py);
-- now-playing + transport controls for whatever's running over MPRIS, output
-  switching, and an optional live audio visualizer (media.py);
-- vertical VOL/BRI/BAT gauges (bars.py);
-- per-window CPU/RAM, overall system stats, and a diagnostics summary
-  (sysmon.py);
-- a power menu (power_menu.py);
-- a clock (clock.py).
-
-Missing something? 
-- See wiki, write a module!
-
-Don´t like some of the modules above? 
-- Shit man, I'm not here to dictate your modules, make them go away or move them around in the resize tool.
-
-Don´t like that it´s fullscreen? 
-- That's ok too! You absolutely can run it not-fullscreen.. I recommend leaving it floating tho, otherwise preview.py has a bad bad time. (We need to hide tuicc from the preview, and if tuicc is tiled, there's an obvious blank spot in the workspace)
-
-
-This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
-
 ![tuicc's core layout (sidebar, sessions, launcher, preview, connectivity, power menu) with media/system/bars/control spawned in via F6 — those four aren't in the packaged default preset yet](./screenshot.png)
-https://github.com/Lshika-linux/tuicc
 
-## Why
-
-Oh lord, that's the big question.
-
-Because I don't want to rice, I want to use my 8gb ram i5 warrior of a thinkpad.
-I rice a little, just a pinch of rice, but primarily I want to use without resource drain. I want a functioning, no-bullshit, no-bells-and-whistles space, and I hope to build that. If you vibe with that, you're in the right place. (Colors and styling are of course customizable in the config — there's even a color picker menu hidden behind F1 hehe - I'm still trying to make it look appealing, don't worry.)
-
-What Claude has recommended me to write here:
-
-Existing tiling WM status bars and launchers tend to be single-purpose
-and WM-specific. tuicc aims for one keybind, one place, that adapts to
-whichever tiling WM (or scrolling WM) you're actually running.
-
-He's overselling. This is not a corporate project vision presentation. This is me, in my room, with a thinkpad, wanting a cool control center, but also liking low CPU/RAM usage. (The code isn´t as resource conserving as it could be, I know. Thank you for bringing that up! Once tuicc is feature complete and working reliably, I'll begin further optimization)
-
-## Status: early / experimental
-
-Tuicc is maintained by me alone. Currently testing sway/i3 daily driving. Once I make it not annoying to use, that will be v0.1.0, realistically most likely around September/October 2026.
-
-But you could/should absolutely try it out now! (SWAY is mostly stable, I3 is still very much experimental )
-Right now it can:
-
-- Read live window/workspace state from **sway** and **i3** via the `sway.py` and `i3.py` providers (expandable to any WM, I hope!), including floating windows alongside tiled ones
-- Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
-- Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
-- Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, dismissing tuicc
-- Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
-- Show wifi and bluetooth status, connect to known AND new networks (typing a passphrase when one's needed, via a real D-Bus agent registered with iwd/NetworkManager — see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference) for both supported backends) and pair new bluetooth devices
-- System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
-- See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
-- Show you vertical VOL/BRI/BAT gauges, display-only for now (no ←→-adjust interaction yet — see wiki for status)
-- show you a system module: CPU/RAM per open window (CLOSE/KILL/renice), a compact CPU/RAM/disk/load/temperature/swap stats grid, and a one-line diagnostics summary (failed systemd units, OOM kills, deduped journal errors) that expands into the real detail on hover
-  (control, media, bars, and the system module aren't in the packaged default layout preset yet — spawn any of them with `F6`, or add a `[[box]]` for one to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
-- Let you use a power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
-- suport global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
-- Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
-
-Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM, covering everything from provider parsing to layout math to config validation
 
 ## A closer look
 
@@ -134,6 +45,34 @@ Not yet built:
 - Calendar, perhaps? considering if this is in scope/useful
 - These will be added eventually, but right now, the priority is a stable V0.1.0
 
+You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
+- your workspaces and what's in them (sidebar.py);
+- a live overview of what's on screen (preview.py);
+- an integrated app launcher (launcher.py);
+- which wifi/BT devices are connected, and connecting to new ones (connectivity.py);
+- a way to save and restore open windows across workspaces (sessions.py);
+- system toggles — night light, power profiles, DND, whatever on/off-style
+  shell commands your setup uses (control.py);
+- now-playing + transport controls for whatever's running over MPRIS, output
+  switching, and an optional live audio visualizer (media.py);
+- vertical VOL/BRI/BAT gauges (bars.py);
+- per-window CPU/RAM, overall system stats, and a diagnostics summary
+  (sysmon.py);
+- a power menu (power_menu.py);
+- a clock (clock.py).
+
+Missing something? 
+- See wiki, write a module!
+
+Don´t like some of the modules above? 
+- Shit man, I'm not here to dictate your modules, make them go away or move them around in the resize tool.
+
+Don´t like that it´s fullscreen? 
+- That's ok too! You absolutely can run it not-fullscreen.. I recommend leaving it floating tho, otherwise preview.py has a bad bad time. (We need to hide tuicc from the preview, and if tuicc is tiled, there's an obvious blank spot in the workspace)
+
+
+This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
+
 ## Try it 
 
 ```bash
@@ -147,6 +86,31 @@ python main.py
 - this way it's a clean install and you will need to visit the config in ~/.config to set it up.
 Wiki is helpful here, see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)).
 - if thats too much trouble for a random repo, I understand xd, quick install is for you
+
+
+## Status: early / experimental
+
+Tuicc is maintained by me alone. Currently testing sway/i3 daily driving. Once I make it not annoying to use, that will be v0.1.0, realistically most likely around September/October 2026.
+
+But you could/should absolutely try it out now! (SWAY is mostly stable, I3 is still very much experimental )
+Right now it can:
+
+- Read live window/workspace state from **sway** and **i3** via the `sway.py` and `i3.py` providers (expandable to any WM, I hope!), including floating windows alongside tiled ones
+- Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
+- Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
+- Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, dismissing tuicc
+- Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
+- Show wifi and bluetooth status, connect to known AND new networks (typing a passphrase when one's needed, via a real D-Bus agent registered with iwd/NetworkManager — see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference) for both supported backends) and pair new bluetooth devices
+- System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
+- See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
+- Show you vertical VOL/BRI/BAT gauges, display-only for now (no ←→-adjust interaction yet — see wiki for status)
+- show you a system module: CPU/RAM per open window (CLOSE/KILL/renice), a compact CPU/RAM/disk/load/temperature/swap stats grid, and a one-line diagnostics summary (failed systemd units, OOM kills, deduped journal errors) that expands into the real detail on hover
+  (control, media, bars, and the system module aren't in the packaged default layout preset yet — spawn any of them with `F6`, or add a `[[box]]` for one to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
+- Let you use a power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
+- suport global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
+- Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
+
+Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM, covering everything from provider parsing to layout math to config validation
 
 ## Quick install 
 
@@ -503,12 +467,48 @@ test meaningfully.
 
 !!! End Claude talking.
 
+
 ## License
 
 GPLv3 — see [LICENSE](LICENSE) for the full text. You're free to
 use, modify, and distribute tuicc, including commercially, but if you
 distribute a modified version, it must stay open source under the same
 license. I chose this, so that everybody gets a better tuicc :)
+
+## Important PSA 
+
+Hello, my name is Rafi, I am the single maintainer of tuicc.. also a paramedic - definitely not a professional developer.
+I am actively refining the tuicc concept since 01 2026, decided to learn modular infrastructure, so tuicc could serve others
+
+IMPORTANT AI USE DISCLAMER:
+I am learning Python and WM architecture along the way. Since I don't have human code reviewers, AI writes code, but I review everything, try to understand every line, and catch BS to the best of my ability before committing. At least 3 different AI chatbots cross-check the codebase regularly. I am building this, I own the architecture, and I'm learning every single day.
+
+To any human with experience in development who reads this - If you see something wrong in the code, let me know. Please, I want to create tuicc with solid code. Any feedback is extremely valuable to me. Reddit wont talk to me. 
+
+THIS README IS WRITTEN BY ME! (Claude helps me by adding new features, and with keeping this README up to date, but i revisit and rewrite in my own words.)
+
+Some things on the way:
+- v0.1.0 once I confirm sway+i3 variants are behaving predictably enough for daily use
+- docstring rework - they are annoyingly long, AI style. It's painful to look at, I need to make them bearable, move context to own document.
+- Wiki actually written by me - WIKI IS USEFUL AND UP TO DATE! but right now its written by AI with me just reading through it and editing the worst slop. This is the tradeoff I chose to still bring you up to date documentation for now :c
+
+- TUICC should work in most any terminal, but is developed using Kitty
+
+
+## Why
+
+Oh lord, that's the big question.
+
+Because I don't want to rice, I want to use my 8gb ram i5 warrior of a thinkpad.
+I rice a little, just a pinch of rice, but primarily I want to use without resource drain. I want a functioning, no-bullshit, no-bells-and-whistles space, and I hope to build that. If you vibe with that, you're in the right place. (Colors and styling are of course customizable in the config — there's even a color picker menu hidden behind F1 hehe - I'm still trying to make it look appealing, don't worry.)
+
+What Claude has recommended me to write here:
+
+Existing tiling WM status bars and launchers tend to be single-purpose
+and WM-specific. tuicc aims for one keybind, one place, that adapts to
+whichever tiling WM (or scrolling WM) you're actually running.
+
+He's overselling. This is not a corporate project vision presentation. This is me, in my room, with a thinkpad, wanting a cool control center, but also liking low CPU/RAM usage. (The code isn´t as resource conserving as it could be, I know. Thank you for bringing that up! Once tuicc is feature complete and working reliably, I'll begin further optimization)
 
 ## Professional tip for my elite readers who got all the way down here
 
