@@ -1,4 +1,5 @@
 # TUI Command Center
+## Status: early / experimental
 
 Minimal UI design, maximal control over everyday tasks. 
 
@@ -8,6 +9,21 @@ Controlled with Tab/Shift+Tab, arrows and Enter
 
 ![tuicc's core layout (sidebar, sessions, launcher, preview, connectivity, power menu) with media/system/bars/control spawned in via F6 — those four aren't in the packaged default preset yet](./screenshot.png)
 
+You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
+- your workspaces and what's in them (sidebar.py);
+- a live overview of what's on screen (preview.py);
+- an integrated app launcher (launcher.py);
+- which wifi/BT devices are connected, and connecting to new ones (connectivity.py);
+- a way to save and restore open windows across workspaces (sessions.py);
+- system toggles — night light, power profiles, DND, whatever on/off-style
+  shell commands your setup uses (control.py);
+- now-playing + transport controls for whatever's running over MPRIS, output
+  switching, and an optional live audio visualizer (media.py);
+- vertical VOL/BRI/BAT gauges (bars.py);
+- per-window CPU/RAM, overall system stats, and a diagnostics summary
+  (sysmon.py);
+- a power menu (power_menu.py);
+- a clock (clock.py).
 
 ## A closer look
 
@@ -45,22 +61,6 @@ Not yet built:
 - Calendar, perhaps? considering if this is in scope/useful
 - These will be added eventually, but right now, the priority is a stable V0.1.0
 
-You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
-- your workspaces and what's in them (sidebar.py);
-- a live overview of what's on screen (preview.py);
-- an integrated app launcher (launcher.py);
-- which wifi/BT devices are connected, and connecting to new ones (connectivity.py);
-- a way to save and restore open windows across workspaces (sessions.py);
-- system toggles — night light, power profiles, DND, whatever on/off-style
-  shell commands your setup uses (control.py);
-- now-playing + transport controls for whatever's running over MPRIS, output
-  switching, and an optional live audio visualizer (media.py);
-- vertical VOL/BRI/BAT gauges (bars.py);
-- per-window CPU/RAM, overall system stats, and a diagnostics summary
-  (sysmon.py);
-- a power menu (power_menu.py);
-- a clock (clock.py).
-
 Missing something? 
 - See wiki, write a module!
 
@@ -87,30 +87,6 @@ python main.py
 Wiki is helpful here, see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)).
 - if thats too much trouble for a random repo, I understand xd, quick install is for you
 
-
-## Status: early / experimental
-
-Tuicc is maintained by me alone. Currently testing sway/i3 daily driving. Once I make it not annoying to use, that will be v0.1.0, realistically most likely around September/October 2026.
-
-But you could/should absolutely try it out now! (SWAY is mostly stable, I3 is still very much experimental )
-Right now it can:
-
-- Read live window/workspace state from **sway** and **i3** via the `sway.py` and `i3.py` providers (expandable to any WM, I hope!), including floating windows alongside tiled ones
-- Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
-- Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
-- Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, dismissing tuicc
-- Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
-- Show wifi and bluetooth status, connect to known AND new networks (typing a passphrase when one's needed, via a real D-Bus agent registered with iwd/NetworkManager — see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference) for both supported backends) and pair new bluetooth devices
-- System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
-- See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
-- Show you vertical VOL/BRI/BAT gauges, display-only for now (no ←→-adjust interaction yet — see wiki for status)
-- show you a system module: CPU/RAM per open window (CLOSE/KILL/renice), a compact CPU/RAM/disk/load/temperature/swap stats grid, and a one-line diagnostics summary (failed systemd units, OOM kills, deduped journal errors) that expands into the real detail on hover
-  (control, media, bars, and the system module aren't in the packaged default layout preset yet — spawn any of them with `F6`, or add a `[[box]]` for one to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
-- Let you use a power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
-- suport global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
-- Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
-
-Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM, covering everything from provider parsing to layout math to config validation
 
 ## Quick install 
 
