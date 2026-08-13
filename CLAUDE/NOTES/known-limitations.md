@@ -55,3 +55,7 @@ One confirmed-correct low-level detail worth keeping regardless of whether `watc
 ## Resummon can keep a stale workspace selection {#stale-resummon-selection}
 
 Reported on both sway and i3: dismissing tuicc and re-summoning it sometimes shows the sidebar still selected on whatever workspace was selected *before* dismiss, not necessarily matching real current WM focus. Never conclusively root-caused — could be a real bug in the focus-change detector, or could be correct behavior that looked like a bug because real focus happened to coincide. Needs a clean, deliberate repro (dismiss tuicc while workspace A is selected in the sidebar, switch WM focus to workspace B via a non-tuicc means, re-summon, check what's selected) before concluding anything.
+
+## `dismissed`'s reset timing lags one keypress behind resummon {#dismissed-reset-timing}
+
+`dismissed` (main.py) is true from `dismiss_self()` until the next real keypress — it tells `pending_moves.process()` not to call `focus_self()` while tuicc is deliberately hidden, since focusing a scratchpadded window un-hides it on sway/i3. It resets on the next **keypress**, not the next **resummon**: a pending-moves entry that resolves after you've resummoned tuicc but before pressing anything still skips `focus_self()`, even though tuicc is genuinely visible again. Narrow (needs the spawned window to finish moving in that exact gap) and not tightened further — same accepted-race category as `mark_self()`'s focus-based fallback (`#mark-self-focus-race` above).

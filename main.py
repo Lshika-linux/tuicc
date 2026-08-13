@@ -1,4 +1,9 @@
-"""Entry point: ties config, provider, layout engine and rendering together."""
+"""Entry point: ties config, provider, layout engine and rendering together.
+
+Comments here favor short, load-bearing warnings over history. Deeper
+rationale lives in CLAUDE/NOTES/design-decisions.md and the other
+CLAUDE/NOTES/*.md files — check there before re-deriving a "why".
+"""
 
 import curses
 import sys
@@ -9,10 +14,8 @@ from pathlib import Path
 
 locale.setlocale(locale.LC_ALL, "")
 
-# Relative to main.py's own location, not to cwd — so tuicc works whether
-# you launch it via `cd tuicc && python main.py` (cwd == tuicc) or via a
-# WM keybind spawning it from an arbitrary directory (e.g. a floating
-# terminal launched with a custom app_id, cwd defaults to $HOME).
+# Relative to main.py itself, not cwd — must work when a WM keybind
+# spawns this from an arbitrary directory, not just `cd tuicc && python main.py`.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from tuicc.config import (
@@ -104,63 +107,41 @@ def main(stdscr):
 
     cfg = load_config()
     theme_pairs = setup_theme(cfg.theme)
-    # Second, independent round of curses pairs for [[control.toggle]]
-    # states with an explicit `color` — must start one past whatever
-    # theme_pairs already claimed so the two ranges never collide. See
-    # assign_control_toggle_pairs' own docstring.
+    # Second curses-pair range, for [[control.toggle]] colors — must
+    # start past theme_pairs' own range or the two collide.
     control_colors = assign_control_toggle_pairs(cfg.control_toggles, len(theme_pairs) + 1)
     provider = build_provider(cfg.provider_name)
     provider.mark_self(cfg.self_app_id)
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
-    # A wifi agent is always constructed — every registered WIFI_BACKENDS
-    # name has a matching WIFI_AGENTS entry (see registry.py's own
-    # WifiAgent docstring, enforced by test_registry.py), so there's no
-    # "no agent for this backend" case to guard against, unlike
-    # bluez_agent below. See iwd_agent.py/networkmanager_agent.py/
-    # bluez_agent.py's own module docstrings for why each needs its own
-    # dedicated thread rather than being a StatusWorker Domain.
+    # Unconditional: every WIFI_BACKENDS name has a matching WIFI_AGENTS
+    # entry (registry.py, enforced by test_registry.py) — no None-guard
+    # needed, unlike bluez_agent below.
     wifi_agent = build_wifi_agent(cfg.wifi_backend_name)
-    # bluez_agent stays conditional: there's still only one bluetooth
-    # backend choice today, so this gate is defensive/future-proofing
-    # rather than a real branch — kept for parity with wifi's
-    # config-driven selection rather than hardcoding bluez.
+    # Only one bluetooth backend exists today — conditional for parity
+    # with wifi's config-driven selection, not a real branch yet.
     bluez_agent = BluezAgent() if cfg.bluetooth_backend_name == "bluez" else None
     audio_backend = build_audio_backend(cfg.audio_backend_name)
     media_backend = MprisBackend()
-    # VISION.md's R6 (system monitor) — see procmon.py's own module
-    # docstring for why PidFeed exists at all: the "windows" Domain's
-    # poll() (below) runs on StatusWorker's own background thread and
-    # must never touch `provider` directly, so PidFeed is how it learns
-    # the current frame's window list instead. One instance of each,
-    # constructed here (not per-poll) so the stateful samplers actually
-    # see consecutive polls' prior state (CPU%/swap-rate/throttle are
-    # all deltas — see procmon.py/sysinfo.py's own docstrings).
+    # PidFeed: the "windows" Domain's poll() runs off the main thread
+    # and must never touch `provider` — this is how it learns the
+    # window list instead (procmon.py). Constructed once, not per-poll,
+    # so CPU%/swap-rate/throttle samplers see consecutive polls' state.
     pid_feed = procmon.PidFeed()
     proc_sampler = procmon.ProcMonSampler()
     sysinfo_sampler = sysinfo.SysInfoSampler()
     sensors_source = sensors.SensorsSource()
-    # One shared worker/thread for every domain — wifi/bluetooth today,
-    # audio/brightness/control-toggle domains (VISION.md's R5) register
-    # against this exact same instance as they land, not a separate
-    # worker each. See RenderContext.status's own docstring for why the
-    # ctx field this feeds is named `status`, not `connectivity`.
+    # One shared worker/thread for every domain below.
     domains = [
         Domain(
             name="wifi",
             poll=wifi_backend.get_networks,
             actions={
                 "connect": wifi_backend.connect,
-                # WifiBackend.disconnect() takes no argument (only one
-                # network is ever connected at a time) — the ssid arg
-                # request_action always threads through is unused here,
-                # same as ConnectivityWorker's old wifi_disconnect
-                # dispatch discarded it too.
+                # WifiBackend.disconnect() takes no arg — only one
+                # network connects at a time.
                 "disconnect": lambda ssid: wifi_backend.disconnect(),
-                # VISION.md's R4 — modules/connectivity.py's dedicated
-                # "Scan" NavItem/handler. arg is always None (see
-                # handle_wifi_scan), unused here same as disconnect above.
                 "scan": lambda _arg: wifi_backend.scan(),
             },
         ),
@@ -170,21 +151,13 @@ def main(stdscr):
             actions={
                 "connect": bluetooth_backend.connect,
                 "disconnect": bluetooth_backend.disconnect,
-                # VISION.md's R4 — modules/connectivity.py's dedicated
-                # "Discover" NavItem/handler.
                 "discover": lambda _arg: bluetooth_backend.start_discovery(),
             },
         ),
-        # Their own tiny read-only Domains, not folded into "wifi"/
-        # "bluetooth" above: scan()/start_discovery() are fire-and-
-        # forget, so StatusWorker.is_pending() only reflects the brief
-        # window that ONE D-Bus call takes, nowhere near the real scan/
-        # discovery duration — a "Scanning…"/"Discovering…" label driven
-        # by is_pending() alone would just flicker. is_scanning()/
-        # is_discovering() poll the daemon's own real Scanning/
-        # Discovering property instead — see their own docstrings in
-        # iwd.py/bluez.py. Short poll_interval so the label catches up
-        # promptly, same reasoning audio/media/battery/brightness use.
+        # Separate tiny Domains, not folded into wifi/bluetooth above:
+        # scan()/start_discovery() are fire-and-forget, so is_pending()
+        # alone would only flicker for one D-Bus call — these poll the
+        # daemon's own real Scanning/Discovering property instead.
         Domain(
             name="wifi_scanning",
             poll=wifi_backend.is_scanning,
@@ -201,23 +174,15 @@ def main(stdscr):
             name="audio",
             poll=audio_backend.get_sinks,
             actions={
-                # set_default_sink: modules/media.py's output switching
-                # (VISION.md's R5: "route it to headphones").
-                # set_volume/set_mute: modules/bars.py's VOL slider — both
-                # take a (sink_id, value) tuple as request_action's single
-                # `arg`, unpacked here (see status_worker.py's own
-                # request_action docstring for why: this domain's actions
-                # need two pieces of data, not the single id wifi/
-                # bluetooth's own actions get away with).
+                # set_volume/set_mute take a (sink_id, value) tuple as
+                # request_action's single arg — see status_worker.py.
                 "set_default_sink": audio_backend.set_default_sink,
                 "set_volume": lambda arg: audio_backend.set_volume(arg[0], arg[1]),
                 "set_mute": lambda arg: audio_backend.set_mute(arg[0], arg[1]),
             },
-            # Shorter than the 5s shared default: the default sink can
-            # change out from under tuicc entirely on its own
-            # (WirePlumber auto-switches to a newly connected bluetooth
-            # device without tuicc ever calling request_action for it),
-            # so polling itself is the only way to notice promptly.
+            # Shorter than the 5s default: the default sink can change
+            # outside tuicc's own control flow (WirePlumber auto-
+            # switching) — polling is the only way to notice.
             poll_interval=1,
         ),
         Domain(
@@ -228,17 +193,10 @@ def main(stdscr):
                 "next": media_backend.next,
                 "previous": media_backend.previous,
             },
-            # Same reasoning as "audio" above — a track changing
-            # mid-playback is also entirely outside tuicc's own control
-            # flow, felt "stuck" at the 5s shared default when tested
-            # live.
-            poll_interval=1,
+            poll_interval=1,  # same reasoning as "audio" above
         ),
-        # Tried as a push domain (battery.watch()) — reverted, back to a
-        # plain fast poll. See
-        # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable for
-        # why; battery.watch() is left in place, tested, for a future
-        # revisit, just not wired in here.
+        # Tried as a push domain (battery.watch()) — reverted. See
+        # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable.
         Domain(
             name="battery",
             poll=lambda: battery.aggregate(battery.get_packs(), battery.get_ac_online()),
@@ -249,18 +207,8 @@ def main(stdscr):
             name="brightness",
             poll=brightness.get_percent,
             actions={"set": brightness.set_percent},
-            # Same reasoning as "battery" above — matched to the same
-            # 300ms so neither one is the bottleneck under the other.
-            # Real (if small) subprocess-spawn cost per poll here
-            # (brightnessctl -m), unlike battery's free /sys reads —
-            # ~3/s is still cheap on any real machine, revisit only if
-            # that stops being true somewhere.
-            poll_interval=0.3,
+            poll_interval=0.3,  # matches battery; brightnessctl's own subprocess cost is cheap at this rate
         ),
-        # VISION.md's R6 — see procmon.py's own module docstring for why
-        # this reads pids via PidFeed rather than closing over `provider`
-        # directly (Provider stays main-thread-only, same as every other
-        # Domain here).
         Domain(
             name="windows",
             poll=lambda: proc_sampler.poll(pid_feed.get()),
@@ -280,25 +228,14 @@ def main(stdscr):
             name="diagnostics",
             poll=diagnostics.poll_diagnostics,
             actions={},
-            # journalctl/systemctl subprocess calls are real (if small)
-            # work — same "don't hammer it" reasoning as brightness's
-            # own poll_interval, just far less time-sensitive (failed
-            # units/OOM/log errors don't need sub-second freshness the
-            # way VOL/BRI/BAT do), so this stays on StatusWorker's
-            # shared default interval rather than tightening it.
+            # journalctl/systemctl calls are real work, but not
+            # time-sensitive enough to need a tighter poll_interval.
         ),
     ]
-    # One Domain per [[control.toggle]] entry, not one shared domain
-    # for all of them — same granular-error-surfacing reasoning as the
-    # wifi/bluetooth split: one toggle's status_command erroring (a
-    # missing binary, say) shouldn't blank out every other toggle's
-    # state too. poll() returns the current state's name (a plain str,
-    # not a list — StatusWorker.get()/snapshots are generic, no
-    # per-domain shape requirement). "advance" is the only action —
-    # modules/control.py computes which state name comes next (Enter
-    # always advances, wrapping) and passes it as request_action's arg;
-    # this domain doesn't need to know current state itself, just how
-    # to enter whichever one it's told to.
+    # One Domain per toggle, not shared — one toggle's status_command
+    # erroring shouldn't blank every other toggle. "advance" is the
+    # only action: modules/control.py computes the next state name and
+    # passes it as the arg, this domain doesn't track state itself.
     for i, toggle in enumerate(cfg.control_toggles):
         domains.append(Domain(
             name=f"toggle:{i}",
@@ -309,44 +246,27 @@ def main(stdscr):
                 ),
             },
         ))
-    # push_worker.py/combined_status.py (PushWorker/CombinedStatus) exist
-    # in this codebase, tested, but aren't wired in here — "battery" was
-    # their pilot domain and got reverted (see its own Domain above for
-    # why). Left in place for a future domain with a genuinely reliable
-    # event source (a D-Bus signal, or a subprocess --subscribe stream —
-    # unlike sysfs poll(), which is what this pilot found NOT to hold
-    # here), not wired up "just in case" in the meantime.
+    # push_worker.py/combined_status.py exist, tested, unused — see
+    # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable.
     status_worker = StatusWorker(domains)
     status_worker.start()
 
-    # Unconditional, unlike cava_reader below (lazy) — an agent must be
-    # registered before any connect attempt can trigger a callback,
-    # there's no "only start once something's happening" analog for a
-    # D-Bus agent the way cava has "only run while something's
-    # playing". A registration failure is caught inside start() itself
-    # (see its own docstring) rather than raised — surfaced via
-    # get_error(), folded into wifi_error/bluetooth_error below rather
-    # than crashing startup.
+    # Unconditional, unlike cava_reader below — an agent must register
+    # before any connect attempt could trigger a callback. Registration
+    # failures surface via get_error(), not raised.
     wifi_agent.start()
     if bluez_agent is not None:
         bluez_agent.start()
 
-    # NOT a Domain — cava is a continuous stream, not a periodic
-    # poll-and-snapshot, so it isn't wired through StatusWorker at all
-    # (see cava.py's own module docstring). Constructed here but not
-    # started yet: main.py's own loop below starts/stops it lazily
-    # based on whether anything is actually playing, not unconditionally
-    # for tuicc's whole lifetime — a continuous audio capture + FFT
-    # process running even while nothing plays (or tuicc is dismissed)
-    # would be work with no payoff, not a meaningful resource problem in
-    # isolation (cava itself is lightweight) but free to avoid regardless.
-    cava_reader = CavaReader()  # bars defaults to 8 — see cava.py's own docstring
+    # Not a Domain — cava is a continuous stream, not poll-and-snapshot
+    # (cava.py). Started/stopped lazily below, only while something's
+    # actually playing.
+    cava_reader = CavaReader()
 
     action_ctx = ActionContext(provider=provider, status=status_worker)
 
-    # Only used by resize mode's box-editing tier for resize/move math —
-    # normal navigation (below) no longer does spatial movement, so it
-    # doesn't consume this dict at all anymore.
+    # Only resize mode's box-editing consumes this — normal navigation
+    # doesn't do spatial movement.
     direction_keys = {
         cfg.keybinds["left"]: "left",
         cfg.keybinds["right"]: "right",
@@ -359,12 +279,8 @@ def main(stdscr):
         direction_keys[cfg.keybinds["vim_up"]] = "up"
         direction_keys[cfg.keybinds["vim_down"]] = "down"
 
-    # Navigation key-sets: next/prev item (Tab/Shift+Tab + Down/Up as
-    # duplicates, rolling into the next/previous module at either end
-    # — see navigation.py's next_item_in_module/prev_item_in_module)
-    # vs. an explicit jump straight to the next/previous module's first
-    # item (Left/Right). vim hjkl duplicate all four, but only when
-    # vim_mode is on — see the [navigation.keys] comment on why.
+    # Tab/Shift+Tab (+Down/Up) roll into the next/previous module; Left/
+    # Right jump straight to it. vim hjkl duplicate all four, only under vim_mode.
     next_item_keys = {cfg.keybinds["tab"], cfg.keybinds["down"]}
     prev_item_keys = {cfg.keybinds["previous"], cfg.keybinds["up"]}
     module_next_keys = {cfg.keybinds["right"]}
@@ -380,98 +296,42 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    # VISION.md's R2 (mode_stack, née "input claim"): which module
-    # currently owns raw keystrokes, generalizing what used to be
-    # launcher.typing_mode checked directly. "normal" (never popped)
-    # means no one has stolen input — an unbound printable key
-    # auto-claims for the launcher (ambient "type anywhere" is sugar for
-    # that auto-claim), same as before. Five phases in (the last one),
-    # this now covers every text-input/modal claim that exists:
-    # sessions_naming/sysmon_nice (Phase 1), connectivity_passphrase/
-    # connectivity_pairing (Phase 2), help/help_colors (Phase 3, the
-    # first genuinely 2-level-nested pair — "help" can push
-    # "help_colors" on top of itself), launcher (Phase 4),
-    # spawn_picker/resize_editing (Phase 5) — see
-    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for the full
-    # rationale and each phase's own postmortem. The
-    # `input_claim: str | None` variable this replaced was fully
-    # retired as of Phase 4.
-    #
-    # resize_mode's own BROWSING level (resize.active and not
-    # resize.editing) is the one deliberate, permanent exception — not
-    # deferred, never migrating. It isn't a true modal claim: it falls
-    # through to normal dispatch on an unhandled key (arrow-key/Tab/F-key
-    # navigation all keep working while just browsing), which the plain
-    # still_claiming bool contract every MODE_HANDLERS entry uses can't
-    # express — and unlike editing/spawn_picker, it doesn't need to:
-    # browsing is the same KIND of thing as sessions/media/sysmon's own
-    # two-level expansion state, already orthogonal to this stack since
-    # Phase 3. Each consumer's own module-level state
-    # (LauncherState.typing_mode, HelpState.color_editing, sessions.py's
-    # _naming_slot, ResizeState.editing) is untouched by this — this
-    # stack is kept in sync with it at every entry/exit point below, not
-    # a replacement for it.
+    # Which module owns raw keystrokes. "normal" (never popped, bottom
+    # of stack) = nothing has stolen input, unbound printable keys
+    # auto-claim for the launcher. resize's BROWSING level is the one
+    # permanent exception — never joins this stack (see
+    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for why and
+    # for every phase's own postmortem).
     mode_stack: list[str] = ["normal"]
 
-    # True from the moment dismiss_self() is called until the next real
-    # keypress arrives (a keypress can only reach tuicc's own terminal
-    # while it's focused, the same assumption ambient typing already
-    # relies on) — lets pending_moves.process() below know not to call
-    # focus_self() while tuicc is deliberately hidden. Without this, a
-    # window that finishes spawning after tuicc was dismissed would
-    # have focus_self() pull tuicc back onto the screen on its own,
-    # since focusing a scratchpadded window un-hides it on sway/i3.
-    #
-    # KNOWN LIMITATION: resets on the next KEYPRESS, not the next
-    # resummon — so a pending_moves entry that resolves after you've
-    # resummoned tuicc but before you've pressed anything yet still
-    # skips focus_self(), even though tuicc is genuinely visible again
-    # at that point. Narrow (needs the spawned window to finish moving
-    # in that exact gap) and not worth tightening further right now —
-    # same category of accepted race as mark_self()'s focus-based
-    # fallback (see providers/base.py).
+    # True from dismiss_self() until the next real keypress — tells
+    # pending_moves.process() not to focus_self() while hidden (that
+    # would un-hide a scratchpadded window on sway/i3). See
+    # CLAUDE/NOTES/known-limitations.md#dismissed-reset-timing.
     dismissed = False
 
-    # Tracks the region focused right before tuicc's own — used by
-    # return_to_origin's top-level Escape dismiss. Can't just read
-    # state.focused_region_id at dismiss time: parse_tree() doesn't
-    # filter tuicc's own marked window out of the *focused* lookup
-    # (only out of each region's windows list), so whenever tuicc
-    # itself has WM focus, focused_region_id already IS tuicc's own
-    # region. Tracking the value being *replaced* on every real
-    # transition instead means origin_region_id stays correctly frozen
-    # at "wherever you were before you opened tuicc" for the whole
-    # time you're only navigating inside tuicc (arrows/Tab never call
-    # focus_region/focus_window, so no further transition fires).
+    # The region focused right before tuicc's own — for return_to_origin's
+    # Escape. Can't read state.focused_region_id at dismiss time: it's
+    # already tuicc's own region whenever tuicc has WM focus (parse_tree()
+    # doesn't filter self out of that field). Tracks the value being
+    # *replaced* on each real transition instead, so it stays frozen at
+    # "wherever you were before" for as long as you're only navigating
+    # inside tuicc.
     last_focused_region_id = None
     origin_region_id = None
-    # True for exactly one frame after pending_moves.process() calls
-    # provider.focus_self() — a real WM-focus transition, but a
-    # self-inflicted one (tuicc reclaiming its own focus after a
-    # spawn/restore resolves), not the user having switched to a
-    # different real context. The transition detector below reads and
-    # clears this to tell the two apart — without it, a focus_self()
-    # landing between a sidebar selection and confirming a launcher
-    # spawn silently resets that selection, and the spawn targets
-    # wherever real focus happened to land instead of what was picked.
+    # True for one frame after pending_moves.process() calls
+    # provider.focus_self() — a real but self-inflicted transition
+    # (tuicc reclaiming its own focus), not the user going elsewhere.
+    # Without this, a focus_self() landing between a sidebar selection
+    # and confirming a launcher spawn silently resets that selection.
     expect_focus_reclaim = False
 
-    # Session state for the input-hijacking/queueing concerns this file
-    # coordinates but doesn't itself contain the logic for — see
-    # resize_mode.py/help_mode.py/launcher.py's LauncherState/
-    # pending_moves.py's PendingMovesQueue. This file owns *when* to
-    # call their functions (which key means what, in what order), not
-    # the state transitions or math themselves.
     resize = resize_mode.ResizeState()
     spawn_picker = resize_mode.SpawnPickerState()
     help_state = help_mode.HelpState()
     launcher = launcher_mode.LauncherState()
     moves = pending_moves.PendingMovesQueue()
-    # window_id -> pid, filled in lazily by _resolve_visible_pids() below
-    # (i3 only — sway's Window.pid is already populated from get_state()
-    # directly, see model.py's own docstring) — main.py-owned, not
-    # sysmon.py's, since resolving a pid needs `provider`, which no
-    # module's draw()/nav_items() ever touches (see CLAUDE.md).
+    # window_id -> pid (i3 only — sway's Window.pid is already populated).
     resolved_pid_cache = {}
 
     # A generic transient toast — used by save/cycle-preset as much as
@@ -521,12 +381,10 @@ def main(stdscr):
         resize_mode.exit_edit_mode(resize)
 
     def do_new_preset():
-        # Forks the CURRENT layout into a brand-new preset slot rather
-        # than overwriting the active one (that's F3/do_save_layout) —
-        # save_new_preset() picks the next free preset number and never
-        # touches an existing file. Unlike do_cycle_preset(), cfg.layout
-        # itself doesn't change (same boxes, just saved under a new
-        # number), so active_module stays valid — no need to reset it.
+        # Forks the current layout into a new preset slot rather than
+        # overwriting the active one (that's do_save_layout). Unlike
+        # do_cycle_preset(), cfg.layout itself doesn't change here, so
+        # active_module stays valid — no reset needed.
         nonlocal resize_message, resize_message_until
         new_number = save_new_preset(cfg.layout)
         set_active_preset(new_number)
@@ -545,16 +403,10 @@ def main(stdscr):
         # confirm site that might have set either.
         nonlocal selected_id, active_module, focus_id
         if action_ctx.reselect_item_id is not None:
-            # Direct set, no lookup against `ordered` — deliberately:
-            # `ordered` here still reflects nav_items() from BEFORE the
-            # handler that set this ran (it's computed once at the top
-            # of the frame, dispatch happens after), so the id this
-            # names typically isn't in it yet. module_of_item's own
-            # "modulename:id" convention is all that's needed to derive
-            # active_module from a plain string, no real NavItem
-            # required — next frame's nav_items() recomputes for real
-            # and the normal "is selected_id still valid" check finds
-            # it there, same as any other selection.
+            # No lookup against `ordered` — it still reflects last
+            # frame's nav_items(), so this id typically isn't in it yet.
+            # module_of_item's "modulename:id" convention derives
+            # active_module without needing a real NavItem.
             selected_id = action_ctx.reselect_item_id
             active_module = selected_id.split(":")[0]
             action_ctx.reselect_item_id = None
@@ -573,15 +425,10 @@ def main(stdscr):
             selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
         action_ctx.reselect_region_id = None
 
-    # mode_stack's Phase 1 handlers — see CLAUDE/NOTES/design-
-    # decisions.md#mode-stack-phase-1. Same still_claiming (bool)
-    # contract every other input_claim consumer already uses; kept as
-    # closures here (not moved into sessions.py/sysmon.py) because
-    # sessions_naming needs cfg.session_names/set_session_name, and no
-    # module in this codebase imports config.py — that boundary stays
-    # main.py's, same as help_colors' cfg.theme/theme_pairs writes.
-    # Both reproduce, unchanged, exactly what their old
-    # `if input_claim == "..."` block did.
+    # MODE_HANDLERS entries — see CLAUDE/NOTES/design-decisions.md
+    # #mode-stack-phase-1. Kept as closures, not moved into sessions.py/
+    # sysmon.py: sessions_naming needs cfg.session_names/set_session_name,
+    # and no module in this codebase imports config.py.
     def handle_sessions_naming(key):
         if key == cfg.keybinds["confirm"]:
             result = sessions_mode.apply_naming()
@@ -599,33 +446,18 @@ def main(stdscr):
             return result is None
         return sysmon_mode.handle_nice_key(key)
 
-    # Phase 2: connectivity's two prompts. Unlike the pair above, entry
-    # AND resolution are driven by per-frame daemon-mailbox polling, not
-    # purely keypress — that half stays a plain block (see the
-    # `connectivity_wants_input`/mode_stack.append() code above, near
-    # where wifi_agent/bluez_agent are polled), only the actual
-    # per-keypress handling below is a MODE_HANDLERS entry. Each
-    # reproduces, unchanged, exactly what its old
-    # `if input_claim == "..."` block did.
+    # Connectivity's two prompts: entry/resolution are driven by
+    # per-frame daemon-mailbox polling (see the loop body below, near
+    # wifi_agent/bluez_agent), not purely by keypress — only the actual
+    # per-keypress handling is a MODE_HANDLERS entry.
     def handle_connectivity_passphrase(key):
         if connectivity_mode.is_passphrase_waiting():
-            # Resolution happens in the top-of-loop check above (every
-            # frame, not keypress-driven) — this just swallows stray
-            # keys while the real connect attempt is still in flight.
-            return True
+            return True  # resolved by the per-frame poll below, not here — just swallow keys meanwhile
         if connectivity_mode.passphrase_error() is not None:
-            # A resolved failure, already shown — any key dismisses
-            # back to normal navigation. A genuine retry means Enter on
-            # the network row again (a fresh connect() attempt,
-            # possibly a fresh RequestPassphrase too) — the original
-            # request this overlay was answering is long since resolved
-            # one way or another, there's nothing left to resubmit here.
             connectivity_mode.cancel_passphrase_entry()
             return False
-        # The daemon can end this on its own at any time (Cancel/
-        # Release — see agent_mailbox.py's module docstring);
-        # has_pending() going False here (NOT while waiting/showing an
-        # error, both handled above) is exactly that, not a bug.
+        # has_pending() going False here (not while waiting/erroring,
+        # both handled above) means the daemon cancelled it — not a bug.
         if not wifi_agent.mailbox.has_pending():
             connectivity_mode.cancel_passphrase_entry()
             return False
@@ -645,12 +477,8 @@ def main(stdscr):
         return True
 
     def handle_connectivity_pairing(key):
-        # Plain yes/no, not typed text, so it's resolved directly here
-        # with confirm_yes/confirm_no rather than a handle_*_key()/
-        # apply_*() pair, same convention handle_pending_confirm()
-        # already uses. Only the ACCEPT path waits for a real result —
-        # confirm_no/Escape are the user's own explicit choice, nothing
-        # further to report about those.
+        # Plain yes/no, resolved directly here (same convention as
+        # handle_pending_confirm()) rather than a typed-text apply_*() pair.
         if connectivity_mode.is_pairing_waiting():
             return True
         if connectivity_mode.pairing_error() is not None:
@@ -675,14 +503,10 @@ def main(stdscr):
             return False
         return True
 
-    # Phase 3: help_mode.py's whole panel. First mode_stack tier with
-    # real 2-level nesting — "help" (browsing the panel/pages) can push
-    # "help_colors" (editing one color value) on top of itself, then
-    # pop back to "help" landing on the colors page it came from, not
-    # exiting entirely. help_state.active stays the depth-agnostic
-    # source of truth for "is the panel showing at all" (true at either
-    # depth) — draw()'s own call site and connectivity_wants_input's
-    # guard both still read it directly, deliberately not touched here.
+    # "help" can push "help_colors" on top of itself; popping lands back
+    # on the colors page, not fully closed. help_state.active is
+    # depth-agnostic ("panel showing at all") — draw()'s call site and
+    # connectivity_wants_input both read it directly; don't touch it here.
     def handle_help(key):
         if help_state.page is None:
             help_mode.select_page(help_state, key)
@@ -706,17 +530,9 @@ def main(stdscr):
         return True
 
     def handle_help_colors(key):
-        # nonlocal needed here specifically: the original
-        # `theme_pairs = reassign_theme_pairs(...)` ran directly in
-        # main()'s own loop body, a same-scope reassignment. Nested in
-        # this closure without `nonlocal`, it would silently shadow the
-        # outer theme_pairs instead of updating it — the color would
-        # still save correctly to cfg.theme/config.toml, but on-screen
-        # rendering (which reads the real outer theme_pairs every
-        # frame) would never see the change until restart. Confirmed by
-        # review as the only new nonlocal this migration needs —
-        # help_state/cfg/mode_stack are all mutated via method/
-        # attribute/subscript, never rebound.
+        # nonlocal required: without it this rebinds a closure-local
+        # theme_pairs instead of the real one — the color saves to
+        # cfg.theme/config.toml correctly but never renders until restart.
         nonlocal theme_pairs
         if key == cfg.keybinds["confirm"]:
             result = help_mode.apply_color_edit(help_state)
@@ -731,26 +547,12 @@ def main(stdscr):
             return False
         return True
 
-    # Phase 4: launcher's ambient "type anywhere to search apps" claim —
-    # mode_stack's very first historical consumer (VISION.md's R2), last
-    # of the original input_claim tiers to migrate. Needs three
-    # nonlocals — the most of any handler so far — since it's the only
-    # tier that touches focus_id (Up/Down shifts the ambient launch
-    # target) on top of the selected_id/active_module restore every
-    # exit path already needed.
     def handle_launcher(key):
         nonlocal focus_id, selected_id, active_module
-        # Up/Down shift the ambient-typing launch target (focus_id)
-        # without leaving typing mode — otherwise launching from
-        # anywhere always targets focus_id regardless of which module
-        # you'd been browsing, with no way to see (let alone change)
-        # that target while typing. Left/Right are already spoken for
-        # by launcher_mode.handle_typing_key itself (they move which
-        # search RESULT is selected); arrow keys never collide with
-        # typed characters (outside the printable range that function
-        # checks), including under vim_mode — vim's own j/k duplicates
-        # are a separate keybind (cfg.keybinds["vim_down"/"vim_up"]),
-        # not checked here, so they still type normally.
+        # Up/Down shift the ambient launch target without leaving
+        # typing mode. Left/Right stay with handle_typing_key (they move
+        # the selected search result) — arrow keys never collide with
+        # typed chars, including vim's own j/k (a separate keybind).
         if key == cfg.keybinds["up"]:
             current = focus_id if focus_id is not None else state.focused_region_id
             focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
@@ -764,23 +566,13 @@ def main(stdscr):
             if selected is not None:
                 cmd, app_id_hint = selected
                 known_ids = {w.id for r in state.regions for w in r.windows}
-                # .desktop Exec= is spec'd to never be shell-interpreted.
-                pid = spawn_detached(cmd, shell_true=False)
-                # See Provider.no_focus_next_window()'s docstring —
-                # called right after the pid is known, well before the
-                # spawned window has had a chance to map and steal
-                # focus/fullscreen from tuicc.
+                pid = spawn_detached(cmd, shell_true=False)  # .desktop Exec= is never shell-interpreted
+                # Called before the spawned window can map and steal
+                # focus/fullscreen — see no_focus_next_window()'s docstring.
                 provider.no_focus_next_window(pid)
-                # focus_id is only ever set by explicitly selecting a
-                # sidebar region item — without one selected (or
-                # without a sidebar in the layout at all), fall back to
-                # whatever's actually focused right now, same live-
-                # follow pattern preview.py's draw() uses. app_id_hint
-                # (see launcher.scan_desktop_apps) is only a fallback —
-                # resolve_pending_move always tries the pid tier first,
-                # this just gives process()'s grace-period downgrade
-                # something to fall back to for single-instance apps
-                # whose pid will never appear on a window.
+                # Falls back to whatever's actually focused when no
+                # sidebar region is explicitly selected. app_id_hint is
+                # only a fallback — the pid tier is tried first.
                 pending_moves.queue_launcher_spawn(
                     moves,
                     focus_id if focus_id is not None else state.focused_region_id,
@@ -794,26 +586,13 @@ def main(stdscr):
             # typing_mode stays True — not an implicit cancel.
             return True
         if not launcher_mode.handle_typing_key(launcher, key, cfg):
-            # handle_typing_key exited on its own (Escape, or Backspace
-            # on an empty query) — release the claim the same way the
-            # confirm branch above does explicitly, and restore the
-            # pre-typing selection the same way a successful confirm
-            # does too.
+            # Escape, or Backspace on an empty query — same restore as
+            # the confirm branch above.
             selected_id = launcher.saved_selected_id
             active_module = launcher.saved_active_module
             return False
         return True
 
-    # Phase 5 (final): spawn_picker + resize's editing level — the last
-    # two hijack tiers, deliberately excluded from every prior phase.
-    # resize's BROWSING level (resize.active and not resize.editing)
-    # deliberately stays OFF this stack, permanently, not deferred
-    # further — it isn't a true modal claim (it falls through to normal
-    # dispatch on an unhandled key, same as sessions/media/sysmon's own
-    # two-level expansion, which Phase 3 already declared orthogonal).
-    # Only editing and spawn_picker always consume every key, which is
-    # what the plain still_claiming bool contract actually needs. See
-    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
     def handle_spawn_picker(key):
         nonlocal active_module
         choice = resize_mode.choose(spawn_picker, key)
@@ -821,12 +600,9 @@ def main(stdscr):
             new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
             cfg.layout.boxes.append(new_box)
             active_module = choice
-            # Handoff, not a plain end: picking a module goes straight
-            # into editing it, not back to normal. Pop "spawn_picker"
-            # ourselves before pushing "resize_editing" — the generic
-            # dispatch's own post-call pop would otherwise remove
-            # whatever's on top AFTER we push, not spawn_picker's own
-            # frame.
+            # Handoff: pop "spawn_picker" before pushing "resize_editing" —
+            # the generic dispatch's post-call pop would otherwise
+            # remove whatever's on top AFTER we push, not our own frame.
             mode_stack.pop()
             do_enter_box_editing(new_box, is_new=True)
             return True  # stack already correctly arranged
@@ -834,11 +610,8 @@ def main(stdscr):
 
     def handoff(do_fn):
         # Shared by every F-key branch inside handle_resize_editing
-        # below: ends editing and hands off to whatever do_fn lands in
-        # (browsing, a fully-closed session, or a new mode_stack claim
-        # like "help"/"spawn_picker" — do_fn manages that part itself).
-        # Same self-pop-before-delegating shape as handle_spawn_picker's
-        # own handoff above, factored out since six branches need it.
+        # below — same self-pop-before-delegating shape as
+        # handle_spawn_picker's own handoff above.
         resize_mode.commit_box_editing(resize)
         mode_stack.pop()
         do_fn()
@@ -855,10 +628,7 @@ def main(stdscr):
                 return False  # confirm_delete_yes unconditionally ends editing
             if key == cfg.keybinds["confirm_no"]:
                 resize_mode.confirm_delete_no(resize)
-            # confirm_no, or any other key while confirm_delete is
-            # showing (silently swallowed, same as before this
-            # migration) — editing untouched either way.
-            return True
+            return True  # confirm_no, or any other key — editing untouched either way
         if key in direction_keys:
             x_cells, y_cells, w_cells, h_cells = boxes[active_module]
             resize_mode.apply_direction(
@@ -886,15 +656,10 @@ def main(stdscr):
             return handoff(do_new_preset)
         elif key == cfg.keybinds["help"]:
             return handoff(do_enter_help)
-        # Load-bearing, not decoration: the original block always ended
-        # in one unconditional `continue` regardless of which branch
-        # matched (or none did) — direction_keys/move_toggle/delete_box
-        # above fall through to here on purpose, and so does any
-        # genuinely unrecognized key. Without this, either case would
-        # return None (falsy), and the generic dispatch would read that
-        # as "done" and pop — silently ending the whole editing session
-        # on a stray keypress instead of harmlessly ignoring it. Caught
-        # in review before it shipped, not live.
+        # LOAD-BEARING: direction_keys/move_toggle/delete_box fall
+        # through to here, as does any unrecognized key. Remove this and
+        # they return None (falsy) — the generic dispatch pops, silently
+        # ending the whole editing session on a stray keypress.
         return True
 
     MODE_HANDLERS = {
@@ -910,46 +675,23 @@ def main(stdscr):
     }
 
     def any_two_level_module_expanded():
-        # sessions.py and media.py each own a two-level browsing/
-        # expanded session (see media.py's own module docstring for
-        # why it needed the same model sessions.py established) — Tab/
-        # Shift+Tab/Left/Right's wrap behavior needs to know if EITHER
-        # is currently expanded, not just sessions specifically. A
-        # small helper here instead of repeating "sessions_mode.
-        # is_expanded() or media_mode.is_expanded()" at every call
-        # site — only one of the two can plausibly be expanded at once
-        # in practice (each is scoped to its own module, and leaving a
-        # module auto-collapses it, see the per-frame check above), but
-        # the OR is what actually stays correct if that ever changes.
-        # sysmon.py's window rows (VISION.md's R6) are a third module
-        # using this same two-level model, added the same way.
+        # sessions/media/sysmon each own a two-level browsing/expanded
+        # session — Tab/Shift+Tab/Left/Right's wrap behavior needs to
+        # know if ANY is expanded, not just one specifically.
         return sessions_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
 
-    # No `break` anywhere below this point — tuicc's lifecycle model
-    # (VISION.md section 2) is a persistent process the WM shows/hides;
-    # every former "exit" site now calls provider.dismiss_self() and
-    # keeps looping. The only way out is an unhandled exception, in
-    # practice Ctrl+C (caught at the bottom of this file) — this
-    # try/finally is what makes that a clean shutdown rather than a
-    # daemon thread just getting killed mid-poll.
+    # No `break` below this point — tuicc is a persistent process the
+    # WM shows/hides (VISION.md section 2); the only way out is an
+    # unhandled exception (in practice Ctrl+C, caught at file bottom).
     try:
         while True:
-            # Third tier between the two below: media.py's now-playing
-            # marquee scroll advances one character every
-            # MARQUEE_STEP_SECONDS of wall-clock time regardless — the
-            # idle 1000ms redraw cadence below would only ever redraw it
-            # once a second, turning a smooth 1-character slide into a
-            # visible ~3-character jump.
+            # Drives a faster redraw cadence below — the idle 1000ms
+            # cadence alone would turn the marquee's smooth 1-char
+            # slide into a visible jump.
             marquee_active = media_mode.has_scrolling_content(status_worker.get("media"))
 
-            # Lazy cava lifecycle: only run the visualizer subprocess
-            # while it could actually show something AND the current
-            # preset even has a media box to show it in — a preset
-            # without "media" in its layout still has the media Domain
-            # polling (every Domain is unconditional, see main.py's own
-            # domain construction above), so gating on media_module_present
-            # too avoids spinning up an audio-capture process for a
-            # visualizer nothing on screen would ever render.
+            # Lazy: only run the visualizer while something could show
+            # AND the current preset even has a media box for it.
             media_module_present = any(b.name == "media" for b in cfg.layout.boxes)
             media_players = status_worker.get("media") or []
             any_playing = any(p.playback_status == "Playing" for p in media_players)
@@ -958,37 +700,16 @@ def main(stdscr):
             else:
                 cava_reader.stop()
 
-            # CLAUDE/VISION.md's R4 — a live iwd/bluez agent callback
-            # claims the mode_stack (migrated off input_claim in Phase 2,
-            # see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1)
-            # before sessions_naming/sysmon_nice/help_colors ever get a
-            # chance to: unlike an in-progress rename, a pending
-            # passphrase/pairing prompt can be silently cancelled by the
-            # daemon itself at any moment (network went away, the
-            # daemon's own timeout fired — see agent_mailbox.py's module
-            # docstring), so it deserves more urgency than risking it
-            # expire unanswered. This isn't about keypress-dispatch order
-            # any more (mutual exclusion is structural now — one stack,
-            # one top) — it's about *when in the frame* this runs: this
-            # check happens every frame, before getch() even reads a
-            # key, so it claims the stack before a keypress could ever
-            # let sessions_naming/sysmon_nice claim it that same frame.
-            # Gated the same way every other hijack tier is (only
-            # reachable when nothing else already owns input) so it
-            # can't steal a keystroke out from under an already-open
-            # session.
+            # Runs every frame, before getch() reads a key — a live
+            # iwd/bluez daemon callback can cancel a passphrase/pairing
+            # prompt at any moment, so this claims mode_stack ahead of
+            # any keypress-driven claim, not by dispatch order (moot
+            # now — one stack, one top). See
+            # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
             #
-            # Resolves a "waiting for the real connect/pair result"
-            # overlay (see modules/connectivity.py's mark_passphrase_
-            # submitted()/mark_pairing_submitted() docstrings) — checked
-            # every frame, not just on keypress, so a result that
-            # arrives between keypresses is still noticed promptly
-            # (StatusWorker.has_pending() being true for the whole wait
-            # already keeps the render loop on its fast 50ms tick, see
-            # stdscr.timeout()'s own condition below). This must not
-            # close the overlay the instant Enter is pressed — iwd/bluez
-            # haven't tried the (possibly wrong) passphrase/pairing yet
-            # at that point.
+            # Must not close on the Enter keypress itself — iwd/bluez
+            # haven't tried the passphrase/pairing yet at that point,
+            # only mark_*_submitted() has run (modules/connectivity.py).
             if connectivity_mode.is_entering_passphrase() and connectivity_mode.is_passphrase_waiting():
                 ssid = connectivity_mode.entering_passphrase_ssid()
                 if not status_worker.is_pending("wifi", ssid):
@@ -1011,51 +732,21 @@ def main(stdscr):
             connectivity_wants_input = (
                 pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
-                # mode_stack[-1] == "normal" alone now covers every
-                # tier input_claim is None used to gate against (Phase
-                # 4 retired that variable — nothing assigns to it any
-                # more, so checking it here would've been permanently
-                # True and contributed nothing).
                 and mode_stack[-1] == "normal"
             )
-            # Also fires while ALREADY in one of these two tiers, not
-            # just when claiming input fresh — a wrong passphrase makes
-            # iwd call RequestPassphrase a SECOND time (a retry), which
-            # publishes a brand new AgentMailbox request while
-            # mode_stack's top is still "connectivity_passphrase" from
-            # the first attempt; without this, that second request would
-            # never be noticed (the "claim fresh" branch only runs while
-            # mode_stack is at "normal"). See modules/connectivity.py's
-            # start_passphrase_entry()'s own docstring.
-            #
-            # ONLY once we're actually waiting on the first attempt's
-            # result (mark_passphrase_submitted()/mark_pairing_submitted()
-            # already called) — not while still typing, and not once an
-            # error's already been shown (set_passphrase_error() ends
-            # waiting too, see connectivity.py). AgentMailbox.get_request()
-            # (used above and below) never pops the request, so
-            # has_pending() stays True for the whole time the original
-            # prompt sits there unanswered: gating on mode_stack's top
-            # alone would fire this every single frame while typing,
-            # since the mailbox's own pending request never changes
-            # until it's actually submitted — each frame's re-fire would
-            # call start_passphrase_entry() again, silently wiping
-            # whatever had just been typed back to empty before the next
-            # keypress could even land.
+            # Also fires mid-retry (iwd re-asking RequestPassphrase after
+            # a wrong password) — gated to only when actually WAITING on
+            # a result, not while still typing, or has_pending() alone
+            # would re-fire every frame and wipe out what's being typed.
             if wifi_agent.mailbox.has_pending() and (
                 connectivity_wants_input
                 or (mode_stack[-1] == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
             ):
                 request = wifi_agent.mailbox.get_request()
                 connectivity_mode.start_passphrase_entry(request.ssid)
-                # Guarded, not a bare append: this branch is also
-                # reached by the retry case right above (mode_stack's
-                # top is ALREADY "connectivity_passphrase" there) — an
-                # unconditional append would push a duplicate frame that
-                # the eventual single pop() never fully unwinds, leaving
-                # a stale frame that silently swallows the next real
-                # keypress. Caught in review before it shipped, not
-                # live — see design-decisions.md#mode-stack-phase-1.
+                # Guarded: the retry case above reaches here with the
+                # frame already pushed — a bare append would duplicate
+                # it, and the eventual single pop() wouldn't fully undo that.
                 if mode_stack[-1] != "connectivity_passphrase":
                     mode_stack.append("connectivity_passphrase")
             elif bluez_agent is not None and bluez_agent.mailbox.has_pending() and (
@@ -1064,8 +755,7 @@ def main(stdscr):
             ):
                 request = bluez_agent.mailbox.get_request()
                 connectivity_mode.start_pairing_confirm(request)
-                # See the passphrase branch's matching comment above.
-                if mode_stack[-1] != "connectivity_pairing":
+                if mode_stack[-1] != "connectivity_pairing":  # see passphrase branch above
                     mode_stack.append("connectivity_pairing")
 
             agent_has_pending = (
@@ -1077,17 +767,10 @@ def main(stdscr):
                        or resize_message is not None or agent_has_pending)
                 else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
-                # 300, not 1000: even with a Domain's own poll_interval
-                # tightened (battery/brightness/audio/media all poll at
-                # 1s), the render loop only ever looks at a fresh
-                # StatusWorker snapshot once per idle getch() timeout —
-                # a 1s idle redraw cadence stacks ~1s of its own lag on
-                # top of whatever the poll cadence already contributes.
-                # Cheap to lower: every module's draw() already reruns
-                # unconditionally every frame regardless of cadence (see
-                # CLAUDE/GUIDE.md's "nothing is cached per-frame"), so
-                # redrawing more often while idle is the same cheap
-                # recompute, not new work.
+                # 300, not 1000: draw() reruns unconditionally every
+                # frame regardless of cadence, so redrawing more often
+                # while idle is free — and a 1s idle cadence would stack
+                # atop Domains already polling as fast as 1s.
                 else 300
             )
             stdscr.erase()
@@ -1096,23 +779,12 @@ def main(stdscr):
             boxes = compute_boxes(cfg.layout, term_width, term_height)
             state = provider.get_state()
 
-            # VISION.md's R6 — publish this frame's window list for the
-            # background "windows" Domain to pick up next poll (see
-            # procmon.py's own module docstring for why this crosses the
-            # thread boundary via PidFeed rather than a Domain reading
-            # `provider`/`state` directly). Resolving i3's missing pids
-            # here, main-thread, right after `state` itself is fresh, is
-            # deliberately BEFORE this frame's own RenderContext/nav_items
-            # are built below — sysmon_mode.visible_window_ids() only
-            # needs `selected_id` (already current from last frame) and
-            # this frame's own flattened window list, not anything
-            # RenderContext provides. Sorted the same "most resource-
-            # intensive first" way sysmon.py's own _build_rows()/
-            # nav_items() sort for display (against the most recently
-            # KNOWN sample, since this frame's own WindowInfo objects
-            # have no cpu/rss of their own yet) — otherwise the lazy
-            # pid-resolution below would decide "visible" using a
-            # different order than what's actually about to be shown.
+            # Publishes this frame's window list for the background
+            # "windows" Domain (procmon.py) — must run before this
+            # frame's own RenderContext/nav_items below, and sorted the
+            # same way sysmon.py's own display sort is, or the lazy
+            # pid-resolution below picks a different "visible" set than
+            # what's about to be shown.
             windows_this_frame = sysmon_mode.sort_windows_by_drain(
                 procmon.flatten_windows(state), known_stats=status_worker.get("windows") or [],
             )
@@ -1124,31 +796,16 @@ def main(stdscr):
                 origin_region_id = last_focused_region_id
                 last_focused_region_id = state.focused_region_id
                 if expect_focus_reclaim:
-                    # tuicc reclaiming its own focus after a spawn/
-                    # restore resolved (pending_moves.process()'s
-                    # focus_self() call last frame) — a real transition
-                    # by the check above, but self-inflicted, not the
-                    # user having gone anywhere. Skip the reset below;
-                    # still update origin/last_focused_region_id above,
-                    # since those track real focus regardless of cause.
+                    # Self-inflicted (tuicc reclaiming its own focus after
+                    # a spawn/restore) — skip the reset below, but still
+                    # update origin/last_focused_region_id above.
                     expect_focus_reclaim = False
                 else:
-                    # A real WM-focus transition — as opposed to just
-                    # browsing tuicc's own sidebar, which deliberately never
-                    # touches real focus (that's what lets you target a
-                    # spawn at a workspace without actually switching to it
-                    # first) — most commonly means tuicc was just dismissed
-                    # to the scratchpad, you switched real workspaces, and
-                    # resummoned it somewhere new. Force a re-sync: without
-                    # this, focus_id/selected_id stay pinned to wherever you
-                    # last left the cursor, possibly in a completely
-                    # different real context, and every launcher spawn
-                    # silently keeps targeting that stale workspace instead
-                    # of wherever you actually are now. Invalidating
-                    # selected_id here (rather than resetting focus_id
-                    # directly) reuses the still_valid recovery block right
-                    # below, which already correctly re-derives selected_id/
-                    # active_module/focus_id together via resolve_selection.
+                    # A real WM-focus transition (dismissed, workspace
+                    # switched, resummoned elsewhere) — force a re-sync
+                    # via the still_valid recovery block below, or
+                    # focus_id/selected_id stay pinned to a stale context
+                    # and every launcher spawn keeps targeting it.
                     selected_id = None
 
             if action_ctx.restore_queue:
@@ -1157,11 +814,6 @@ def main(stdscr):
 
             if moves.entries:
                 current_windows = [w for r in state.regions for w in r.windows]
-                # See Provider.focus_self()'s docstring for why reclaiming
-                # focus on a match isn't optional-feeling, and pending_moves.
-                # process()'s own docstring for why it's skipped while
-                # dismissed (and for what its return value means, consumed
-                # by the transition detector above on the NEXT frame).
                 reclaimed_focus, resolved_target_regions = pending_moves.process(
                     moves, provider, current_windows, dismissed, time.monotonic(), cfg.fullscreen_only,
                     own_region_id=last_focused_region_id,
@@ -1169,51 +821,23 @@ def main(stdscr):
                 if reclaimed_focus:
                     expect_focus_reclaim = True
                 if resolved_target_regions and (focus_id is None or focus_id == last_focused_region_id):
-                    # expect_focus_reclaim (above) suppresses the real-
-                    # focus-transition reset for as long as a restore/
-                    # spawn is still resolving matches — necessarily, since
-                    # tuicc reclaiming its own focus each round would
-                    # otherwise look identical to a real external
-                    # transition and wipe out the in-progress session's
-                    # selection. But that also means focus_id (and so the
-                    # preview panel, which follows focus_id — see
-                    # preview.py) never gets a chance to move to wherever
-                    # the restore/spawn actually landed, until something
-                    # else eventually forces a real reset (dismiss+
-                    # resummon). Only auto-follow when focus_id currently
-                    # just mirrors tuicc's own live region (nothing
-                    # deliberately selected elsewhere in the sidebar) — a
-                    # manually-selected focus_id must never be silently
-                    # overridden by a spawn resolving in the background.
-                    # Without this, the preview stayed blank forever (not
-                    # just during the transient co-location window) after
-                    # a session restore completed, for the rest of that
-                    # same tuicc toggle.
+                    # expect_focus_reclaim suppresses the real-transition
+                    # reset while a restore/spawn is resolving, so
+                    # focus_id (preview.py's own target) never otherwise
+                    # gets to follow where it landed. Only auto-follow
+                    # when nothing was deliberately selected elsewhere —
+                    # LOAD-BEARING: without this the preview stayed
+                    # permanently blank after a session restore.
                     focus_id = resolved_target_regions[-1]
 
-            # A session slot's level-2 (expanded) state is meant to be
-            # left only by Escape or picking an action — never silently
-            # by navigating elsewhere while it's still open. Checked
-            # here, once per frame, rather than patched into every
-            # individual place active_module can change (Tab/Shift+Tab
-            # rolling out, Left/Right, ambient typing into the
-            # launcher, F1/F2/F6, ...) — active_module already reflects
-            # whatever the previous frame's keypress did by the time
-            # this runs, so one check here reliably catches all of
-            # them. No selected_id/focus_id fixup needed alongside it:
-            # whatever changed active_module away from "sessions" also
-            # already moved selected_id off of any sessions:action:*
-            # id via its own resolve_selection call.
+            # A two-level module's expanded state may only be left via
+            # Escape or picking an action, never silently by navigating
+            # elsewhere — one check per frame catches every way
+            # active_module can change, instead of patching each site.
             if active_module != "sessions" and sessions_mode.is_expanded():
                 sessions_mode.collapse()
-            # Same idea, media.py's own now-playing row expand/collapse
-            # — see media.py's module docstring for why it needed this
-            # same two-level model sessions.py established.
             if active_module != "media" and media_mode.is_expanded():
                 media_mode.collapse()
-            # Same idea, sysmon.py's own window-row expand/collapse
-            # (VISION.md's R6) — see media.py's module docstring for
-            # why this two-level model needed to be reused a third time.
             if active_module != "sysmon" and sysmon_mode.is_expanded():
                 sysmon_mode.collapse()
 
@@ -1230,13 +854,8 @@ def main(stdscr):
                 search_selected_index=launcher.search_selected_index,
                 wifi_networks=status_worker.get("wifi"),
                 bluetooth_devices=status_worker.get("bluetooth"),
-                # A poll failure (backend unreachable at all) takes
-                # priority over an agent registration failure (backend
-                # fine, but unknown-network/unpaired-device connects
-                # silently keep failing) — the former is the more
-                # complete outage. See WifiAgent/BluezAgent.start()'s
-                # own docstrings for why a registration failure is
-                # caught rather than raised.
+                # Poll failure (backend unreachable) takes priority over
+                # an agent registration failure — the more complete outage.
                 wifi_error=status_worker.get_error("wifi") or wifi_agent.get_error(),
                 bluetooth_error=status_worker.get_error("bluetooth") or (bluez_agent.get_error() if bluez_agent else None),
                 status=status_worker,
@@ -1249,16 +868,10 @@ def main(stdscr):
             ordered = tab_order(items, mode=cfg.tab_order)
 
             still_valid = any(item.id == selected_id for item in ordered)
-            # A module-jump (Left/Right) landing on a module with no nav
-            # items at all clears selected_id to None on purpose (see
-            # that branch's own comment) — active_module already points
-            # at the right, empty box, and there's genuinely nothing to
-            # select there. Without this check, still_valid is False for
-            # that same reason (nothing has id None) and the recovery
-            # below would immediately treat it as a vanished-item
-            # accident and jump selected_id straight back to the sidebar
-            # or wherever's WM-focused, silently undoing the jump on the
-            # very same frame.
+            # LOAD-BEARING: a Left/Right jump onto an empty module sets
+            # selected_id=None on purpose. Without this check, still_valid
+            # is False for that same reason and the recovery below
+            # immediately undoes the jump on the very same frame.
             intentionally_unselected = selected_id is None and not any(
                 module_of_item(item) == active_module for item in ordered
             )
@@ -1271,21 +884,10 @@ def main(stdscr):
                 if match is None and ordered:
                     match = ordered[0]
                 if match is not None:
-                    # Goes through the same resolve_selection() real
-                    # keyboard navigation uses, not a hand-rolled partial
-                    # update — this recovery path used to only touch
-                    # selected_id, leaving focus_id (and active_module)
-                    # stuck at whatever they were before. That let
-                    # sidebar's highlight (driven by this block) and
-                    # preview's target (driven by focus_id) silently
-                    # drift apart — e.g. right after typing_mode exits
-                    # and selected_id gets auto-recovered to wherever's
-                    # live-focused, focus_id stayed pinned to an earlier
-                    # explicit selection, so preview kept showing that
-                    # stale workspace while sidebar looked perfectly
-                    # live. Routing through resolve_selection keeps all
-                    # three in lockstep regardless of how selected_id
-                    # ends up changing.
+                    # Through resolve_selection(), not a hand-rolled
+                    # selected_id-only update — otherwise focus_id/
+                    # active_module can drift out of sync with it (found
+                    # live: preview kept showing a stale workspace).
                     selected_id, active_module, focus_id = resolve_selection(match, focus_id)
                 else:
                     selected_id = None
@@ -1339,10 +941,6 @@ def main(stdscr):
 
             global_item = global_shortcut_item(cfg.global_shortcuts, key)
             if global_item is not None:
-                # pending_confirm is always None here — the tier above
-                # already intercepted and continued otherwise (see
-                # dispatch_action's docstring for why this makes an
-                # unconditional assignment safe).
                 should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
                 do_apply_reselect()
                 if should_dismiss:
@@ -1351,25 +949,14 @@ def main(stdscr):
                 continue
 
             if mode_stack[-1] != "normal":
-                # sessions_naming/sysmon_nice (Phase 1),
-                # connectivity_passphrase/connectivity_pairing (Phase 2),
-                # help/help_colors (Phase 3) — one generic dispatch site
-                # for every mode_stack tier, at any nesting depth
-                # (help_colors sits on top of help). Priority ordering
-                # between tiers is not about check order here — mutual
-                # exclusion is structural (one stack, one top); see
-                # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
                 still_claiming = MODE_HANDLERS[mode_stack[-1]](key)
                 if not still_claiming:
                     mode_stack.pop()
                 continue
 
-
-            # Browsing level: the edit session is open but no module is being
-            # resized/moved right now — everything except confirm/delete_box/
-            # Escape falls through to the normal dispatch chain below, so
-            # Tab/Shift+Tab/arrow navigation and F1/F3/F4/F6 all keep
-            # working exactly as outside the session.
+            # Browsing: session open, no module being resized/moved —
+            # everything except confirm/delete_box/Escape falls through
+            # to normal dispatch below, so Tab/arrows/F-keys keep working.
             if resize.active and not resize.editing:
                 if resize.confirm_delete:
                     # confirm_yes OR confirm (Enter) — see
@@ -1397,13 +984,8 @@ def main(stdscr):
                     continue
                 # else: fall through to the bottom dispatch chain.
 
-            # Sorted by position, not declaration order in the preset
-            # file — module-to-module movement (Left/Right, and Tab/
-            # Shift+Tab rolling past a module's last/first item) should
-            # feel spatially sensible even though it's not spatial
-            # search anymore. Same sort key tab_order() already uses
-            # for items within a module, just applied to each module's
-            # own box instead of a NavItem's rect.
+            # Sorted by position, not declaration order — same sort key
+            # tab_order() uses for items within a module.
             module_position_key = (
                 (lambda box: (box.y, box.x)) if cfg.tab_order == "rows_first"
                 else (lambda box: (box.x, box.y))
@@ -1411,24 +993,14 @@ def main(stdscr):
             module_names = [box.name for box in sorted(cfg.layout.boxes, key=module_position_key)]
 
             if key == cfg.keybinds["confirm"] and selected_item is not None:
-                # pending_confirm is always None here — same invariant
-                # as the global-shortcut tier above.
                 should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
                 do_apply_reselect()
-                # sessions.py's "name" action calls start_naming() on
-                # itself (module-owned state, same as _expanded_slot) —
-                # this is where main.py notices and claims input on its
-                # behalf, mirroring how handle_help's own colors-page
-                # confirm branch pushes "help_colors" right next to its
-                # own start_color_edit() call. See
-                # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
+                # sessions.py's/sysmon.py's own "name"/NICE actions call
+                # start_naming()/start_nice_edit() on themselves —
+                # main.py notices right after dispatch and claims the
+                # stack on their behalf.
                 if sessions_mode.is_naming():
                     mode_stack.append("sessions_naming")
-                # sysmon.py's own NICE action calls start_nice_edit() on
-                # itself (module-owned state, same as sessions.py's
-                # naming field) — same "main.py notices right after
-                # dispatch, claims input on the module's behalf" idiom
-                # as sessions_naming/help_colors above.
                 if sysmon_mode.is_editing_nice():
                     mode_stack.append("sysmon_nice")
                 if should_dismiss:
@@ -1437,26 +1009,14 @@ def main(stdscr):
 
             elif key in next_item_keys and ordered:
                 if any_two_level_module_expanded():
-                    # Level 2 is a deliberate exception to the app-wide
-                    # "Tab never wraps within a module, it rolls into
-                    # the next one" rule — see same_row_neighbor's
-                    # wrap param docstring. Escape/picking an action
-                    # are the only ways out (see the dedicated Escape
-                    # branch and the per-frame auto-collapse check
-                    # above), so Tab/Shift+Tab/Left/Right all just
-                    # cycle LOAD/SAVE/DEL/NAME (or media.py's
-                    # </PAUSE/PLAY/>>) in place instead.
+                    # Level 2 exception to "Tab never wraps, it rolls
+                    # into the next module" — Escape/picking an action
+                    # are the only ways out (see same_row_neighbor).
                     next_item = same_row_neighbor(ordered, selected_id, direction=1, wrap=True)
                 else:
-                    # next_item_across_modules keeps walking forward past
-                    # module boundaries until it finds one with an actual
-                    # item — a single next-module lookup isn't enough, since
-                    # modules with zero nav items (launcher, preview, clock)
-                    # are common, not a rare edge case. Without this, Tab
-                    # got permanently stuck the moment selection reached a
-                    # module immediately followed by an empty one (e.g.
-                    # Power Menu's last item, since Launcher is next and
-                    # always empty) — see its docstring.
+                    # Walks forward past module boundaries until an
+                    # actual item is found — zero-item modules (launcher,
+                    # preview, clock) are common, one lookup isn't enough.
                     next_item = next_item_across_modules(ordered, module_names, active_module, selected_id)
                 if next_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
@@ -1470,27 +1030,17 @@ def main(stdscr):
                         and active_module != "sessions"
                         and module_of_item(prev_item) == "sessions"
                     ):
-                        # Sessions is a deliberate exception to
-                        # prev_item_across_modules' usual "rolling
-                        # backward lands on the module's LAST item"
-                        # feel (right for most modules — see its
-                        # docstring) — always slot 1 instead, regardless
-                        # of which direction you entered from. Without
-                        # this, Shift+Tab-ing in from whatever module
-                        # follows Sessions lands on slot 3, one Tab away
-                        # from immediately rolling back out again.
+                        # Sessions exception: always slot 1, not the
+                        # module's last item — otherwise Shift+Tab-ing in
+                        # lands on slot 3, one Tab from rolling back out.
                         prev_item = first_item_in_module(ordered, "sessions")
                 if prev_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(prev_item, focus_id)
             elif key in module_next_keys:
-                # same_row_neighbor first: a module with multiple items
-                # on one row (e.g. sessions.py's expanded LOAD/SAVE/DEL/
-                # NAME) gets to step across them before Right falls back
-                # to its usual jump-to-next-module meaning — see its own
-                # docstring. None for the overwhelmingly common single-
-                # column module, so this is a no-op there. wrap=True for
-                # the same reason as next_item_keys above — level 2 never
-                # falls through to a module jump on Left/Right either.
+                # same_row_neighbor first: a row with multiple items
+                # (e.g. sessions.py's expanded LOAD/SAVE/DEL/NAME) steps
+                # across them before Right jumps to the next module.
+                # None for the common single-column case — a no-op there.
                 neighbor = same_row_neighbor(ordered, selected_id, direction=1, wrap=any_two_level_module_expanded())
                 if neighbor is not None:
                     selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
@@ -1502,18 +1052,11 @@ def main(stdscr):
                         if first_item is not None:
                             selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
                         else:
-                            # Landed on a module with no nav items at all
-                            # (bars, clock, launcher, or preview with no
-                            # focused windows) — active_module already
-                            # moved to it above, so its border shows as
-                            # active; selected_id must actually clear too,
-                            # not keep pointing at whatever was selected
-                            # in the module we just left, or the old
-                            # item would stay highlighted there while a
-                            # DIFFERENT box's border also claims to be
-                            # active. See the stale-selection recovery
-                            # block's own comment for why None here
-                            # doesn't just get silently overwritten back.
+                            # Landed on an empty module (bars, clock,
+                            # launcher...) — clear selected_id too, or
+                            # the old item stays highlighted in the
+                            # module we just left while this one's
+                            # border also claims active.
                             selected_id = None
             elif key in module_prev_keys:
                 neighbor = same_row_neighbor(ordered, selected_id, direction=-1, wrap=any_two_level_module_expanded())
@@ -1550,29 +1093,12 @@ def main(stdscr):
                 mode_stack.append("launcher")
                 active_module = "launcher"
             elif key == 27:
-                # Escape collapses whichever two-level module (sessions/
-                # media/sysmon) is currently expanded back to browsing,
-                # same "one level at a time" idea as resize_mode's
-                # browsing/editing split — but unlike that split, this
-                # needs no dedicated hijack tier above: Tab/other-module
-                # navigation already works unchanged while expanded
-                # (nav_items() alone decides what's navigable), so only
-                # Escape itself needs special-casing, right here, ahead
-                # of the plain top-level dismiss. At most one of the
-                # three can plausibly be expanded at once in practice
-                # (each is scoped to its own module), but collapse()
-                # itself is safe to call unconditionally either way —
-                # all three mirror sessions.py's own collapse() exactly,
-                # returning None (a harmless no-op) when nothing was
-                # expanded — so trying each in turn and stopping at the
-                # first real hit needs no separate is_expanded() guard.
-                # Reselect the row directly (see collapse()'s own
-                # docstring) for the same reason do_apply_reselect's
-                # reselect_item_id branch exists — the id this had
-                # selected a moment ago (an action within the slot) is
-                # about to vanish from nav_items() the instant collapse()
-                # runs. All three modules share the same "module:value:row"
-                # id shape, confirmed live before relying on it here.
+                # Escape collapses whichever two-level module is
+                # expanded, back to browsing. collapse() is safe to call
+                # unconditionally — all three mirror sessions.py's own,
+                # returning None as a no-op when nothing was expanded —
+                # so trying each in turn needs no is_expanded() guard.
+                # All three share the same "module:value:row" id shape.
                 for mod_name, collapse_fn in (
                     ("sessions", sessions_mode.collapse),
                     ("media", media_mode.collapse),
