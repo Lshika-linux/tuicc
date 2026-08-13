@@ -16,16 +16,13 @@ def setup_theme(theme_config: dict) -> dict:
 
 def reassign_theme_pairs(theme_config: dict) -> dict:
     """The pair-assignment loop, split out of setup_theme() so it can be
-    called again at runtime (e.g. the help menu's live color editor)
-    without re-running curses.start_color()/use_default_colors(), which
-    are meant to run once. Re-running curses.init_pair() for an
-    already-allocated pair number redefines it in place — every cell
-    already drawn with that pair updates on the next refresh, no
-    restart needed. Pair numbers are assigned by iterating
-    theme_config in order, so as long as the same dict (same role set,
-    same order) is passed back in, roles keep the exact pair numbers
-    they already had — this is what makes editing ONE role's value not
-    require reassigning any of the others.
+    called again at runtime (e.g. the live color editor) without
+    re-running curses.start_color()/use_default_colors(). Re-running
+    curses.init_pair() for an already-allocated number redefines it in
+    place, no restart needed. Pair numbers follow theme_config's own
+    iteration order, so passing the same dict back in keeps every
+    role's pair number stable — editing one role never reassigns
+    another's.
     """
     pairs = {}
     pair_number = 1
@@ -39,22 +36,13 @@ def reassign_theme_pairs(theme_config: dict) -> dict:
 
 
 def assign_control_toggle_pairs(control_toggles: list, start_pair_number: int) -> dict:
-    """A second, independent round of curses.init_pair() calls — one
-    per (toggle_index, state_index) that has an explicit `color` (see
-    config.py's _build_control_toggles / VISION.md's R5 control
-    module) — same "assign sequential pair numbers, hand back a lookup
-    dict" idiom as reassign_theme_pairs() above, just keyed by index
-    instead of by a small fixed theme-role name set, since toggle
-    colors are arbitrary-length user config, not roles.
-
-    start_pair_number must be one past whatever pair numbers theme
-    roles already claimed (len(theme_pairs) + 1 at the call site in
-    main.py) so the two ranges can never collide and silently redefine
-    each other's colors. States without an explicit `color` are simply
-    absent from the returned dict — modules/control.py's draw() falls
-    back to a theme default (e.g. "accent"/"text") for those, the same
-    "look it up, fall back if absent" pattern _connection_dot already
-    uses for connected/disconnected.
+    """A second, independent round of curses.init_pair() calls, keyed
+    by (toggle_index, state_index) for entries with an explicit
+    `color` (see config.py's _build_control_toggles). start_pair_number
+    must be one past whatever theme roles already claimed
+    (len(theme_pairs) + 1 in main.py) so the two ranges never collide.
+    States without an explicit `color` are simply absent from the
+    result — modules/control.py's draw() falls back to a theme default.
     """
     pairs = {}
     pair_number = start_pair_number

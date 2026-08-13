@@ -99,18 +99,11 @@ def read_environ(pid: int) -> dict[str, str] | None:
 
 def capture_window(window: Window, region_id: str, provider) -> dict | None:
     """One window's saved-session record, or None if we can't find
-    enough to relaunch it later — no pid available from either
-    get_state() directly (sway) or the provider's resolve_pid()
-    fallback (i3), or the process is already gone by the time we
-    check its cmdline.
-
-    "env" is included when read_environ() succeeds, omitted (not
-    entry=None — cmdline alone is still enough to attempt a relaunch)
-    when it doesn't. Matters because /proc/<pid>/cmdline only ever
-    captures argv *after* any launcher wrapper script has already
-    exec'd into the real process — see
-    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for the
-    concrete failure this enables spawn_detached() to fix on restore.
+    enough to relaunch it later (no pid from get_state()/resolve_pid(),
+    or the process is already gone). "env" is included when
+    read_environ() succeeds, omitted (not entry=None) when it doesn't
+    — see CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for
+    why it matters.
     """
     pid = window.pid if window.pid is not None else provider.resolve_pid(window.id)
     if pid is None:

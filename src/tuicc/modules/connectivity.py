@@ -84,23 +84,13 @@ def _selected_bt_index(devices, selected_id):
 
 
 def _build_rows(ctx, box_h):
-    """One row per line the box will render, in order. Each row is
-    ("wifi_header"|"bt_header", header_text) | ("error", message) |
-    ("empty_slot", label) | ("wifi_item", WifiNetwork) | ("bt_item",
-    BluetoothDevice). draw() renders every kind; nav_items() only
-    emits a NavItem for four of them — but both walk this exact same
-    list, so their row indices can never drift apart.
-
-    WiFi/Bluetooth each get a fixed-slot-plus-scroll window (same
-    windowed_list.py mechanic media.py's/sysmon.py's lists use,
-    ctx.config.connectivity_visible_slots shared between the two
-    sections here) — see CLAUDE/NOTES/design-decisions.md
-    #connectivity-module-design for why, and for the header+trigger
-    shared-row layout. box_h is accepted (signature symmetry with
-    media.py's own _build_rows) but unused: windowed_list.section_rows
-    always returns exactly `visible_slots` rows regardless of the box's
-    real height; draw()/nav_items()'s own `row >= y + h - 1` check is
-    what actually clips against a too-small box.
+    """One row per line the box will render, in order — the single
+    source of truth draw() and nav_items() both walk, so their row
+    indices can never drift apart. WiFi/Bluetooth each get a
+    fixed-slot-plus-scroll window (windowed_list.py, shared with
+    media.py/sysmon.py) — see CLAUDE/NOTES/design-decisions.md
+    #connectivity-module-design. box_h is accepted for signature
+    symmetry with media.py's _build_rows but unused here.
     """
     wifi_networks = ctx.wifi_networks
     bluetooth_devices = ctx.bluetooth_devices
