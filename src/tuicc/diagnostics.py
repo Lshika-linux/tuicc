@@ -92,15 +92,14 @@ def is_oom_message(message: str) -> bool:
 
 def dedupe_general_errors(entries: list[dict]) -> list[dict]:
     """Collapses repeated (identifier, message) pairs into one entry
-    with a "count" plus first/last-seen timestamps — found live: a real
-    journal has had the identical "Bluetooth:
-    hci0: Reading supported features failed (-16)" kernel line appear
-    multiple times within the same short window (a driver retry loop),
-    and showing that as N separate diagnostic lines would bury
-    genuinely distinct issues under repetition of one root cause.
-    Order-preserving — first occurrence's position determines where
-    the collapsed entry lands in the result, so the breakdown reads in
-    a stable, chronological-ish order rather than being re-sorted.
+    with a "count" plus first/last-seen timestamps — a driver retry
+    loop can log the identical kernel line (e.g. "Bluetooth: hci0:
+    Reading supported features failed (-16)") many times within one
+    short window, and showing that as N separate diagnostic lines would
+    bury genuinely distinct issues under repetition of one root cause.
+    Order-preserving — first occurrence's position determines where the
+    collapsed entry lands in the result, so the breakdown reads in a
+    stable, chronological-ish order rather than being re-sorted.
     """
     seen_order = []
     grouped = {}

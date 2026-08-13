@@ -85,14 +85,13 @@ def draw(stdscr, box, ctx, module_name):
 
         draw_box_outline(stdscr, item_y, x + 1, item_h, w - 2, border_color)
 
-        # Found live, asked for directly: launching an app from
-        # ANYWHERE (ambient typing — see VISION.md's own "start typing
-        # from anywhere" identity commitment) always targets ctx.focus_id,
-        # regardless of which module you were actually browsing when you
-        # started typing — which workspace that actually IS wasn't
-        # visible anywhere while typing. Label the one slot it's
-        # actually going to land on, live, for as long as typing_mode
-        # stays true.
+        # Launching an app from anywhere (ambient typing — see
+        # CLAUDE/VISION.md's "start typing from anywhere" identity
+        # commitment) always targets ctx.focus_id, regardless of which
+        # module you were actually browsing when you started typing —
+        # without this, which workspace that actually is wasn't visible
+        # anywhere while typing. Label the one slot it's actually going
+        # to land on, live, for as long as typing_mode stays true.
         is_launch_target = ctx.typing_mode and ctx.focus_id == ws_id
         if is_launch_target:
             label = f" {ws_id} - launching here "

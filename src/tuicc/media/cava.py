@@ -63,11 +63,10 @@ mono_option = average
 
 def parse_cava_line(line: str) -> list[int]:
     """Pure logic half of reading a frame — cava's raw/ascii output is
-    one semicolon-delimited line of bar-height integers per frame
-    (confirmed live against a real cava run before this module was
-    written). Split out from _read_loop so it's testable without a real
-    subprocess, same split mpris.py's own filter_mpris_names/
-    parse_metadata make for the D-Bus side.
+    one semicolon-delimited line of bar-height integers per frame,
+    confirmed against a real cava run. Split out from _read_loop so
+    it's testable without a real subprocess, same split mpris.py's own
+    filter_mpris_names/parse_metadata make for the D-Bus side.
     """
     return [int(v) for v in line.strip().split(";") if v]
 

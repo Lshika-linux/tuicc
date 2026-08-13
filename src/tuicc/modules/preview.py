@@ -24,12 +24,10 @@ def draw(stdscr, box, ctx, module_name):
     showing_preview = ctx.selected_item is not None and ctx.selected_item.preview_text is not None
 
     # A preview marked urgent (NavItem.preview_urgent — sysmon.py's
-    # diagnostics row when it has real issues, not "all clear") colors
-    # the WHOLE border urgent, taking priority over the plain active/
-    # selected styling below — found live, asked for: the border is
-    # what signals "pay attention here" everywhere else in this
-    # codebase, so a preview showing a real problem should color that
-    # border too, not just the text inside it.
+    # diagnostics row when it has real issues) colors the whole border
+    # urgent, taking priority over the plain active/selected styling
+    # below — the border is what signals "pay attention here"
+    # everywhere else in this codebase.
     if showing_preview and ctx.selected_item.preview_urgent:
         outer_color = theme.get("urgent", 0)
     elif is_active:
@@ -37,14 +35,13 @@ def draw(stdscr, box, ctx, module_name):
     else:
         outer_color = theme.get("border", 0)
 
-    # Camera-viewfinder corner marks for the module's OWN outer box —
-    # asked for live, specifically the opposite of _draw_window()'s own
-    # per-window boxes below (which stay full outlines): this is the
-    # one box in the module that never overlaps anything else, so
-    # there's no "competing lines" problem to solve here, just the
-    # look itself. arm=2, bigger than _draw_window()'s implicit
-    # default — a large box reads better with a proportionally longer
-    # corner arm than a small one would.
+    # Camera-viewfinder corner marks for the module's own outer box —
+    # the opposite of _draw_window()'s own per-window boxes below
+    # (which stay full outlines): this is the one box in the module
+    # that never overlaps anything else, so there's no "competing
+    # lines" problem to solve, just the look itself. arm=2, bigger than
+    # _draw_window()'s implicit default — a large box reads better with
+    # a proportionally longer corner arm than a small one would.
     draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:

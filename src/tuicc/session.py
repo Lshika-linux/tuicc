@@ -83,8 +83,9 @@ def read_environ(pid: int) -> dict[str, str] | None:
     read_cmdline(), but unlike read_cmdline() this one being
     uncapturable doesn't sink the whole window: env is a restore-
     reliability enhancement, not a hard requirement (a plain relaunch
-    without it works for most apps — see spawn_detached()'s docstring
-    for the case, found live, where it doesn't).
+    without it works for most apps — see
+    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for a case
+    where it doesn't).
     """
     try:
         with open(f"/proc/{pid}/environ", "rb") as f:

@@ -39,10 +39,9 @@ def draw_corner_marks(stdscr, y, x, h, w, color_pair=0, arm=1):
     """Open corner brackets — a short horizontal + vertical arm at each
     of a box's 4 corners — instead of draw_box_outline()'s full
     rectangle. A minimalist alternative border style (seen in swcc's
-    own window preview), asked for specifically to cut visual clutter
-    where full outlines would otherwise cross/compete with each other
-    in a dense area — modules/preview.py's per-window boxes commonly
-    overlap.
+    own window preview) that cuts visual clutter where full outlines
+    would otherwise cross/compete with each other in a dense area —
+    modules/preview.py's per-window boxes commonly overlap.
 
     arm is clamped so opposite corners' arms never touch/overlap on a
     small box (leaves at least one gap cell between them on each
@@ -93,16 +92,11 @@ def draw_centered_lines(stdscr, box, lines):
 
     When there are more lines than fit in one column, spills into a
     second column side by side instead of overflowing past the box's
-    own border — found live: sysmon.py's diagnostics breakdown (a
-    single flapping driver's crash dump, 74 distinct dmesg lines) wrote
-    its very first line directly ONTO the box's own top border. The
-    original single-column centering math only clamped its starting
-    row to >= 0 (the SCREEN edge), not >= "the first row actually
-    inside this box's own border" — with more lines than the box had
-    rows for, that clamp landed exactly on the border row itself, not
-    one row below it. Genuinely too much even for two columns still
-    truncates, with a "+N more" marker as the last visible line, rather
-    than trying a third column.
+    own border — see CLAUDE/VISION.md's R6 section for the bug this
+    fixes (a long diagnostics breakdown writing its first line onto the
+    box's own top border). Genuinely too much even for two columns
+    still truncates, with a "+N more" marker as the last visible line,
+    rather than trying a third column.
     """
     x, y, w, h = box
     inner_w = max(w - 2, 0)

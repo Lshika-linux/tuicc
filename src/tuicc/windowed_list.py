@@ -109,11 +109,10 @@ def section_rows(items: list | None, error: str | None, selected_index: int | No
 
 def header_with_count(title: str, items: list | None) -> str:
     """Header text with the section's total real item count appended —
-    "Now Playing [6]" — found live, asked for: with fixed-slot windowing
-    only ever showing `visible_slots` of a possibly-longer list at
-    once, the header's own count is what makes "there's more than what
-    you're looking at right now" legible at a glance, not just
-    discoverable by scrolling into it.
+    "Now Playing [6]". With fixed-slot windowing only ever showing
+    `visible_slots` of a possibly-longer list at once, the header's own
+    count is what makes "there's more than what you're looking at right
+    now" legible at a glance, not just discoverable by scrolling into it.
 
     Omitted (bare title, no "[N]") when the count itself is unknown —
     items is None, whether that means "not polled yet" or "the last

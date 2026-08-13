@@ -44,12 +44,11 @@ _CPU_PACKAGE_CANDIDATES = (
     ("k10temp", ("Tctl", "Tdie")),
 )
 
-# Friendly display names for common sensors-exposed chip prefixes —
-# found live, asked for: "coretemp-isa-0000" / "nvme-pci-3d00" read as
-# noise to a non-technical user, "CPU" / "NVMe" don't. Deliberately
-# small and not exhaustive — describe_sensor() falls back to the raw
-# chip name (up to its first "-") for anything not listed here, still
-# readable, just less polished.
+# Friendly display names for common sensors-exposed chip prefixes:
+# "coretemp-isa-0000" / "nvme-pci-3d00" read as noise, "CPU" / "NVMe"
+# don't. Deliberately small and not exhaustive — describe_sensor()
+# falls back to the raw chip name (up to its first "-") for anything
+# not listed here, still readable, just less polished.
 _CHIP_FRIENDLY_NAMES = {
     "coretemp": "CPU",
     "k10temp": "CPU",

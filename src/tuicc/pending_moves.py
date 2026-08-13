@@ -154,7 +154,7 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
         session_entry["cmdline"], shell_true=False, log_path=log_path,
         env=session_entry.get("env"),
     )
-    # See Provider.no_focus_next_window()'s docstring — asked for right
+    # See Provider.no_focus_next_window()'s docstring — called right
     # after the pid is known, well before the restored window has had a
     # chance to map and steal focus/fullscreen from tuicc.
     provider.no_focus_next_window(pid)
