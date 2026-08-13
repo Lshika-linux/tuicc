@@ -238,6 +238,86 @@ def toggle_dimension(state: ResizeState) -> None:
     state.dimension = "move" if state.dimension == "size" else "size"
 
 
+@dataclass
+class EditKeyResult:
+    """What main()'s dispatch does after one keypress while editing a
+    box. still_claiming mirrors every other MODE_HANDLERS entry's
+    contract. handoff/deleted_name communicate the two things this
+    function can't act on itself — mode_stack and active_module are
+    both main-loop-owned state (see CLAUDE/GUIDE.md) — so main.py's own
+    wrapper reads them and acts, instead of resize_mode.py reaching
+    back into main.py's closures.
+    """
+    still_claiming: bool
+    handoff: str | None = None
+    deleted_name: str | None = None
+
+
+def _handoff(state: ResizeState, name: str) -> EditKeyResult:
+    """Shared by every F-key branch in handle_editing_key — same "one
+    choke point" reasoning main.py's own now-retired handoff() helper
+    had, so a future handoff target can't forget commit_box_editing.
+    """
+    commit_box_editing(state)
+    return EditKeyResult(still_claiming=True, handoff=name)
+
+
+def handle_editing_key(
+    state: ResizeState, key: int, cfg,
+    active_module: str, direction_keys: dict,
+    boxes: dict, term_width: int, term_height: int,
+) -> EditKeyResult:
+    """cfg passed wholesale, matching launcher.handle_typing_key/
+    sessions.handle_naming_key/sysmon.handle_nice_key's own established
+    shape — reading cfg.keybinds/cfg.layout.boxes as a value is fine;
+    the module-boundary rule is about not importing config.py to build
+    or persist a Config, which this doesn't do.
+
+    active_module is never None here: every call path that can enter
+    editing (browsing's confirm, the spawn picker's own handoff) sets
+    it to a real name first — an invariant enforced by call-site
+    discipline, not the type system (no mypy in this repo).
+    """
+    if state.confirm_delete:
+        if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
+            deleted_name = state.box.name
+            confirm_delete_yes(state, cfg.layout.boxes)
+            return EditKeyResult(still_claiming=False, deleted_name=deleted_name)
+        if key == cfg.keybinds["confirm_no"]:
+            confirm_delete_no(state)
+        return EditKeyResult(still_claiming=True)  # any other key — editing untouched
+    if key in direction_keys:
+        x_cells, y_cells, w_cells, h_cells = boxes[active_module]
+        apply_direction(state, direction_keys[key], term_width, term_height, x_cells, y_cells, w_cells, h_cells)
+    elif key == cfg.keybinds["move_toggle"]:
+        toggle_dimension(state)
+    elif key == cfg.keybinds["delete_box"]:
+        request_delete(state, state.box)
+    elif key == cfg.keybinds["confirm"]:
+        commit_box_editing(state)
+        return EditKeyResult(still_claiming=False)
+    elif key == 27:  # Escape
+        escape_box_editing(state, cfg.layout.boxes)
+        return EditKeyResult(still_claiming=False)
+    elif key == cfg.keybinds["spawn_box"]:
+        return _handoff(state, "spawn_box")
+    elif key == cfg.keybinds["resize"]:
+        return _handoff(state, "resize")
+    elif key == cfg.keybinds["save_layout"]:
+        return _handoff(state, "save_layout")
+    elif key == cfg.keybinds["cycle_preset"]:
+        return _handoff(state, "cycle_preset")
+    elif key == cfg.keybinds["new_preset"]:
+        return _handoff(state, "new_preset")
+    elif key == cfg.keybinds["help"]:
+        return _handoff(state, "help")
+    # LOAD-BEARING: direction_keys/move_toggle/delete_box fall through
+    # to here, as does any unrecognized key. Remove this and they
+    # return still_claiming=False by default — the generic dispatch
+    # pops, silently ending the whole editing session on a stray key.
+    return EditKeyResult(still_claiming=True)
+
+
 def hint_text(state: ResizeState, active_module: str) -> str:
     if state.confirm_delete:
         return f"Delete {active_module}? y/n"

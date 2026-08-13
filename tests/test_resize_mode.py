@@ -27,7 +27,33 @@ from tuicc.resize_mode import (
     open_picker,
     choose,
     spawn_hint_text,
+    EditKeyResult,
+    handle_editing_key,
 )
+
+
+class _FakeConfig:
+    """Just enough of Config to exercise handle_editing_key's key
+    lookups — matches test_launcher.py's/test_actions.py's own
+    _FakeConfig convention (arbitrary distinct ints, not real curses
+    codes; only distinctness matters for branch selection)."""
+    keybinds = {
+        "confirm_yes": 1, "confirm_no": 2, "confirm": 3,
+        "move_toggle": 4, "delete_box": 5,
+        "spawn_box": 6, "resize": 7, "save_layout": 8,
+        "cycle_preset": 9, "new_preset": 10, "help": 11,
+    }
+
+    def __init__(self, boxes=None):
+        self.layout = _FakeLayout(boxes or [])
+
+
+class _FakeLayout:
+    def __init__(self, boxes):
+        self.boxes = boxes
+
+
+_DIRECTION_KEYS = {100: "right", 101: "left"}
 
 
 # ---------- enter_resize / cancel_resize ----------
@@ -435,3 +461,149 @@ def test_spawn_hint_text_lists_numbered_choices():
 
     assert "1 clock" in text
     assert "2 sessions" in text
+
+
+# ---------- handle_editing_key ----------
+
+def _editing_state(box):
+    state = ResizeState()
+    enter_box_editing(state, box)
+    return state
+
+
+def test_handle_editing_key_direction_key_resizes_and_keeps_claiming():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    cfg = _FakeConfig()
+    boxes = {"sidebar": (0, 0, 50, 20)}
+
+    result = handle_editing_key(state, 100, cfg, "sidebar", _DIRECTION_KEYS, boxes, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True)
+    assert box.w == 0.51
+
+
+def test_handle_editing_key_move_toggle_flips_dimension():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    cfg = _FakeConfig()
+
+    result = handle_editing_key(state, cfg.keybinds["move_toggle"], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True)
+    assert state.dimension == "move"
+
+
+def test_handle_editing_key_delete_box_requests_confirmation():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    cfg = _FakeConfig()
+
+    result = handle_editing_key(state, cfg.keybinds["delete_box"], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True)
+    assert state.confirm_delete is True
+
+
+def test_handle_editing_key_confirm_commits_and_ends_claim():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    box.w = 0.7  # in-progress change
+    cfg = _FakeConfig()
+
+    result = handle_editing_key(state, cfg.keybinds["confirm"], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=False)
+    assert state.editing is False  # back to browsing, not exited
+    assert box.w == 0.7  # not reverted
+
+
+def test_handle_editing_key_escape_reverts_and_ends_claim():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    box.w = 0.7
+    cfg = _FakeConfig(boxes=[box])
+
+    result = handle_editing_key(state, 27, cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=False)
+    assert box.w == 0.5  # reverted
+
+
+def test_handle_editing_key_confirm_delete_yes_returns_deleted_name():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    state.confirm_delete = True
+    cfg = _FakeConfig(boxes=[box])
+
+    result = handle_editing_key(state, cfg.keybinds["confirm_yes"], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=False, deleted_name="sidebar")
+    assert box not in cfg.layout.boxes
+
+
+def test_handle_editing_key_confirm_delete_via_plain_confirm_also_deletes():
+    # confirm (Enter) is an accepted alternate to confirm_yes here too —
+    # same pattern as every other Y/N site in the codebase.
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    state.confirm_delete = True
+    cfg = _FakeConfig(boxes=[box])
+
+    result = handle_editing_key(state, cfg.keybinds["confirm"], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result.deleted_name == "sidebar"
+
+
+def test_handle_editing_key_confirm_delete_no_cancels_and_keeps_claiming():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    state.confirm_delete = True
+    cfg = _FakeConfig(boxes=[box])
+
+    result = handle_editing_key(state, cfg.keybinds["confirm_no"], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True)
+    assert state.confirm_delete is False
+    assert box in cfg.layout.boxes
+
+
+def test_handle_editing_key_confirm_delete_any_other_key_leaves_it_pending():
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    state.confirm_delete = True
+    cfg = _FakeConfig(boxes=[box])
+
+    result = handle_editing_key(state, 999, cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True)
+    assert state.confirm_delete is True  # still pending, untouched
+
+
+@pytest.mark.parametrize("keybind_name", [
+    "spawn_box", "resize", "save_layout", "cycle_preset", "new_preset", "help",
+])
+def test_handle_editing_key_handoff_branches_commit_and_signal(keybind_name):
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    box.w = 0.7  # in-progress change — must survive the handoff (no revert)
+    cfg = _FakeConfig(boxes=[box])
+
+    result = handle_editing_key(state, cfg.keybinds[keybind_name], cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True, handoff=keybind_name)
+    assert state.editing is False  # commit_box_editing ran — back to browsing
+    assert box.w == 0.7  # not reverted
+
+
+def test_handle_editing_key_unrecognized_key_keeps_claiming():
+    # LOAD-BEARING: a stray key must not silently end the editing
+    # session — see the matching comment on handle_editing_key itself.
+    box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.5, h=0.5)
+    state = _editing_state(box)
+    cfg = _FakeConfig()
+
+    result = handle_editing_key(state, 12345, cfg, "sidebar", {}, {}, 100, 40)
+
+    assert result == EditKeyResult(still_claiming=True)
+    assert state.editing is True

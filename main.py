@@ -448,59 +448,31 @@ def main(stdscr):
             return True  # stack already correctly arranged
         return False
 
-    def handoff(do_fn):
-        # Shared by every F-key branch inside handle_resize_editing
-        # below — same self-pop-before-delegating shape as
-        # handle_spawn_picker's own handoff above.
-        resize_mode.commit_box_editing(resize)
-        mode_stack.pop()
-        do_fn()
-        return True
+    # Keyed by the same names as cfg.keybinds/resize_mode.EditKeyResult's
+    # own handoff strings — one vocabulary, not two. Change resize_mode's
+    # _handoff() call sites and this dict together; nothing else needs
+    # to change in sync.
+    HANDOFF_TARGETS = {
+        "spawn_box": do_spawn_picker,
+        "resize": do_enter_resize,
+        "save_layout": do_save_layout,
+        "cycle_preset": do_cycle_preset,
+        "new_preset": do_new_preset,
+        "help": do_enter_help,
+    }
 
     def handle_resize_editing(key):
         nonlocal active_module
-        if resize.confirm_delete:
-            if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
-                deleted_name = resize.box.name
-                resize_mode.confirm_delete_yes(resize, cfg.layout.boxes)
-                if active_module == deleted_name:
-                    active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
-                return False  # confirm_delete_yes unconditionally ends editing
-            if key == cfg.keybinds["confirm_no"]:
-                resize_mode.confirm_delete_no(resize)
-            return True  # confirm_no, or any other key — editing untouched either way
-        if key in direction_keys:
-            x_cells, y_cells, w_cells, h_cells = boxes[active_module]
-            resize_mode.apply_direction(
-                resize, direction_keys[key], term_width, term_height, x_cells, y_cells, w_cells, h_cells
-            )
-        elif key == cfg.keybinds["move_toggle"]:
-            resize_mode.toggle_dimension(resize)
-        elif key == cfg.keybinds["delete_box"]:
-            resize_mode.request_delete(resize, resize.box)
-        elif key == cfg.keybinds["confirm"]:
-            resize_mode.commit_box_editing(resize)
-            return False
-        elif key == 27:  # Escape
-            resize_mode.escape_box_editing(resize, cfg.layout.boxes)
-            return False
-        elif key == cfg.keybinds["spawn_box"]:
-            return handoff(do_spawn_picker)
-        elif key == cfg.keybinds["resize"]:
-            return handoff(do_enter_resize)
-        elif key == cfg.keybinds["save_layout"]:
-            return handoff(do_save_layout)
-        elif key == cfg.keybinds["cycle_preset"]:
-            return handoff(do_cycle_preset)
-        elif key == cfg.keybinds["new_preset"]:
-            return handoff(do_new_preset)
-        elif key == cfg.keybinds["help"]:
-            return handoff(do_enter_help)
-        # LOAD-BEARING: direction_keys/move_toggle/delete_box fall
-        # through to here, as does any unrecognized key. Remove this and
-        # they return None (falsy) — the generic dispatch pops, silently
-        # ending the whole editing session on a stray keypress.
-        return True
+        result = resize_mode.handle_editing_key(
+            resize, key, cfg, active_module, direction_keys, boxes, term_width, term_height
+        )
+        if result.deleted_name is not None and active_module == result.deleted_name:
+            active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
+        if result.handoff is not None:
+            mode_stack.pop()
+            HANDOFF_TARGETS[result.handoff]()
+            return True  # stack already correctly arranged, don't pop again
+        return result.still_claiming
 
     MODE_HANDLERS = {
         "sessions_naming": handle_sessions_naming,
