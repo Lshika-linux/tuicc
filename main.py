@@ -385,10 +385,14 @@ def main(stdscr):
     # checked directly. None means no one has stolen input — an
     # unbound printable key auto-claims for the launcher (ambient
     # "type anywhere" is sugar for that auto-claim), same as before.
-    # Three consumers so far: "launcher" (typing/search), "help_colors"
-    # (help_mode's inline color editor), "sessions_naming" (sessions.py's
-    # rename field) — all genuine text-input claims, the shape R2 was
-    # designed for. resize_mode's own two-level browsing/editing session
+    # Consumers: "launcher" (typing/search), "help_colors" (help_mode's
+    # inline color editor), "connectivity_passphrase"/"connectivity_pairing"
+    # (modules/connectivity.py) — all genuine text-input claims, the
+    # shape R2 was designed for. sessions_naming/sysmon_nice have
+    # migrated off this onto mode_stack (see its own comment below,
+    # and CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1) — the
+    # first step of folding this whole variable into that stack.
+    # resize_mode's own two-level browsing/editing session
     # (resize.active/resize.editing) is deliberately NOT migrated onto
     # this — it isn't a text-input claim at all (arrow-key resize
     # deltas, move_toggle, delete_box, F1/F3/F4/F6 reachable from either
@@ -399,6 +403,17 @@ def main(stdscr):
     # by this — this variable is kept in sync with it at every entry/
     # exit point below, not a replacement for it.
     input_claim = None
+
+    # Phase 1 of migrating input_claim's string-tier dispatch onto a real
+    # stack — see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for
+    # the full rationale. Coexists with input_claim above during the
+    # migration: "normal" (never popped) means nothing on the stack is
+    # claiming input, matching input_claim is None; any other top-of-
+    # stack value is looked up in MODE_HANDLERS below. Only
+    # sessions_naming/sysmon_nice are migrated so far — every other
+    # tier (connectivity/help/launcher/spawn_picker/resize) still runs
+    # through input_claim or its own dedicated bool, unchanged.
+    mode_stack: list[str] = ["normal"]
 
     # True from the moment dismiss_self() is called until the next real
     # keypress arrives (a keypress can only reach tuicc's own terminal
@@ -546,6 +561,37 @@ def main(stdscr):
             selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
         action_ctx.reselect_region_id = None
 
+    # mode_stack's Phase 1 handlers — see CLAUDE/NOTES/design-
+    # decisions.md#mode-stack-phase-1. Same still_claiming (bool)
+    # contract every other input_claim consumer already uses; kept as
+    # closures here (not moved into sessions.py/sysmon.py) because
+    # sessions_naming needs cfg.session_names/set_session_name, and no
+    # module in this codebase imports config.py — that boundary stays
+    # main.py's, same as help_colors' cfg.theme/theme_pairs writes.
+    # Both reproduce, unchanged, exactly what their old
+    # `if input_claim == "..."` block did.
+    def handle_sessions_naming(key):
+        if key == cfg.keybinds["confirm"]:
+            result = sessions_mode.apply_naming()
+            if result is not None:
+                slot, new_name = result
+                cfg.session_names[slot] = new_name or f"Slot {slot}"
+                set_session_name(slot, new_name)
+                return False
+            return True
+        return sessions_mode.handle_naming_key(key)
+
+    def handle_sysmon_nice(key):
+        if key == cfg.keybinds["confirm"]:
+            result = sysmon_mode.apply_nice_edit()
+            return result is None
+        return sysmon_mode.handle_nice_key(key)
+
+    MODE_HANDLERS = {
+        "sessions_naming": handle_sessions_naming,
+        "sysmon_nice": handle_sysmon_nice,
+    }
+
     def any_two_level_module_expanded():
         # sessions.py and media.py each own a two-level browsing/
         # expanded session (see media.py's own module docstring for
@@ -641,6 +687,16 @@ def main(stdscr):
             connectivity_wants_input = (
                 input_claim is None and pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
+                # mode_stack's own tiers (sessions_naming/sysmon_nice so
+                # far) must gate this the same way input_claim's other
+                # tiers already do — without this, this guard goes stale
+                # the moment a tier migrates off input_claim, since
+                # input_claim stays None for that tier's whole lifetime
+                # and this check would then wrongly see "nothing
+                # claimed" while a rename/NICE edit is still open. Found
+                # in review before it shipped, not live — see
+                # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
+                and mode_stack[-1] == "normal"
             )
             # Also fires while ALREADY in one of these two tiers, not
             # just when claiming input fresh — a wrong passphrase makes
@@ -1039,42 +1095,16 @@ def main(stdscr):
                     input_claim = None
                 continue
 
-            if input_claim == "sessions_naming":
-                # Second consumer of R2's input_claim (see its own
-                # comment near where it's declared) — a narrow key-
-                # capture hijack, not a full modal like help_state.active/
-                # resize.active. The early `continue` here is what keeps
-                # Tab/other keys from leaking through to the normal
-                # dispatch chain mid-rename (handle_naming_key itself
-                # just ignores anything outside backspace/Escape/
-                # printable-ASCII, so a stray Tab is silently a no-op,
-                # not a navigation change).
-                if key == cfg.keybinds["confirm"]:
-                    result = sessions_mode.apply_naming()
-                    if result is not None:
-                        slot, new_name = result
-                        cfg.session_names[slot] = new_name or f"Slot {slot}"
-                        set_session_name(slot, new_name)
-                        input_claim = None
-                elif not sessions_mode.handle_naming_key(key):
-                    input_claim = None
-                continue
-
-            if input_claim == "sysmon_nice":
-                # Fourth consumer of R2's input_claim — sysmon.py's own
-                # NICE value entry, same narrow key-capture shape as
-                # sessions_naming right above (a digits-only field, not
-                # a full modal). apply_nice_edit() itself calls
-                # os.setpriority() — there's no cfg/theme state to
-                # thread through here the way sessions_naming's rename
-                # needs cfg.session_names/set_session_name, so this
-                # tier is even simpler than that one.
-                if key == cfg.keybinds["confirm"]:
-                    result = sysmon_mode.apply_nice_edit()
-                    if result is not None:
-                        input_claim = None
-                elif not sysmon_mode.handle_nice_key(key):
-                    input_claim = None
+            if mode_stack[-1] != "normal":
+                # sessions_naming/sysmon_nice, Phase 1 of migrating
+                # input_claim's string-tier dispatch onto a real stack —
+                # same priority slot the two old `input_claim == "..."`
+                # blocks this replaces used to occupy (after
+                # connectivity_pairing, before help_colors). See
+                # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
+                still_claiming = MODE_HANDLERS[mode_stack[-1]](key)
+                if not still_claiming:
+                    mode_stack.pop()
                 continue
 
             if input_claim == "help_colors":
@@ -1300,16 +1330,18 @@ def main(stdscr):
                 # this is where main.py notices and claims input on its
                 # behalf, mirroring how help_state's own "confirm" branch
                 # sets input_claim = "help_colors" right next to its own
-                # start_color_edit() call above.
+                # start_color_edit() call above. Pushed onto mode_stack,
+                # not input_claim — see CLAUDE/NOTES/design-decisions.md
+                # #mode-stack-phase-1.
                 if sessions_mode.is_naming():
-                    input_claim = "sessions_naming"
+                    mode_stack.append("sessions_naming")
                 # sysmon.py's own NICE action calls start_nice_edit() on
                 # itself (module-owned state, same as sessions.py's
                 # naming field) — same "main.py notices right after
                 # dispatch, claims input on the module's behalf" idiom
                 # as sessions_naming/help_colors above.
                 if sysmon_mode.is_editing_nice():
-                    input_claim = "sysmon_nice"
+                    mode_stack.append("sysmon_nice")
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
