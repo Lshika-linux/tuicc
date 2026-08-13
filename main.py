@@ -72,21 +72,15 @@ from tuicc.modules import sidebar as sidebar_mode
 
 def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, visible_slots):
     """Fills in `pid` for any procmon.WindowInfo currently missing one
-    (i3 has no native pid on its own IPC tree — see providers/base.py's
-    resolve_pid() docstring) via Provider.resolve_pid(), main-thread,
-    and only for windows within sysmon.py's own currently-visible
-    scroll window (sysmon_mode.visible_window_ids) — resolve_pid() is a
-    real, possibly-slow on-demand X11 lookup on i3, so resolving every
-    window on every frame regardless of visibility would waste work on
-    a long, mostly-scrolled-out-of-view list.
-
-    Resolved pids are cached indefinitely per window_id in
-    `resolved_pid_cache` (main.py's own dict, not the WindowInfo
-    objects, which are rebuilt fresh every frame) — a closed window's
-    orphaned cache entry is harmless and small enough not to bother
-    clearing, same accepted-small-growth tradeoff
-    Provider.no_focus_next_window's for_window rules document (see
-    CLAUDE/NOTES/wm-quirks.md#no-focus-pid-criteria).
+    (i3 has no native pid on its IPC tree — see providers/base.py's
+    resolve_pid()) via Provider.resolve_pid(), main-thread, only for
+    windows within sysmon.py's currently-visible scroll window — a
+    possibly-slow on-demand X11 lookup on i3, so resolving every window
+    every frame would waste work on a long, scrolled-out-of-view list.
+    Resolved pids are cached indefinitely in `resolved_pid_cache` (not
+    on WindowInfo, rebuilt fresh every frame) — a closed window's
+    orphaned entry is harmless, same accepted-growth tradeoff as
+    CLAUDE/NOTES/wm-quirks.md#no-focus-pid-criteria.
     """
     visible_ids = sysmon_mode.visible_window_ids(windows, selected_id, visible_slots)
     resolved = []

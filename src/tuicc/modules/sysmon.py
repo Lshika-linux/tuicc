@@ -98,17 +98,12 @@ def handle_nice_key(key: int) -> bool:
 
 def apply_nice_edit() -> tuple[str, int] | None:
     """(window_id, applied_value) on success. Applies immediately via
-    os.setpriority — this IS the confirm action itself, no further
-    pending_confirm dialog on top (NICE was explicitly agreed safe
-    enough not to need one, unlike KILL). None (edit stays open, same
-    "invalid keeps editing open" idea help_mode's own color editor
-    uses) when the typed value is empty, unparseable, or outside
-    0..19 — a permission failure from setpriority itself (a pid this
-    process doesn't own) is deliberately NOT caught here, it propagates
-    to whatever main.py's own exception handling does with an
-    unexpected error, same no-silent-failure stance as everywhere else
-    (this is a REAL failure, unlike "value out of range", which is
-    just user input to correct, not an error).
+    os.setpriority — no confirm dialog on top (NICE is safe enough not
+    to need one, unlike KILL). None (edit stays open) when the typed
+    value is empty, unparseable, or outside 0..19. A real setpriority
+    permission failure is deliberately not caught here — it propagates,
+    same no-silent-failure stance as elsewhere, unlike "out of range"
+    which is just correctable user input.
     """
     global _nice_target, _nice_input
     if _nice_target is None:
@@ -174,22 +169,13 @@ def _resource_drain_key(cpu_percent: float | None, rss_kb: int | None):
 
 
 def sort_windows_by_drain(windows: list, known_stats: list | None = None) -> list:
-    """Most resource-intensive window first.
-
-    `windows` items are expected to carry their own .cpu_percent/
-    .rss_kb (procmon.WindowStat — what _build_rows()/nav_items() work
-    with) UNLESS `known_stats` is given (a list of WindowStat, matched
-    by .window_id), in which case each item's cpu/rss is looked up
-    there instead. main.py needs that second form: its own per-frame
-    window list (procmon.WindowInfo, from flatten_windows()) has no
-    cpu/rss of its own — this frame's real sample only exists once the
-    background "windows" Domain's NEXT poll runs — so it sorts by the
-    MOST RECENTLY KNOWN sample instead (status_worker.get("windows")),
-    keeping visible_window_ids() looking at the same order draw()/
-    nav_items() will actually show. Self-correcting the same one-poll-
-    interval lag every other Domain-backed list in this codebase
-    already tolerates (wifi/bluetooth scans, etc.) — not a new kind of
-    staleness.
+    """Most resource-intensive window first. `windows` items normally
+    carry their own .cpu_percent/.rss_kb (procmon.WindowStat) unless
+    `known_stats` is given (matched by .window_id) — main.py needs that
+    form since its own per-frame window list has no cpu/rss until the
+    background "windows" Domain's next poll runs, so it sorts by the
+    most recently known sample instead, keeping visible_window_ids()
+    in the same order draw()/nav_items() show.
     """
     lookup = {s.window_id: s for s in known_stats} if known_stats is not None else None
 
@@ -285,19 +271,12 @@ GRID_COL_WIDTH = 18
 
 def _grid_row(cells: list[tuple[str, list[tuple[str, str]]]]) -> list[tuple[str, str]]:
     """Joins (label, value_segments) pairs into one row of (text, role)
-    segments — role in {"label", "value", "urgent"}, resolved to an
-    actual theme color by draw() (this function stays pure/curses-free,
-    same reasoning every other formatting helper here does).
-
-    value_segments lets one value carry a differently-colored suffix —
-    HOT's own THROTTLED marker (see _format_stats_grid) needs to stay
-    urgent-red even though the temperature reading right before it is
-    plain text.
-
-    Every cell except the last is padded/truncated to GRID_COL_WIDTH so
-    the next column lines up; the last cell is left its natural length.
-    See CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why this
-    matters for HOT's own describe_sensor() label specifically.
+    segments — role in {"label", "value", "urgent"}, resolved to a
+    theme color by draw() (stays pure/curses-free). value_segments lets
+    one value carry a differently-colored suffix (HOT's THROTTLED
+    marker). Every cell except the last is padded/truncated to
+    GRID_COL_WIDTH; the last keeps its natural length — see
+    CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why.
     """
     segments: list[tuple[str, str]] = []
     for i, (label, value_segments) in enumerate(cells):
@@ -356,16 +335,11 @@ def _temp_text(value: float | None) -> str:
 def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: dict | None,
                           block: dict) -> tuple[str, list[tuple[str, str]]]:
     """(label, value_segments) for ONE configured [[sysmon.block]]
-    entry — the single place that knows how to turn each known metric
-    name into display text + a severity role (see _severity_role).
-    `block` carries this metric's own warning/urgent thresholds — None
-    for either means this block is never threshold-colored at all
-    (load/swap's own packaged default, see DEFAULT_SYSMON_BLOCKS in
-    config.py), not just "always plain" by coincidence.
-
-    Any single value that's currently unknown (a poll that hasn't
-    completed yet, or a real poll error) shows as "?" rather than a
-    misleading 0 — same None-vs-0 discipline as everywhere else.
+    entry — turns a metric name into display text + severity role (see
+    _severity_role). `block` carries warning/urgent thresholds; None
+    for either means never threshold-colored (load/swap's default, see
+    DEFAULT_SYSMON_BLOCKS). An unknown value shows "?", not a
+    misleading 0.
     """
     label = block.get("label") or metric.upper()
     warning, urgent = block.get("warning"), block.get("urgent")
@@ -447,18 +421,13 @@ def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: d
 
 def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None,
                         blocks: list[dict]) -> list[list[tuple[str, str]]]:
-    """The System module's own compact stats block — one column per
-    distinct `block["column"]` value, one row per block within that
-    column, in `block["row"]` order (a pure sort key, not a literal
-    shared row index). `blocks` is ctx.config.sysmon_blocks — every
-    block is a real config.toml `[[sysmon.block]]` value (config.py's
-    DEFAULT_SYSMON_BLOCKS reproduces the packaged layout when none are
-    configured) — see CLAUDE/VISION.md's R6 section for why layout and
-    thresholds are config-driven rather than constants here.
-
-    Rendered row-by-row via _grid_row; columns don't all need the same
-    number of rows. A disabled block (enabled=false) is simply skipped,
-    not rendered as an empty cell.
+    """The System module's compact stats block — one column per
+    distinct `block["column"]`, one row per block within it, in
+    `block["row"]` order (a sort key, not a literal shared index).
+    `blocks` is ctx.config.sysmon_blocks — see CLAUDE/VISION.md's R6
+    section for why layout/thresholds are config-driven. Rendered
+    row-by-row via _grid_row; a disabled block is skipped, not an
+    empty cell.
     """
     enabled_blocks = [b for b in blocks if b.get("enabled", True)]
     columns: dict[int, list[tuple[str, list[tuple[str, str]]]]] = {}
