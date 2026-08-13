@@ -73,22 +73,20 @@ from tuicc.modules import sidebar as sidebar_mode
 def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, visible_slots):
     """Fills in `pid` for any procmon.WindowInfo currently missing one
     (i3 has no native pid on its own IPC tree — see providers/base.py's
-    resolve_pid() docstring) by calling Provider.resolve_pid() here,
-    main-thread, and ONLY for windows within sysmon.py's own currently-
-    visible scroll window (sysmon_mode.visible_window_ids, `visible_slots`
-    = cfg.sysmon_visible_slots — a real config.toml value, not a fixed
-    constant, see [sysmon]'s own visible_slots key) — resolve_pid() is a
-    real, possibly-slow on-demand X11 lookup on i3, so doing it for
-    every window on every frame regardless of visibility would be
-    wasted work for a long, mostly-scrolled-out-of-view window list.
+    resolve_pid() docstring) via Provider.resolve_pid(), main-thread,
+    and only for windows within sysmon.py's own currently-visible
+    scroll window (sysmon_mode.visible_window_ids) — resolve_pid() is a
+    real, possibly-slow on-demand X11 lookup on i3, so resolving every
+    window on every frame regardless of visibility would waste work on
+    a long, mostly-scrolled-out-of-view list.
+
     Resolved pids are cached indefinitely per window_id in
-    `resolved_pid_cache` (main.py's own dict, not on the WindowInfo
-    objects themselves, which are rebuilt fresh every frame from
-    `state`) — a window that closes just stops appearing in `windows`
-    on a later frame; its now-orphaned cache entry is harmless and
-    small enough not to bother clearing, same accepted-small-growth
-    tradeoff Provider.no_focus_next_window's own for_window rules
-    already document (see CLAUDE.md).
+    `resolved_pid_cache` (main.py's own dict, not the WindowInfo
+    objects, which are rebuilt fresh every frame) — a closed window's
+    orphaned cache entry is harmless and small enough not to bother
+    clearing, same accepted-small-growth tradeoff
+    Provider.no_focus_next_window's for_window rules document (see
+    CLAUDE/NOTES/wm-quirks.md#no-focus-pid-criteria).
     """
     visible_ids = sysmon_mode.visible_window_ids(windows, selected_id, visible_slots)
     resolved = []
@@ -184,17 +182,15 @@ def main(stdscr):
             },
         ),
         # Their own tiny read-only Domains, not folded into "wifi"/
-        # "bluetooth" above — found live, reported directly: the
-        # "Scanning…"/"Discovering…" label only ever flickered, since
-        # scan()/start_discovery() are fire-and-forget and
-        # StatusWorker.is_pending() only reflects the brief window that
-        # ONE D-Bus call takes, nowhere near the real scan/discovery
-        # duration. is_scanning()/is_discovering() poll the daemon's
-        # own real Scanning/Discovering property instead — see their
-        # own docstrings in iwd.py/bluez.py. Short poll_interval (not
-        # the 5s shared default) so the label catches up promptly —
-        # same reasoning audio/media/battery/brightness's own
-        # poll_interval overrides give.
+        # "bluetooth" above: scan()/start_discovery() are fire-and-
+        # forget, so StatusWorker.is_pending() only reflects the brief
+        # window that ONE D-Bus call takes, nowhere near the real scan/
+        # discovery duration — a "Scanning…"/"Discovering…" label driven
+        # by is_pending() alone would just flicker. is_scanning()/
+        # is_discovering() poll the daemon's own real Scanning/
+        # Discovering property instead — see their own docstrings in
+        # iwd.py/bluez.py. Short poll_interval so the label catches up
+        # promptly, same reasoning audio/media/battery/brightness use.
         Domain(
             name="wifi_scanning",
             poll=wifi_backend.is_scanning,
@@ -223,13 +219,11 @@ def main(stdscr):
                 "set_volume": lambda arg: audio_backend.set_volume(arg[0], arg[1]),
                 "set_mute": lambda arg: audio_backend.set_mute(arg[0], arg[1]),
             },
-            # Shorter than the 5s shared default (see Domain.poll_interval's
-            # own docstring) — found live: the default sink can change
-            # out from under tuicc entirely on its own (WirePlumber
-            # auto-switches to a newly connected bluetooth device,
-            # tuicc never touches request_action for that), so this is
-            # the one domain where the ONLY way to notice a real change
-            # promptly is polling itself, not an action-triggered re-poll.
+            # Shorter than the 5s shared default: the default sink can
+            # change out from under tuicc entirely on its own
+            # (WirePlumber auto-switches to a newly connected bluetooth
+            # device without tuicc ever calling request_action for it),
+            # so polling itself is the only way to notice promptly.
             poll_interval=1,
         ),
         Domain(
@@ -620,31 +614,30 @@ def main(stdscr):
             else:
                 cava_reader.stop()
 
-            # VISION.md's R4 — a live iwd/bluez agent callback claims
-            # input at the highest priority of anything in this file
-            # (ahead of sessions_naming/sysmon_nice/help_colors below):
-            # unlike an in-progress rename, a pending passphrase/pairing
-            # prompt can be silently cancelled by the daemon itself at
-            # any moment (network went away, the daemon's own timeout
-            # fired — see agent_mailbox.py's module docstring), so it
-            # deserves more urgency than risking it expire unanswered
-            # while the user finishes an unrelated edit. Gated the same
-            # way every other hijack tier is implicitly gated (only
-            # reachable when nothing else already owns input) so it
-            # can't steal a keystroke out from under an already-open
-            # session.
+            # CLAUDE/VISION.md's R4 — a live iwd/bluez agent callback
+            # claims input at the highest priority of anything in this
+            # file (ahead of sessions_naming/sysmon_nice/help_colors
+            # below): unlike an in-progress rename, a pending
+            # passphrase/pairing prompt can be silently cancelled by the
+            # daemon itself at any moment (network went away, the
+            # daemon's own timeout fired — see agent_mailbox.py's module
+            # docstring), so it deserves more urgency than risking it
+            # expire unanswered. Gated the same way every other hijack
+            # tier is (only reachable when nothing else already owns
+            # input) so it can't steal a keystroke out from under an
+            # already-open session.
+            #
             # Resolves a "waiting for the real connect/pair result"
             # overlay (see modules/connectivity.py's mark_passphrase_
             # submitted()/mark_pairing_submitted() docstrings) — checked
             # every frame, not just on keypress, so a result that
-            # arrives while the user isn't pressing anything is still
-            # noticed promptly (StatusWorker.has_pending() being true
-            # for the whole wait already keeps the render loop on its
-            # fast 50ms tick, see stdscr.timeout()'s own condition
-            # below). Found live, reported directly ("gaslightuje tě že
-            # se ani nic nedělo"): the original version closed this
-            # overlay the instant Enter was pressed, before iwd had
-            # even tried the (possibly wrong) passphrase.
+            # arrives between keypresses is still noticed promptly
+            # (StatusWorker.has_pending() being true for the whole wait
+            # already keeps the render loop on its fast 50ms tick, see
+            # stdscr.timeout()'s own condition below). This must not
+            # close the overlay the instant Enter is pressed — iwd/bluez
+            # haven't tried the (possibly wrong) passphrase/pairing yet
+            # at that point.
             if connectivity_mode.is_entering_passphrase() and connectivity_mode.is_passphrase_waiting():
                 ssid = connectivity_mode.entering_passphrase_ssid()
                 if not status_worker.is_pending("wifi", ssid):
@@ -680,18 +673,16 @@ def main(stdscr):
             #
             # ONLY once we're actually waiting/showing an error
             # (mark_passphrase_submitted()/mark_pairing_submitted()
-            # already called) — NOT while the user is still typing.
+            # already called) — not while still typing.
             # AgentMailbox.get_request() (used above and below) never
             # pops the request, so has_pending() stays True for the
-            # WHOLE time the original prompt sits there unanswered —
-            # found live, reported directly ("prompt nechce brát
-            # input"): gating on input_claim alone made this fire every
-            # single frame while typing, since the mailbox's own
-            # pending request never changes until it's actually
-            # submitted — each frame's re-fire called
-            # start_passphrase_entry() again, silently wiping whatever
-            # had just been typed back to empty before the next
-            # keypress could even land.
+            # whole time the original prompt sits there unanswered:
+            # gating on input_claim alone would fire this every single
+            # frame while typing, since the mailbox's own pending
+            # request never changes until it's actually submitted —
+            # each frame's re-fire would call start_passphrase_entry()
+            # again, silently wiping whatever had just been typed back
+            # to empty before the next keypress could even land.
             if wifi_agent.mailbox.has_pending() and (
                 connectivity_wants_input
                 or (input_claim == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
@@ -716,19 +707,17 @@ def main(stdscr):
                        or resize_message is not None or agent_has_pending)
                 else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
-                # 300, not 1000 — found live: even
-                # with a Domain's own poll_interval tightened (battery/
-                # brightness/audio/media all poll at 1s now), the render
-                # loop itself only ever LOOKS at a fresh StatusWorker
-                # snapshot once per idle getch() timeout — a 1s idle
-                # redraw cadence stacks up to ~1s of its own lag on top
-                # of whatever the poll cadence already contributes.
-                # Cheap to lower: nothing here is fetched from a remote
-                # source or does real work, every module's draw() already
-                # reruns unconditionally every frame regardless of
-                # cadence (see CLAUDE.md's "nothing is cached per-frame"),
-                # so redrawing 3.3x more often while idle just means
-                # doing the same cheap recompute more often, not new work.
+                # 300, not 1000: even with a Domain's own poll_interval
+                # tightened (battery/brightness/audio/media all poll at
+                # 1s), the render loop only ever looks at a fresh
+                # StatusWorker snapshot once per idle getch() timeout —
+                # a 1s idle redraw cadence stacks ~1s of its own lag on
+                # top of whatever the poll cadence already contributes.
+                # Cheap to lower: every module's draw() already reruns
+                # unconditionally every frame regardless of cadence (see
+                # CLAUDE/GUIDE.md's "nothing is cached per-frame"), so
+                # redrawing more often while idle is the same cheap
+                # recompute, not new work.
                 else 300
             )
             stdscr.erase()
@@ -1142,11 +1131,11 @@ def main(stdscr):
 
             if input_claim == "launcher":
                 # Up/Down shift the ambient-typing launch target
-                # (focus_id) without leaving typing mode — found live,
-                # asked for directly: launching from anywhere always
-                # targeted focus_id regardless of which module you'd
-                # been browsing, with no way to see (let alone change)
-                # that target while typing. Left/Right are already
+                # (focus_id) without leaving typing mode — otherwise
+                # launching from anywhere always targets focus_id
+                # regardless of which module you'd been browsing, with
+                # no way to see (let alone change) that target while
+                # typing. Left/Right are already
                 # spoken for by launcher_mode.handle_typing_key itself
                 # (they move which search RESULT is selected); arrow
                 # keys never collide with typed characters (outside the
@@ -1168,7 +1157,7 @@ def main(stdscr):
                         # .desktop Exec= is spec'd to never be shell-interpreted.
                         pid = spawn_detached(cmd, shell_true=False)
                         # See Provider.no_focus_next_window()'s docstring —
-                        # asked for right after the pid is known, well
+                        # called right after the pid is known, well
                         # before the spawned window has had a chance to
                         # map and steal focus/fullscreen from tuicc.
                         provider.no_focus_next_window(pid)
@@ -1348,9 +1337,11 @@ def main(stdscr):
                     # module boundaries until it finds one with an actual
                     # item — a single next-module lookup isn't enough, since
                     # modules with zero nav items (launcher, preview, clock)
-                    # are common, not a rare edge case. See its docstring:
-                    # found live, this used to leave Tab permanently stuck
-                    # the moment selection reached Power Menu's last item.
+                    # are common, not a rare edge case. Without this, Tab
+                    # got permanently stuck the moment selection reached a
+                    # module immediately followed by an empty one (e.g.
+                    # Power Menu's last item, since Launcher is next and
+                    # always empty) — see its docstring.
                     next_item = next_item_across_modules(ordered, module_names, active_module, selected_id)
                 if next_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
@@ -1372,8 +1363,7 @@ def main(stdscr):
                         # of which direction you entered from. Without
                         # this, Shift+Tab-ing in from whatever module
                         # follows Sessions lands on slot 3, one Tab away
-                        # from immediately rolling back out again —
-                        # found live, reported as "annoying".
+                        # from immediately rolling back out again.
                         prev_item = first_item_in_module(ordered, "sessions")
                 if prev_item is not None:
                     selected_id, active_module, focus_id = resolve_selection(prev_item, focus_id)
