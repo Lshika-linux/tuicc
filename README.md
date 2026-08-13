@@ -7,7 +7,7 @@ Built on a core that communicates with the WM (see lower, or wiki..), with every
 
 Controlled with Tab/Shift+Tab, arrows and Enter
 
-![tuicc's core layout (sidebar, sessions, launcher, preview, connectivity, power menu) with media/system/bars/control spawned in via F6 — those four aren't in the packaged default preset yet](./screenshot.png)
+![tuicc's packaged default layout — sidebar, sessions, launcher, preview, connectivity, power menu, media, system, bars and control all on screen at once](./screenshot.png)
 
 You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
 - your workspaces and what's in them (sidebar.py);

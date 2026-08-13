@@ -15,52 +15,87 @@
 # interactive resize mode (F2 on the module you want to adjust, arrows
 # to resize/move, F3 to save as a new preset) rather than
 # hand-computing ratios here.
+#
+# This is tuicc's own "thesis screen" (see CLAUDE/VISION.md's R7
+# section) — captured from live use, F2/F3'd into shape rather than
+# hand-derived: left column stacks sessions/sidebar/control/power_menu,
+# launcher fills the top strip with clock in the corner, preview
+# dominates the center, bars runs the full height on the right edge,
+# and connectivity/media/sysmon share the bottom row.
+
+[[box]]
+name = "sessions"
+x = 0.0
+y = 0.0
+w = 0.1875
+h = 0.098039
 
 [[box]]
 name = "sidebar"
 x = 0.0
-y = 0.0
-w = 0.18229166666666666
-h = 0.7058823529411766
+y = 0.098039
+w = 0.1875
+h = 0.627451
 
 [[box]]
-name = "connectivity"
+name = "control"
 x = 0.0
-y = 0.7058823529411765
-w = 0.18229166666666666
-h = 0.17647058823529413
+y = 0.72549
+w = 0.189583
+h = 0.156863
 
 [[box]]
 name = "power_menu"
 x = 0.0
-y = 0.8823529411764706
-w = 0.18229166666666666
-h = 0.11764705882352941
+y = 0.882353
+w = 0.1875
+h = 0.117647
 
 [[box]]
 name = "launcher"
-x = 0.18229166666666666
+x = 0.1875
 y = 0.0
-w = 0.5520833333333331
-h = 0.0784313725490196
-
-[[box]]
-name = "sessions"
-x = 0.7343749999999998
-y = 0.0
-w = 0.18229166666666657
-h = 0.0784313725490196
+w = 0.734375
+h = 0.078431
 
 [[box]]
 name = "preview"
-x = 0.18229166666666666
-y = 0.0784313725490196
-w = 0.8125
-h = 0.9215686274509803
+x = 0.1875
+y = 0.078431
+w = 0.734375
+h = 0.705882
+
+[[box]]
+name = "connectivity"
+x = 0.1875
+y = 0.784314
+w = 0.197917
+h = 0.215686
+
+[[box]]
+name = "media"
+x = 0.384375
+y = 0.784314
+w = 0.314583
+h = 0.215686
+
+[[box]]
+name = "sysmon"
+x = 0.697917
+y = 0.784314
+w = 0.302083
+h = 0.215686
 
 [[box]]
 name = "clock"
-x = 0.9166666666666674
-y = 1.249000902703301e-16
-w = 0.08333333333333333
-h = 0.08235294117647064
+x = 0.921875
+y = 0.0
+w = 0.078125
+h = 0.082353
+
+[[box]]
+name = "bars"
+x = 0.920833
+y = 0.086275
+w = 0.078125
+h = 0.709804

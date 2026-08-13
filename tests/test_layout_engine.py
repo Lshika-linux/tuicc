@@ -46,8 +46,18 @@ def test_multiple_boxes_computed_independently():
     assert boxes["right"] == (50, 0, 50, 40)
 
 
-def test_real_preset_1_loads_and_every_box_is_within_bounds():
+def test_real_preset_1_loads_and_every_box_is_within_bounds(tmp_path, monkeypatch):
+    import tuicc.config as config_module
     from tuicc.config import build_layout_from_preset
+
+    # Point USER_PRESETS_DIR at an empty tmp dir so this genuinely
+    # exercises the packaged preset shipped in the repo — without this,
+    # build_layout_from_preset(1) prefers ~/.config/tuicc/presets/1.toml
+    # when one happens to exist there (see ensure_preset_exists' own
+    # docstring), so this test would silently pass or fail based on
+    # whatever preset a given dev machine has saved locally instead of
+    # what's actually packaged.
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user-presets")
 
     layout = build_layout_from_preset(1)
     boxes = compute_boxes(layout, term_width=100, term_height=40)
