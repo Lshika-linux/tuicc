@@ -245,13 +245,13 @@ def hint_text(state: ResizeState, active_module: str) -> str:
         return (
             f"EDIT MODE — {active_module}  Enter edit this module  Del delete it  |  "
             f"Tab/Shift+Tab/arrows pick another  |  F1 help  F3 save+exit  "
-            f"F4 cycle preset  F6 spawn  Esc exit"
+            f"F4 cycle preset  F5 new preset  F6 spawn  Esc exit"
         )
     action = "resize" if state.dimension == "size" else "move"
     return (
         f"[{state.dimension.upper()}] {active_module} — ←→↑↓ {action}  "
         f"M switch  Del delete  Enter done (back to browsing)  Esc cancel  |  "
-        f"F1 help  F3 save+exit  F4 cycle preset  F6 spawn"
+        f"F1 help  F3 save+exit  F4 cycle preset  F5 new preset  F6 spawn"
     )
 
 
