@@ -385,13 +385,13 @@ def main(stdscr):
     # checked directly. None means no one has stolen input — an
     # unbound printable key auto-claims for the launcher (ambient
     # "type anywhere" is sugar for that auto-claim), same as before.
-    # Consumers: "launcher" (typing/search), "help_colors" (help_mode's
-    # inline color editor), "connectivity_passphrase"/"connectivity_pairing"
-    # (modules/connectivity.py) — all genuine text-input claims, the
-    # shape R2 was designed for. sessions_naming/sysmon_nice have
+    # Remaining consumers: "launcher" (typing/search), "help_colors"
+    # (help_mode's inline color editor) — genuine text-input claims, the
+    # shape R2 was designed for. sessions_naming/sysmon_nice (Phase 1)
+    # and connectivity_passphrase/connectivity_pairing (Phase 2) have
     # migrated off this onto mode_stack (see its own comment below,
-    # and CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1) — the
-    # first step of folding this whole variable into that stack.
+    # and CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1) — folding
+    # this whole variable into that stack, one tier at a time.
     # resize_mode's own two-level browsing/editing session
     # (resize.active/resize.editing) is deliberately NOT migrated onto
     # this — it isn't a text-input claim at all (arrow-key resize
@@ -587,9 +587,87 @@ def main(stdscr):
             return result is None
         return sysmon_mode.handle_nice_key(key)
 
+    # Phase 2: connectivity's two prompts. Unlike the pair above, entry
+    # AND resolution are driven by per-frame daemon-mailbox polling, not
+    # purely keypress — that half stays a plain block (see the
+    # `connectivity_wants_input`/mode_stack.append() code above, near
+    # where wifi_agent/bluez_agent are polled), only the actual
+    # per-keypress handling below is a MODE_HANDLERS entry. Each
+    # reproduces, unchanged, exactly what its old
+    # `if input_claim == "..."` block did.
+    def handle_connectivity_passphrase(key):
+        if connectivity_mode.is_passphrase_waiting():
+            # Resolution happens in the top-of-loop check above (every
+            # frame, not keypress-driven) — this just swallows stray
+            # keys while the real connect attempt is still in flight.
+            return True
+        if connectivity_mode.passphrase_error() is not None:
+            # A resolved failure, already shown — any key dismisses
+            # back to normal navigation. A genuine retry means Enter on
+            # the network row again (a fresh connect() attempt,
+            # possibly a fresh RequestPassphrase too) — the original
+            # request this overlay was answering is long since resolved
+            # one way or another, there's nothing left to resubmit here.
+            connectivity_mode.cancel_passphrase_entry()
+            return False
+        # The daemon can end this on its own at any time (Cancel/
+        # Release — see agent_mailbox.py's module docstring);
+        # has_pending() going False here (NOT while waiting/showing an
+        # error, both handled above) is exactly that, not a bug.
+        if not wifi_agent.mailbox.has_pending():
+            connectivity_mode.cancel_passphrase_entry()
+            return False
+        elif key == cfg.keybinds["confirm"]:
+            text = connectivity_mode.apply_passphrase()
+            if text is not None:
+                wifi_agent.reply_passphrase(text)
+                connectivity_mode.mark_passphrase_submitted()
+            return True
+        elif key == 27:  # Escape
+            connectivity_mode.cancel_passphrase_entry()
+            wifi_agent.cancel_current()
+            return False
+        elif not connectivity_mode.handle_passphrase_key(key):
+            connectivity_mode.cancel_passphrase_entry()
+            return False
+        return True
+
+    def handle_connectivity_pairing(key):
+        # Plain yes/no, not typed text, so it's resolved directly here
+        # with confirm_yes/confirm_no rather than a handle_*_key()/
+        # apply_*() pair, same convention handle_pending_confirm()
+        # already uses. Only the ACCEPT path waits for a real result —
+        # confirm_no/Escape are the user's own explicit choice, nothing
+        # further to report about those.
+        if connectivity_mode.is_pairing_waiting():
+            return True
+        if connectivity_mode.pairing_error() is not None:
+            connectivity_mode.cancel_pairing_confirm()
+            return False
+        if bluez_agent is None or not bluez_agent.mailbox.has_pending():
+            connectivity_mode.cancel_pairing_confirm()
+            return False
+        # confirm_yes OR confirm (Enter) — see
+        # handle_pending_confirm()'s own docstring for why.
+        elif key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
+            bluez_agent.reply_pairing(True)
+            connectivity_mode.mark_pairing_submitted()
+            return True
+        elif key == cfg.keybinds["confirm_no"]:
+            bluez_agent.reply_pairing(False)
+            connectivity_mode.cancel_pairing_confirm()
+            return False
+        elif key == 27:  # Escape — same as an explicit reject
+            bluez_agent.cancel_current()
+            connectivity_mode.cancel_pairing_confirm()
+            return False
+        return True
+
     MODE_HANDLERS = {
         "sessions_naming": handle_sessions_naming,
         "sysmon_nice": handle_sysmon_nice,
+        "connectivity_passphrase": handle_connectivity_passphrase,
+        "connectivity_pairing": handle_connectivity_pairing,
     }
 
     def any_two_level_module_expanded():
@@ -642,17 +720,24 @@ def main(stdscr):
                 cava_reader.stop()
 
             # CLAUDE/VISION.md's R4 — a live iwd/bluez agent callback
-            # claims input at the highest priority of anything in this
-            # file (ahead of sessions_naming/sysmon_nice/help_colors
-            # below): unlike an in-progress rename, a pending
+            # claims the mode_stack (migrated off input_claim in Phase 2,
+            # see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1)
+            # before sessions_naming/sysmon_nice/help_colors ever get a
+            # chance to: unlike an in-progress rename, a pending
             # passphrase/pairing prompt can be silently cancelled by the
             # daemon itself at any moment (network went away, the
             # daemon's own timeout fired — see agent_mailbox.py's module
             # docstring), so it deserves more urgency than risking it
-            # expire unanswered. Gated the same way every other hijack
-            # tier is (only reachable when nothing else already owns
-            # input) so it can't steal a keystroke out from under an
-            # already-open session.
+            # expire unanswered. This isn't about keypress-dispatch order
+            # any more (mutual exclusion is structural now — one stack,
+            # one top) — it's about *when in the frame* this runs: this
+            # check happens every frame, before getch() even reads a
+            # key, so it claims the stack before a keypress could ever
+            # let sessions_naming/sysmon_nice claim it that same frame.
+            # Gated the same way every other hijack tier is (only
+            # reachable when nothing else already owns input) so it
+            # can't steal a keystroke out from under an already-open
+            # session.
             #
             # Resolves a "waiting for the real connect/pair result"
             # overlay (see modules/connectivity.py's mark_passphrase_
@@ -673,7 +758,7 @@ def main(stdscr):
                         connectivity_mode.set_passphrase_error(error)
                     else:
                         connectivity_mode.cancel_passphrase_entry()
-                        input_claim = None
+                        mode_stack.pop()
             if connectivity_mode.is_confirming_pairing() and connectivity_mode.is_pairing_waiting():
                 pairing_request = connectivity_mode.current_pairing_request()
                 if not status_worker.is_pending("bluetooth", pairing_request.device_id):
@@ -682,58 +767,65 @@ def main(stdscr):
                         connectivity_mode.set_pairing_error(error)
                     else:
                         connectivity_mode.cancel_pairing_confirm()
-                        input_claim = None
+                        mode_stack.pop()
 
             connectivity_wants_input = (
                 input_claim is None and pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
-                # mode_stack's own tiers (sessions_naming/sysmon_nice so
-                # far) must gate this the same way input_claim's other
-                # tiers already do — without this, this guard goes stale
-                # the moment a tier migrates off input_claim, since
-                # input_claim stays None for that tier's whole lifetime
-                # and this check would then wrongly see "nothing
-                # claimed" while a rename/NICE edit is still open. Found
-                # in review before it shipped, not live — see
-                # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
+                # Still needed even though connectivity itself no longer
+                # touches input_claim (Phase 2) — help_colors/launcher
+                # still do, and this must keep gating against them too.
                 and mode_stack[-1] == "normal"
             )
             # Also fires while ALREADY in one of these two tiers, not
             # just when claiming input fresh — a wrong passphrase makes
             # iwd call RequestPassphrase a SECOND time (a retry), which
             # publishes a brand new AgentMailbox request while
-            # input_claim is still "connectivity_passphrase" from the
-            # first attempt; without this, that second request would
-            # never be noticed (the "claim fresh" branch only runs
-            # while input_claim is None). See modules/connectivity.py's
+            # mode_stack's top is still "connectivity_passphrase" from
+            # the first attempt; without this, that second request would
+            # never be noticed (the "claim fresh" branch only runs while
+            # mode_stack is at "normal"). See modules/connectivity.py's
             # start_passphrase_entry()'s own docstring.
             #
-            # ONLY once we're actually waiting/showing an error
-            # (mark_passphrase_submitted()/mark_pairing_submitted()
-            # already called) — not while still typing.
-            # AgentMailbox.get_request() (used above and below) never
-            # pops the request, so has_pending() stays True for the
-            # whole time the original prompt sits there unanswered:
-            # gating on input_claim alone would fire this every single
-            # frame while typing, since the mailbox's own pending
-            # request never changes until it's actually submitted —
-            # each frame's re-fire would call start_passphrase_entry()
-            # again, silently wiping whatever had just been typed back
-            # to empty before the next keypress could even land.
+            # ONLY once we're actually waiting on the first attempt's
+            # result (mark_passphrase_submitted()/mark_pairing_submitted()
+            # already called) — not while still typing, and not once an
+            # error's already been shown (set_passphrase_error() ends
+            # waiting too, see connectivity.py). AgentMailbox.get_request()
+            # (used above and below) never pops the request, so
+            # has_pending() stays True for the whole time the original
+            # prompt sits there unanswered: gating on mode_stack's top
+            # alone would fire this every single frame while typing,
+            # since the mailbox's own pending request never changes
+            # until it's actually submitted — each frame's re-fire would
+            # call start_passphrase_entry() again, silently wiping
+            # whatever had just been typed back to empty before the next
+            # keypress could even land.
             if wifi_agent.mailbox.has_pending() and (
                 connectivity_wants_input
-                or (input_claim == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
+                or (mode_stack[-1] == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
             ):
                 request = wifi_agent.mailbox.get_request()
                 connectivity_mode.start_passphrase_entry(request.ssid)
-                input_claim = "connectivity_passphrase"
+                # Guarded, not a bare append: this branch is also
+                # reached by the retry case right above (mode_stack's
+                # top is ALREADY "connectivity_passphrase" there) — an
+                # unconditional append would push a duplicate frame that
+                # the eventual single pop() never fully unwinds, leaving
+                # a stale frame that silently swallows the next real
+                # keypress. Caught in review before it shipped, not
+                # live — see design-decisions.md#mode-stack-phase-1.
+                if mode_stack[-1] != "connectivity_passphrase":
+                    mode_stack.append("connectivity_passphrase")
             elif bluez_agent is not None and bluez_agent.mailbox.has_pending() and (
                 connectivity_wants_input
-                or (input_claim == "connectivity_pairing" and connectivity_mode.is_pairing_waiting())
+                or (mode_stack[-1] == "connectivity_pairing" and connectivity_mode.is_pairing_waiting())
             ):
                 request = bluez_agent.mailbox.get_request()
                 connectivity_mode.start_pairing_confirm(request)
-                input_claim = "connectivity_pairing"
+                # See the passphrase branch's matching comment above.
+                if mode_stack[-1] != "connectivity_pairing":
+                    mode_stack.append("connectivity_pairing")
 
             agent_has_pending = (
                 wifi_agent.mailbox.has_pending()
@@ -1017,90 +1109,15 @@ def main(stdscr):
                     provider.dismiss_self()
                 continue
 
-            if input_claim == "connectivity_passphrase":
-                # First (highest-priority) of R4's two new input_claim
-                # consumers — see the "connectivity_wants_input" block
-                # above for why these sit ahead of sessions_naming/
-                # sysmon_nice/help_colors.
-                if connectivity_mode.is_passphrase_waiting():
-                    # Resolution happens in the top-of-loop check above
-                    # (every frame, not keypress-driven) — this just
-                    # swallows stray keys while the real connect
-                    # attempt is still in flight.
-                    continue
-                if connectivity_mode.passphrase_error() is not None:
-                    # A resolved failure, already shown — any key
-                    # dismisses back to normal navigation. A genuine
-                    # retry means Enter on the network row again (a
-                    # fresh connect() attempt, possibly a fresh
-                    # RequestPassphrase too) — the original request
-                    # this overlay was answering is long since resolved
-                    # one way or another, there's nothing left to
-                    # resubmit here.
-                    connectivity_mode.cancel_passphrase_entry()
-                    input_claim = None
-                    continue
-                # The daemon can end this on its own at any time
-                # (Cancel/Release — see agent_mailbox.py's module
-                # docstring); has_pending() going False here (NOT
-                # while waiting/showing an error, both handled above)
-                # is exactly that, not a bug.
-                if not wifi_agent.mailbox.has_pending():
-                    connectivity_mode.cancel_passphrase_entry()
-                    input_claim = None
-                elif key == cfg.keybinds["confirm"]:
-                    text = connectivity_mode.apply_passphrase()
-                    if text is not None:
-                        wifi_agent.reply_passphrase(text)
-                        connectivity_mode.mark_passphrase_submitted()
-                elif key == 27:  # Escape
-                    connectivity_mode.cancel_passphrase_entry()
-                    wifi_agent.cancel_current()
-                    input_claim = None
-                elif not connectivity_mode.handle_passphrase_key(key):
-                    connectivity_mode.cancel_passphrase_entry()
-                    input_claim = None
-                continue
-
-            if input_claim == "connectivity_pairing":
-                # Second of R4's two new input_claim consumers — plain
-                # yes/no, not typed text, so it's resolved directly
-                # here with confirm_yes/confirm_no rather than a
-                # handle_*_key()/apply_*() pair, same convention
-                # handle_pending_confirm() already uses. Only the
-                # ACCEPT path waits for a real result — confirm_no/
-                # Escape are the user's own explicit choice, nothing
-                # further to report about those.
-                if connectivity_mode.is_pairing_waiting():
-                    continue
-                if connectivity_mode.pairing_error() is not None:
-                    connectivity_mode.cancel_pairing_confirm()
-                    input_claim = None
-                    continue
-                if bluez_agent is None or not bluez_agent.mailbox.has_pending():
-                    connectivity_mode.cancel_pairing_confirm()
-                    input_claim = None
-                # confirm_yes OR confirm (Enter) — see
-                # handle_pending_confirm()'s own docstring for why.
-                elif key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
-                    bluez_agent.reply_pairing(True)
-                    connectivity_mode.mark_pairing_submitted()
-                elif key == cfg.keybinds["confirm_no"]:
-                    bluez_agent.reply_pairing(False)
-                    connectivity_mode.cancel_pairing_confirm()
-                    input_claim = None
-                elif key == 27:  # Escape — same as an explicit reject
-                    bluez_agent.cancel_current()
-                    connectivity_mode.cancel_pairing_confirm()
-                    input_claim = None
-                continue
-
             if mode_stack[-1] != "normal":
-                # sessions_naming/sysmon_nice, Phase 1 of migrating
-                # input_claim's string-tier dispatch onto a real stack —
-                # same priority slot the two old `input_claim == "..."`
-                # blocks this replaces used to occupy (after
-                # connectivity_pairing, before help_colors). See
+                # sessions_naming/sysmon_nice (Phase 1) and
+                # connectivity_passphrase/connectivity_pairing (Phase 2)
+                # — one generic dispatch site for every mode_stack tier,
+                # in the same priority slot the old `input_claim == "..."`
+                # blocks this replaces used to occupy (before
+                # help_colors). Priority ordering between tiers is no
+                # longer about check order here — mutual exclusion is
+                # structural now (one stack, one top); see
                 # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
                 still_claiming = MODE_HANDLERS[mode_stack[-1]](key)
                 if not still_claiming:
