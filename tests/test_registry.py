@@ -19,11 +19,17 @@ from tuicc.connectivity.registry import (
 )
 from tuicc.connectivity.iwd import IwdBackend
 from tuicc.connectivity.iwd_agent import IwdAgent
+from tuicc.connectivity.networkmanager import NetworkManagerBackend
+from tuicc.connectivity.networkmanager_agent import NetworkManagerAgent
 from tuicc.connectivity.bluez import BluezBackend
 
 
 def test_build_wifi_backend_iwd():
     assert isinstance(build_wifi_backend("iwd"), IwdBackend)
+
+
+def test_build_wifi_backend_networkmanager():
+    assert isinstance(build_wifi_backend("networkmanager"), NetworkManagerBackend)
 
 
 def test_build_wifi_backend_unknown_name_raises():
@@ -33,6 +39,10 @@ def test_build_wifi_backend_unknown_name_raises():
 
 def test_build_wifi_agent_iwd():
     assert isinstance(build_wifi_agent("iwd"), IwdAgent)
+
+
+def test_build_wifi_agent_networkmanager():
+    assert isinstance(build_wifi_agent("networkmanager"), NetworkManagerAgent)
 
 
 def test_build_wifi_agent_unknown_name_raises():

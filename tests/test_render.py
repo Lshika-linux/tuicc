@@ -49,3 +49,17 @@ def test_base_handlers_still_present():
     # confirm they weren't accidentally dropped when other handlers were merged in.
     assert "region" in ACTION_HANDLERS
     assert "window" in ACTION_HANDLERS
+
+
+def test_connectivity_handlers_registered():
+    from tuicc.modules import connectivity
+    assert ACTION_HANDLERS["wifi_network"] is connectivity.handle_wifi
+    assert ACTION_HANDLERS["bluetooth_device"] is connectivity.handle_bluetooth
+    assert ACTION_HANDLERS["wifi_scan"] is connectivity.handle_wifi_scan
+    assert ACTION_HANDLERS["bluetooth_discover"] is connectivity.handle_bluetooth_discover
+
+
+def test_sysmon_handlers_registered():
+    from tuicc.modules import sysmon
+    assert ACTION_HANDLERS["sysmon_row"] is sysmon.handle_row
+    assert ACTION_HANDLERS["sysmon_action"] is sysmon.handle_action
