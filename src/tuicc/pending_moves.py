@@ -9,22 +9,17 @@ of window ids that exist right before spawning ("known_ids"), then each
 frame checks whether any id in the current state wasn't in that snapshot
 — that's the new window.
 
-That alone is enough for one spawn at a time. It breaks down the moment
-more than one spawn is in flight together (e.g. restoring several windows
-at once): with no shared "already used" tracking, two pending entries can
-both match the same new window, or the wrong window can be assigned to
-the wrong target — verified live against a real WM by testing a similar
-tool's matcher (github.com/Hinikaa/tileroot) which has exactly this gap.
+That alone only covers one spawn at a time; with more than one spawn in
+flight (e.g. restoring several windows at once) two pending entries can
+match the same new window without a shared "already claimed" set — see
+CLAUDE/NOTES/design-decisions.md#pending-move-tiers.
 
 PendingMovesQueue and the functions below it are the session-level layer
-on top of resolve_pending_move's per-entry matching — what main.py's loop
-used to hold as two loose locals (pending_moves/claimed_window_ids) plus
-a bare float (last_restore_launch) and three module-level constants.
-Same "pure function over an explicit value" style as resize_mode.py/
-help_mode.py/launcher.py's LauncherState: a dataclass is just the state,
-every function here takes one and mutates it, main.py still owns *when*
-to call them (and still owns `dismissed`, threaded in as an explicit
-param — see process()'s docstring).
+on top of resolve_pending_move's per-entry matching, replacing what
+main.py's loop used to hold as loose locals. Same "pure function over an
+explicit value" style as resize_mode.py/help_mode.py/launcher.py's
+LauncherState: a dataclass is just the state, every function here takes
+one and mutates it, main.py still owns *when* to call them.
 """
 
 import time
@@ -38,20 +33,7 @@ SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
 
 # How long an entry keeps waiting on an exact pid match before process()
 # downgrades it to app_id-tier matching instead (see process()'s loop).
-# Was 1.5s until live i3 testing surfaced a real race: _enrich_pids()'s
-# provider.resolve_pid() (a full get_tree() round-trip + a fresh Xlib
-# connection per call, see i3.py's _x11_pid_for_window) isn't guaranteed
-# to resolve a freshly-mapped window's pid within 1.5s, and once an entry
-# downgrades, the pid tier is gone for good — resolve_pending_move's
-# tiers are exclusive, not a cascade, so a *later* successful enrichment
-# can no longer help. If the app_id it falls back to also doesn't match
-# (common on i3: a Python/Electron app's real WM_CLASS often isn't its
-# .desktop-derived hint, see _enrich_pids's docstring), the entry just
-# times out unmatched at MOVE_TIMEOUT_SECONDS with nothing left to try.
-# Widened to leave the slower, async i3 enrichment path a real chance to
-# land before giving up on the more precise signal, while still leaving
-# a couple of seconds of runway for the app_id fallback before the hard
-# timeout.
+# See CLAUDE/NOTES/design-decisions.md#pid-grace-seconds for why 6.0s.
 PID_GRACE_SECONDS = 6.0
 MOVE_TIMEOUT_SECONDS = 8.0
 RESTORE_STAGGER_SECONDS = 0.3
@@ -65,22 +47,11 @@ def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: se
     unknown (a plain launcher spawn has no pre-known app_id; a provider
     without pid support, i3 today, never has one).
 
-    Priority, each tier only considering windows not already in claimed:
-      1. exact pid match — unambiguous, but only ever available when the
-         provider exposes Window.pid (sway) and the process wasn't
-         launched via a shell (see spawn_detached's shell_true note).
-      2. app_id match — distinguishes "the app I'm expecting" from an
-         unrelated new window, but not from a second simultaneous
-         instance of the exact same app_id (harmless if both instances
-         are otherwise identical — see the design discussion this
-         shipped with for why that's an accepted tradeoff rather than a
-         bug). Callers processing multiple pending entries in order,
-         each claiming one match before the next entry looks, is what
-         keeps same-app_id entries from colliding — this function only
-         picks the first unclaimed match available *to it*, it has no
-         notion of which window actually appeared first in real time.
-      3. any remaining unclaimed new window — last resort, same
-         behavior as before this module existed.
+    Matches in three exclusive tiers — pid, then app_id, then any
+    remaining unclaimed new window — each only considering windows not
+    already in claimed. See CLAUDE/NOTES/design-decisions.md
+    #pending-move-tiers for why the tiers don't cascade and how same-
+    app_id entries avoid colliding.
 
     Doesn't mutate claimed itself — the caller adds the result's id once
     it actually commits to the match (calls move_window_to_region), so a
@@ -91,15 +62,8 @@ def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: se
     if not new_windows:
         return None
 
-    # Each tier is exclusive, not a cascade: an entry that expects a
-    # specific pid/app_id must wait for exactly that (or eventually time
-    # out in the caller), never settle for a weaker signal just because
-    # its own match hasn't appeared on *this* tick yet. Falling through
-    # early looks fine right up until two entries share an app_id (e.g.
-    # two `kitty` launches) and one's window is simply slower to appear
-    # — a premature fallback then hands it the wrong entry's window,
-    # verified live: this exact bug reassigned 3 of 10 windows to the
-    # wrong workspace in a real burst-launch test before this fix.
+    # Each tier is exclusive, not a cascade — see
+    # CLAUDE/NOTES/design-decisions.md#pending-move-tiers for why.
     expected_pid = entry.get("pid")
     if expected_pid is not None:
         for w in new_windows:
@@ -170,28 +134,15 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     """Pops one entry off restore_queue (session.py's load queue) and
     spawns it, staggered by RESTORE_STAGGER_SECONDS so a multi-window
     session restore doesn't fire every process in the same frame.
-    No-ops if restore_queue is empty — checked BEFORE the stagger-time
+    No-ops if restore_queue is empty — checked before the stagger-time
     comparison, so an empty queue never touches last_restore_launch and
     a later real restore isn't held back by a stale timestamp.
 
-    Every restore spawn gets a log_path under SPAWN_LOG_DIR (named by
-    app_id + wall-clock time, known before the pid is) — see
-    spawn_detached()'s docstring for why: session restore is exactly
-    the case where a saved cmdline can crash on launch for reasons its
-    own argv gives no hint of, and a match that never happens looks
-    identical from the outside whether the process never started or
-    started and immediately died. Confirmed live, not just theorized:
-    a saved Obsidian entry's cmdline (`electron <asar path>`), relaunched
-    exactly as captured, crashes with `Cannot find module 'electron'` —
-    the real launcher is a wrapper script (NixOS packages Electron apps
-    this way) that sets up environment before exec'ing into that same
-    binary, invisible to /proc/<pid>/cmdline since it only ever captures
-    argv *after* that exec. session_entry.get("env") (session.py's
-    captured /proc/<pid>/environ snapshot, see capture_window()) is
-    threaded through for exactly this — None for entries saved before
-    this existed, or where the environ read failed, which
-    spawn_detached() treats as "just use the current environment,"
-    same as before.
+    Every restore spawn gets a log_path under SPAWN_LOG_DIR and passes
+    session_entry.get("env") through to spawn_detached() — see
+    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for why a
+    saved cmdline can crash on relaunch in a way its own argv gives no
+    hint of, and why the captured environment matters.
     """
     if not restore_queue:
         return
@@ -212,34 +163,16 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
 
 
 def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Window]) -> None:
-    """Fills in .pid (in place) for windows get_state() left at None,
-    via provider.resolve_pid() — on-demand, not part of the per-frame
+    """Fills in .pid (in place) for windows get_state() left at None, via
+    provider.resolve_pid() — on-demand, not part of the per-frame
     get_state() path, so this is the one place it's worth paying for.
 
-    Only for windows no entry has seen yet (not in ANY entry's
-    known_ids) and not already claimed — the actual candidate set for
-    a NEW spawn, typically 0-1 windows, not every open window on the
-    desktop. Scoped this way because resolve_pending_move's pid tier
-    is otherwise structurally dead on a provider whose get_state()
-    never populates pid at all (i3 today — its GET_TREE has no pid
-    field, unlike sway's): every pending entry would burn
-    PID_GRACE_SECONDS, downgrade to the app_id tier, and — if the
-    spawned app's actual runtime app_id doesn't match what its
-    .desktop entry hinted (not rare for Python/Electron apps launched
-    via a bare interpreter, which often report the interpreter's own
-    class instead of the app's) — never resolve at all, silently
-    dropped after MOVE_TIMEOUT_SECONDS. Found live: a spawn timing out
-    this way left its window sitting wherever the WM naturally opened
-    it — tuicc's own workspace, in the reproducing case — with no
-    resolved match to move it, which is also what triggered the
-    unrelated-looking symptom of tuicc losing fullscreen (a new tiled
-    window landing on its workspace).
-
-    provider.resolve_pid() defaults to a no-op returning None for any
-    provider that doesn't override it (sway doesn't need to — its
-    windows already carry a real pid from get_state()), so calling
-    this unconditionally is safe everywhere, just a no-op where it
-    isn't needed.
+    Scoped to windows no entry has seen yet and not already claimed
+    (typically 0-1 windows, not every open window on the desktop) — see
+    CLAUDE/NOTES/known-limitations.md#pid-enrichment-scope for why this
+    scoping matters on providers without native pid support (i3). Safe
+    to call unconditionally: provider.resolve_pid() defaults to a no-op
+    returning None where it isn't needed (sway).
     """
     known_to_any_entry = set()
     for entry in queue.entries:
@@ -255,74 +188,27 @@ def process(
     own_region_id: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Resolves every entry in queue against current_windows: enriches
-    still-unknown pids via provider.resolve_pid() first (see
-    _enrich_pids — the fix for providers, i3 today, whose get_state()
-    never supplies one), downgrades an entry from pid- to app_id-
-    matching after PID_GRACE_SECONDS if that still didn't produce one
-    (a next-call handoff, not a same-tick fallback — see
-    resolve_pending_move's own docstring for why that distinction
-    matters), moves + optionally floats a matched window, then reclaims
-    focus for tuicc unless dismissed is True — focusing a scratchpadded
-    tuicc window un-hides it on sway/i3, so this must not fire while
-    tuicc was deliberately dismissed after the spawn but before it
-    resolved (see main.py's own `dismissed` comment for the full story,
-    including its one known, narrow limitation). Entries that neither
-    match nor are within MOVE_TIMEOUT_SECONDS are dropped — but even
-    then, tuicc still reclaims its own focus (unless dismissed) before
-    dropping one: the spawned window's own placement failing (pid never
-    enriched in time, app_id mismatched its .desktop hint, or it never
-    launched at all) is a separate concern from tuicc's own fullscreen/
-    focus, which the transient-co-location problem (see focus_self()'s
-    docstring) already broke the moment the new window mapped. Found
-    live: without this, a spawn that timed out unmatched left tuicc's
-    own window stuck floating and unfocused indefinitely — well past
-    MOVE_TIMEOUT_SECONDS — with nothing left in the queue to ever call
-    focus_self() again on its behalf.
+    still-unknown pids (see _enrich_pids), downgrades pid- to app_id-
+    matching after PID_GRACE_SECONDS, moves + optionally floats a
+    matched window, then reclaims focus for tuicc unless dismissed is
+    True — focusing a scratchpadded tuicc window un-hides it on sway/i3,
+    so this must not fire while tuicc was deliberately dismissed after
+    the spawn but before it resolved. Entries past MOVE_TIMEOUT_SECONDS
+    with no match are dropped, but tuicc still reclaims focus (unless
+    dismissed) first — see CLAUDE/NOTES/design-decisions.md
+    #pending-moves-process-contract for why that matters even on a
+    give-up.
 
-    fullscreen_only (from `[wm] fullscreen_only` in config.toml) is
-    passed straight through to provider.focus_self() — see that
-    method's docstring for why reclaiming focus alone isn't enough to
-    keep a fullscreen tuicc fullscreen through a spawn/restore.
+    fullscreen_only is passed straight through to provider.focus_self().
 
-    Returns (reclaimed_focus, resolved_target_regions).
+    Returns (reclaimed_focus, resolved_target_regions) — see
+    CLAUDE/NOTES/design-decisions.md#pending-moves-process-contract for
+    what main.py does with each and the bugs this contract fixes.
 
-    reclaimed_focus is whether focus_self() was called this round — a
-    real WM-focus transition, but a self-inflicted one, not the user
-    having switched to a different real context. main.py's loop needs
-    to know this to avoid its own "real WM-focus transition" detector
-    (see its comment) misreading tuicc reclaiming its own focus as the
-    user having gone elsewhere, which would otherwise silently reset
-    selected_id/focus_id mid-launcher-session — see the regression
-    test for the concrete bug this caused (a spawn's target silently
-    switching workspace because an earlier spawn's focus_self() call
-    happened to land between selecting a workspace and confirming).
-
-    resolved_target_regions lists the target_region of every entry that
-    actually matched a window this round — never the give-up-unmatched
-    path, which has no real destination to report. main.py uses this to
-    let focus_id (and so the preview panel) follow a spawn/restore to
-    wherever it actually landed: expect_focus_reclaim (set whenever
-    reclaimed_focus is True) suppresses the normal real-focus-transition
-    reset for the entire duration of a restore, so without this,
-    focus_id stays stuck on wherever it was before the restore started
-    until an unrelated external focus change eventually resets it.
-    Found live: the preview panel showing nothing, indefinitely, after
-    a session restore completed, for the rest of that same tuicc
-    toggle — not a transient blank during the restore itself, but a
-    permanent one until dismiss+resummon forced a real reset.
-
-    own_region_id (main.py's last_focused_region_id — wherever tuicc's
-    own window currently lives) is compared against each resolving
-    entry's target_region to decide whether to ask focus_self() for
-    force_relayout — see that method's docstring. Separate, structural
-    problem from the two above: a window landing on the SAME workspace
-    as a persistently-fullscreen tuicc never gets a real rect computed
-    for it at all (sway/i3 suppress tiling layout entirely for a
-    fullscreen container's workspace), so its preview box stays blank
-    even once focus_id correctly points at it. None (the default) never
-    requests force_relayout — a caller that doesn't track its own
-    region simply doesn't get this fix, same as omitting fullscreen_only
-    leaves the plain-focus-only behavior untouched.
+    own_region_id (wherever tuicc's own window currently lives) decides
+    whether to ask focus_self() for force_relayout when an entry
+    resolves onto it — see CLAUDE/NOTES/wm-quirks.md
+    #fullscreen-suppresses-layout. None never requests it.
     """
     _enrich_pids(queue, provider, current_windows)
     reclaimed_focus = False
