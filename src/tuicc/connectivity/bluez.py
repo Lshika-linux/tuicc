@@ -219,10 +219,9 @@ class BluezBackend(BluetoothBackend):
         IwdBackend.is_scanning() is — StatusWorker.
         is_pending("bluetooth", ...) alone only reflects "we just sent
         StartDiscovery a moment ago", cleared almost immediately since
-        start_discovery() itself returns fast (see its own docstring).
-        Found live, reported directly: without this, the
-        "Discovering…" label in the box only ever flickered instead of
-        staying up for the real discovery window.
+        start_discovery() itself returns fast (see its own docstring)
+        — without this, the "Discovering…" label would only ever
+        flicker instead of staying up for the real discovery window.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:

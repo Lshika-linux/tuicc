@@ -469,10 +469,9 @@ def _build_sysmon_blocks(user_data: dict) -> list:
     """[[sysmon.block]] -> a list of {"metric", "enabled", "column",
     "row", "warning", "urgent", "label"} dicts — the System module's
     own single source of truth for which stat blocks show at all, where
-    each one sits, and what counts as warning/urgent for it. Found
-    live, asked for directly: "ten config by měl být to jedno místo kde
-    nastavuješ všechno ohledně boxíku" (the config should be the one
-    place you configure everything about that box).
+    each one sits, and what counts as warning/urgent for it. See
+    CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why this is
+    config-driven rather than constants in modules/sysmon.py.
 
     Falls back to DEFAULT_SYSMON_BLOCKS (above) when [sysmon] has no
     [[block]] entries — same .get()-with-fallback reasoning [audio]'s

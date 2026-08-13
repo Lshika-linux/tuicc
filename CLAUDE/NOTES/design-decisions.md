@@ -48,6 +48,12 @@ Was 1.5s until i3 testing surfaced a real race: `_enrich_pids()`'s `provider.res
 
 ## `get_ac_online()` is separate from any pack's own status {#battery-ac-online-separate}
 
+## iwd's `Network.Connect()` returns cleanly even on a wrong passphrase {#iwd-connect-false-success}
+
+`IwdBackend.connect()` (`connectivity/iwd.py`) does its own post-attempt verification — checking the Station's `ConnectedNetwork` property against the network path just attempted, right after `Connect()` returns — instead of trusting a clean `Connect()` return as success. This isn't documented anywhere and contradicts the naive reading of the D-Bus Agent pattern: reproduced deterministically, a deliberately wrong passphrase against a real AP completed `Connect()` in ~3.4s with a clean, non-error reply, while the Station's own `ConnectedNetwork` property never changed to the attempted network. iwd apparently considers `Connect()` "done" once the attempt has been fully processed (right passphrase or wrong), not "authentication actually succeeded" — trusting the return alone made a wrong passphrase indistinguishable from success: no exception, nothing for StatusWorker to capture, nothing for the UI to show. The post-check needs no extra wait: by the time the blocking `Connect()` call gets its reply, iwd's own internal state for the same operation has already settled.
+
+NetworkManager's `ActivateConnection()`/`AddAndActivateConnection()` have the same fundamental gotcha but a structurally different fix — see `CLAUDE/NOTES/design-decisions.md#networkmanager-vs-iwd` point 4 (a genuinely async activation needing a real poll loop, not a one-shot check).
+
 ## Connectivity module: signal bars, fixed-slot windowing, action feedback {#connectivity-module-design}
 
 `_signal_bars()` always draws all 5 segments (filled + empty), never just the filled ones — an earlier 4-asterisk scheme only ever drew the filled asterisks ("*   " for a weak signal), giving no way to tell at a glance whether that's 1-of-4 or the rest of the scale simply isn't there. Uses plain Unicode Geometric Shapes (▮/▯), not a Nerd Font icon — tuicc's established convention is symbols any reasonable monospace font already has, and a signal indicator is exactly the kind of thing that must never render as a broken tofu box. `None` (backend can't report a signal) renders as all-empty rather than a distinct glyph, keeping the "always 5 segments" consistency intact.
