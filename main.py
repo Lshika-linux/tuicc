@@ -860,7 +860,20 @@ def main(stdscr):
             ordered = tab_order(items, mode=cfg.tab_order)
 
             still_valid = any(item.id == selected_id for item in ordered)
-            if not still_valid:
+            # A module-jump (Left/Right) landing on a module with no nav
+            # items at all clears selected_id to None on purpose (see
+            # that branch's own comment) — active_module already points
+            # at the right, empty box, and there's genuinely nothing to
+            # select there. Without this check, still_valid is False for
+            # that same reason (nothing has id None) and the recovery
+            # below would immediately treat it as a vanished-item
+            # accident and jump selected_id straight back to the sidebar
+            # or wherever's WM-focused, silently undoing the jump on the
+            # very same frame.
+            intentionally_unselected = selected_id is None and not any(
+                module_of_item(item) == active_module for item in ordered
+            )
+            if not still_valid and not intentionally_unselected:
                 match = None
                 for item in ordered:
                     if item.target_kind == "region" and item.focus_target == state.focused_region_id:
@@ -1367,6 +1380,20 @@ def main(stdscr):
                         first_item = first_item_in_module(ordered, active_module)
                         if first_item is not None:
                             selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
+                        else:
+                            # Landed on a module with no nav items at all
+                            # (bars, clock, launcher, or preview with no
+                            # focused windows) — active_module already
+                            # moved to it above, so its border shows as
+                            # active; selected_id must actually clear too,
+                            # not keep pointing at whatever was selected
+                            # in the module we just left, or the old
+                            # item would stay highlighted there while a
+                            # DIFFERENT box's border also claims to be
+                            # active. See the stale-selection recovery
+                            # block's own comment for why None here
+                            # doesn't just get silently overwritten back.
+                            selected_id = None
             elif key in module_prev_keys:
                 neighbor = same_row_neighbor(ordered, selected_id, direction=-1, wrap=any_two_level_module_expanded())
                 if neighbor is not None:
@@ -1378,6 +1405,9 @@ def main(stdscr):
                         first_item = first_item_in_module(ordered, active_module)
                         if first_item is not None:
                             selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
+                        else:
+                            # See module_next_keys' matching branch above.
+                            selected_id = None
             elif key == cfg.keybinds["spawn_box"]:
                 do_spawn_picker()
             elif key == cfg.keybinds["resize"] and active_module is not None:

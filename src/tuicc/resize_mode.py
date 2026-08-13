@@ -49,7 +49,15 @@ def resize_step(box: ModuleBox, dimension: str, grow: bool,
     delta = (STEP_CELLS if grow else -STEP_CELLS) / term_size
     min_ratio = MIN_CELLS / term_size
     max_ratio = (term_size - origin) / term_size
-    new_value = min(max(current + delta, min_ratio), max_ratio)
+    # Rounded to kill float noise (e.g. 5.2e-18 instead of exactly 0.0)
+    # that repeated +=/-= steps otherwise accumulate — harmless to the
+    # actual rendered position (1e-9 is far finer than any real
+    # terminal's 1/term_size granularity), but navigation.py's
+    # tab_order() sorts boxes by exact (x, y) comparison, and a box
+    # that's visually flush with its neighbors (same x) but off by an
+    # epsilon sorts into its own separate "column" — found live, see
+    # CLAUDE/NOTES/design-decisions.md#box-coordinate-float-noise.
+    new_value = round(min(max(current + delta, min_ratio), max_ratio), 9)
     setattr(box, dimension, new_value)
 
 
@@ -68,7 +76,8 @@ def move_step(box: ModuleBox, dimension: str, grow: bool,
 
     delta = (STEP_CELLS if grow else -STEP_CELLS) / term_size
     max_ratio = (term_size - own_size_cells) / term_size
-    new_value = min(max(current + delta, 0.0), max_ratio)
+    # See resize_step's matching comment — same float-noise reasoning.
+    new_value = round(min(max(current + delta, 0.0), max_ratio), 9)
     setattr(box, dimension, new_value)
 
 

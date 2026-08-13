@@ -117,7 +117,11 @@ def test_move_step_moves_y_by_one_cell():
 
     move_step(box, "y", grow=False, term_width=100, term_height=40, w_cells=26, h_cells=20)
 
-    assert box.y == 0.2 - 1 / 40
+    # approx, not exact == against the raw "0.2 - 1/40" expression: that
+    # expression itself carries its own float noise (e.g.
+    # 0.17500000000000002), which move_step's own rounding (see its
+    # docstring) now deliberately does NOT reproduce.
+    assert box.y == pytest.approx(0.175)
 
 
 def test_move_step_never_touches_w_or_h():
@@ -133,6 +137,27 @@ def test_move_step_clamps_at_zero():
     box = ModuleBox(name="sidebar", x=0.0, y=0.0, w=0.26, h=0.5)
 
     move_step(box, "x", grow=False, term_width=100, term_height=40, w_cells=26, h_cells=20)
+
+    assert box.x == 0.0
+
+
+def test_move_step_does_not_accumulate_float_noise():
+    # Found live: repeated arrow-key nudges (right then back left, the
+    # same net-zero movement a bit of hands-on resize-mode dragging
+    # easily produces) used to leave x at something like
+    # 5.204170427930421e-18 instead of exactly 0.0 — invisible on
+    # screen, but enough to break navigation.py's tab_order(), which
+    # sorts boxes by exact (x, y) comparison: a box that's visually
+    # flush with its neighbors but off by an epsilon sorts into its own
+    # separate "column". term_width=131 (not a clean divisor of 1)
+    # reproduces the same kind of binary-fraction residue the original
+    # bug report's real terminal size did.
+    box = ModuleBox(name="sessions", x=0.0, y=0.0, w=0.2, h=0.1)
+
+    for _ in range(7):
+        move_step(box, "x", grow=True, term_width=131, term_height=40, w_cells=26, h_cells=4)
+    for _ in range(7):
+        move_step(box, "x", grow=False, term_width=131, term_height=40, w_cells=26, h_cells=4)
 
     assert box.x == 0.0
 
