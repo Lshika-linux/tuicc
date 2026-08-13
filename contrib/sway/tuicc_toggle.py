@@ -54,24 +54,14 @@ Fullscreen is config-driven, not hardcoded here: this script reads
 (install.sh sets this for you, matching whatever you answer its own
 fullscreen prompt) and, if true, chains `, fullscreen enable` onto the
 "scratchpad show"/"focus" actions below (never onto "move scratchpad"
-— you're hiding it there, not showing it). Why re-assert it at all,
-rather than just adding `fullscreen enable` to the for_window rule
-above and leaving it at that: sway drops a container back to plain
-floating the instant ANY new window is mapped anywhere in the session
-if it happens to land on tuicc's own workspace first — which new
-windows typically do, briefly, before anything gets a chance to move
-them elsewhere (see main.py's pending_moves.py for the tuicc-side half
-of this same fix). Without re-asserting it here too, a fullscreen
-tuicc silently drops to floating on your first launcher spawn or
-session restore after every summon. This also matters beyond looks:
-while a container is truly fullscreen, sway won't let anything else on
-that workspace steal keyboard focus, which is what makes spawning from
-tuicc's launcher reliable (see main.py's `focus_self()` docstring for
-the same problem from tuicc's own side — that fix helps, but real
-fullscreen prevents the steal outright instead of just correcting it
-afterward). If `fullscreen_only` is false (the default) or your
-config.toml can't be read for any reason, this script just does plain
-floating show/focus — same as if fullscreen didn't exist here at all.
+— you're hiding it there, not showing it). Why re-assert it at all
+instead of just adding `fullscreen enable` to the for_window rule and
+leaving it there: see CLAUDE/NOTES/wm-quirks.md#fullscreen-drop-on-map
+for why sway drops a fullscreen container back to floating on almost
+every summon otherwise, and why that also breaks the launcher's
+keyboard-focus reliability, not just its looks. If `fullscreen_only` is
+false (the default) or config.toml can't be read, this script just
+does plain floating show/focus.
 """
 import json
 import subprocess
