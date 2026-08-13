@@ -34,6 +34,14 @@ Every restore spawn gets a log_path under `SPAWN_LOG_DIR` (named by app_id + wal
 
 `provider.resolve_pid()` defaults to a no-op returning `None` for providers that don't need it (sway's windows already carry a real pid from `get_state()`), so calling `_enrich_pids()` unconditionally is safe everywhere — just a no-op where it isn't needed.
 
+## `battery.watch()` push-notification is unreliable on real hardware, not wired in {#battery-push-unreliable}
+
+`battery.watch()` blocks on `select.poll()` against each BAT pack's `uevent` sysfs attribute (`POLLPRI|POLLERR`), the same low-level mechanism `upowerd`/`acpid` use internally. Confirmed empirically NOT reliable: across several real charger unplug/replug cycles on a T480 (NixOS), `select.poll()` never fired once — every yield came from the generator's own `fallback_seconds` safety net, never the kernel notification, and the underlying `/sys` data hadn't changed between samples despite the physical action genuinely happening. The kernel's documented `power_supply` `poll()` support evidently isn't reliably wired up for this attribute on that kernel/driver combination.
+
+Full status, the two candidate replacement mechanisms (pyudev netlink monitoring, UPower D-Bus signals), and the "make it work or delete it" decision this gates before v0.1.0 ships are in `CLAUDE/VISION.md`'s R8 section — read that before touching `battery.watch()`, `push_worker.py`, or `combined_status.py`. `main.py` currently wires `battery` to a plain fast-poll `StatusWorker` `Domain` (poll_interval=0.3) instead.
+
+One confirmed-correct low-level detail worth keeping regardless of whether `watch()` survives: the first `poll()` call after opening a `power_supply` `uevent` fd fires immediately and unconditionally — not a real change, just how the kernel's poll table registration works for these files. Reading the file's content ("arming" it) is what makes subsequent `poll()` calls only return on an actual change; each detected change has to be re-armed (seek+read) before the next `poll()` call or the same still-unconsumed event immediately re-fires.
+
 ## Resummon can keep a stale workspace selection {#stale-resummon-selection}
 
 Reported on both sway and i3: dismissing tuicc and re-summoning it sometimes shows the sidebar still selected on whatever workspace was selected *before* dismiss, not necessarily matching real current WM focus. Never conclusively root-caused — could be a real bug in the focus-change detector, or could be correct behavior that looked like a bug because real focus happened to coincide. Needs a clean, deliberate repro (dismiss tuicc while workspace A is selected in the sidebar, switch WM focus to workspace B via a non-tuicc means, re-summon, check what's selected) before concluding anything.
