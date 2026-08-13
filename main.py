@@ -385,29 +385,32 @@ def main(stdscr):
     # launcher.typing_mode checked directly. "normal" (never popped)
     # means no one has stolen input — an unbound printable key
     # auto-claims for the launcher (ambient "type anywhere" is sugar for
-    # that auto-claim), same as before. Four phases in, this now covers
-    # every original consumer: sessions_naming/sysmon_nice (Phase 1),
-    # connectivity_passphrase/connectivity_pairing (Phase 2), help/
-    # help_colors (Phase 3, the first genuinely 2-level-nested pair —
-    # "help" can push "help_colors" on top of itself), launcher (Phase
-    # 4) — see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for
-    # the full rationale and each phase's own postmortem. The
-    # `input_claim: str | None` variable this replaced is fully retired
-    # as of Phase 4 — nothing in this file assigns to it any more.
-    # resize_mode's own two-level browsing/editing session
-    # (resize.active/resize.editing) and spawn_picker.active are
-    # deliberately NOT on this stack yet — neither is a text-input claim
-    # (arrow-key resize deltas, move_toggle, delete_box, F1/F3/F4/F6
-    # reachable from either level), a structurally different kind of
-    # hijack; see VISION.md's R2 section for why folding those in is a
-    # bigger, separate pass (resize's own browsing tier falls through to
-    # normal dispatch on an unhandled key, which the plain
-    # still_claiming bool contract every current MODE_HANDLERS entry
-    # uses doesn't fit — needs a 3-state result instead). Each
-    # consumer's own module-level state (LauncherState.typing_mode,
-    # HelpState.color_editing, sessions.py's _naming_slot) is untouched
-    # by this — this stack is kept in sync with it at every entry/exit
-    # point below, not a replacement for it.
+    # that auto-claim), same as before. Five phases in (the last one),
+    # this now covers every text-input/modal claim that exists:
+    # sessions_naming/sysmon_nice (Phase 1), connectivity_passphrase/
+    # connectivity_pairing (Phase 2), help/help_colors (Phase 3, the
+    # first genuinely 2-level-nested pair — "help" can push
+    # "help_colors" on top of itself), launcher (Phase 4),
+    # spawn_picker/resize_editing (Phase 5) — see
+    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for the full
+    # rationale and each phase's own postmortem. The
+    # `input_claim: str | None` variable this replaced was fully
+    # retired as of Phase 4.
+    #
+    # resize_mode's own BROWSING level (resize.active and not
+    # resize.editing) is the one deliberate, permanent exception — not
+    # deferred, never migrating. It isn't a true modal claim: it falls
+    # through to normal dispatch on an unhandled key (arrow-key/Tab/F-key
+    # navigation all keep working while just browsing), which the plain
+    # still_claiming bool contract every MODE_HANDLERS entry uses can't
+    # express — and unlike editing/spawn_picker, it doesn't need to:
+    # browsing is the same KIND of thing as sessions/media/sysmon's own
+    # two-level expansion state, already orthogonal to this stack since
+    # Phase 3. Each consumer's own module-level state
+    # (LauncherState.typing_mode, HelpState.color_editing, sessions.py's
+    # _naming_slot, ResizeState.editing) is untouched by this — this
+    # stack is kept in sync with it at every entry/exit point below, not
+    # a replacement for it.
     mode_stack: list[str] = ["normal"]
 
     # True from the moment dismiss_self() is called until the next real
@@ -479,6 +482,19 @@ def main(stdscr):
     def do_spawn_picker():
         available = set(MODULES.keys()) - {b.name for b in cfg.layout.boxes}
         resize_mode.open_picker(spawn_picker, available)
+        # open_picker() is a no-op when `available` is empty (no modules
+        # left to spawn) — only push the claim if it actually opened.
+        if spawn_picker.active:
+            mode_stack.append("spawn_picker")
+
+    def do_enter_box_editing(box, is_new=False):
+        # Centralizes the mode_stack push for entering editing — same
+        # single-append-site safety argument as do_enter_help's
+        # unconditional append (Phase 3). Both callers (browsing's own
+        # confirm branch, and handle_spawn_picker's handoff below) stay
+        # in sync automatically.
+        resize_mode.enter_box_editing(resize, box, is_new=is_new)
+        mode_stack.append("resize_editing")
 
     def do_enter_resize():
         resize_mode.enter_edit_mode(resize)
@@ -788,6 +804,99 @@ def main(stdscr):
             return False
         return True
 
+    # Phase 5 (final): spawn_picker + resize's editing level — the last
+    # two hijack tiers, deliberately excluded from every prior phase.
+    # resize's BROWSING level (resize.active and not resize.editing)
+    # deliberately stays OFF this stack, permanently, not deferred
+    # further — it isn't a true modal claim (it falls through to normal
+    # dispatch on an unhandled key, same as sessions/media/sysmon's own
+    # two-level expansion, which Phase 3 already declared orthogonal).
+    # Only editing and spawn_picker always consume every key, which is
+    # what the plain still_claiming bool contract actually needs. See
+    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
+    def handle_spawn_picker(key):
+        nonlocal active_module
+        choice = resize_mode.choose(spawn_picker, key)
+        if choice is not None:
+            new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
+            cfg.layout.boxes.append(new_box)
+            active_module = choice
+            # Handoff, not a plain end: picking a module goes straight
+            # into editing it, not back to normal. Pop "spawn_picker"
+            # ourselves before pushing "resize_editing" — the generic
+            # dispatch's own post-call pop would otherwise remove
+            # whatever's on top AFTER we push, not spawn_picker's own
+            # frame.
+            mode_stack.pop()
+            do_enter_box_editing(new_box, is_new=True)
+            return True  # stack already correctly arranged
+        return False
+
+    def handoff(do_fn):
+        # Shared by every F-key branch inside handle_resize_editing
+        # below: ends editing and hands off to whatever do_fn lands in
+        # (browsing, a fully-closed session, or a new mode_stack claim
+        # like "help"/"spawn_picker" — do_fn manages that part itself).
+        # Same self-pop-before-delegating shape as handle_spawn_picker's
+        # own handoff above, factored out since six branches need it.
+        resize_mode.commit_box_editing(resize)
+        mode_stack.pop()
+        do_fn()
+        return True
+
+    def handle_resize_editing(key):
+        nonlocal active_module
+        if resize.confirm_delete:
+            if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
+                deleted_name = resize.box.name
+                resize_mode.confirm_delete_yes(resize, cfg.layout.boxes)
+                if active_module == deleted_name:
+                    active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
+                return False  # confirm_delete_yes unconditionally ends editing
+            if key == cfg.keybinds["confirm_no"]:
+                resize_mode.confirm_delete_no(resize)
+            # confirm_no, or any other key while confirm_delete is
+            # showing (silently swallowed, same as before this
+            # migration) — editing untouched either way.
+            return True
+        if key in direction_keys:
+            x_cells, y_cells, w_cells, h_cells = boxes[active_module]
+            resize_mode.apply_direction(
+                resize, direction_keys[key], term_width, term_height, x_cells, y_cells, w_cells, h_cells
+            )
+        elif key == cfg.keybinds["move_toggle"]:
+            resize_mode.toggle_dimension(resize)
+        elif key == cfg.keybinds["delete_box"]:
+            resize_mode.request_delete(resize, resize.box)
+        elif key == cfg.keybinds["confirm"]:
+            resize_mode.commit_box_editing(resize)
+            return False
+        elif key == 27:  # Escape
+            resize_mode.escape_box_editing(resize, cfg.layout.boxes)
+            return False
+        elif key == cfg.keybinds["spawn_box"]:
+            return handoff(do_spawn_picker)
+        elif key == cfg.keybinds["resize"]:
+            return handoff(do_enter_resize)
+        elif key == cfg.keybinds["save_layout"]:
+            return handoff(do_save_layout)
+        elif key == cfg.keybinds["cycle_preset"]:
+            return handoff(do_cycle_preset)
+        elif key == cfg.keybinds["new_preset"]:
+            return handoff(do_new_preset)
+        elif key == cfg.keybinds["help"]:
+            return handoff(do_enter_help)
+        # Load-bearing, not decoration: the original block always ended
+        # in one unconditional `continue` regardless of which branch
+        # matched (or none did) — direction_keys/move_toggle/delete_box
+        # above fall through to here on purpose, and so does any
+        # genuinely unrecognized key. Without this, either case would
+        # return None (falsy), and the generic dispatch would read that
+        # as "done" and pop — silently ending the whole editing session
+        # on a stray keypress instead of harmlessly ignoring it. Caught
+        # in review before it shipped, not live.
+        return True
+
     MODE_HANDLERS = {
         "sessions_naming": handle_sessions_naming,
         "sysmon_nice": handle_sysmon_nice,
@@ -796,6 +905,8 @@ def main(stdscr):
         "help": handle_help,
         "help_colors": handle_help_colors,
         "launcher": handle_launcher,
+        "spawn_picker": handle_spawn_picker,
+        "resize_editing": handle_resize_editing,
     }
 
     def any_two_level_module_expanded():
@@ -1254,15 +1365,6 @@ def main(stdscr):
                 continue
 
 
-            if spawn_picker.active:
-                choice = resize_mode.choose(spawn_picker, key)
-                if choice is not None:
-                    new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
-                    cfg.layout.boxes.append(new_box)
-                    active_module = choice
-                    resize_mode.enter_box_editing(resize, new_box, is_new=True)
-                continue
-
             # Browsing level: the edit session is open but no module is being
             # resized/moved right now — everything except confirm/delete_box/
             # Escape falls through to the normal dispatch chain below, so
@@ -1283,7 +1385,7 @@ def main(stdscr):
                 if key == cfg.keybinds["confirm"] and active_module is not None:
                     box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
                     if box is not None:
-                        resize_mode.enter_box_editing(resize, box)
+                        do_enter_box_editing(box)
                     continue
                 elif key == cfg.keybinds["delete_box"] and active_module is not None:
                     box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
@@ -1294,54 +1396,6 @@ def main(stdscr):
                     resize_mode.exit_edit_mode(resize)
                     continue
                 # else: fall through to the bottom dispatch chain.
-
-            elif resize.active and resize.editing:
-                if resize.confirm_delete:
-                    # confirm_yes OR confirm (Enter) — see
-                    # handle_pending_confirm()'s own docstring for why.
-                    if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
-                        deleted_name = resize.box.name
-                        resize_mode.confirm_delete_yes(resize, cfg.layout.boxes)
-                        if active_module == deleted_name:
-                            active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
-                    elif key == cfg.keybinds["confirm_no"]:
-                        resize_mode.confirm_delete_no(resize)
-                    continue
-                if key in direction_keys:
-                    x_cells, y_cells, w_cells, h_cells = boxes[active_module]
-                    resize_mode.apply_direction(
-                        resize, direction_keys[key], term_width, term_height, x_cells, y_cells, w_cells, h_cells
-                    )
-                elif key == cfg.keybinds["move_toggle"]:
-                    resize_mode.toggle_dimension(resize)
-                elif key == cfg.keybinds["delete_box"]:
-                    resize_mode.request_delete(resize, resize.box)
-                elif key == cfg.keybinds["confirm"]:
-                    # Keeps the change in cfg.layout (in memory only) and
-                    # returns to browsing — resize as many other modules as
-                    # you like before writing anything to disk via save_layout.
-                    resize_mode.commit_box_editing(resize)
-                elif key == 27:  # Escape
-                    resize_mode.escape_box_editing(resize, cfg.layout.boxes)
-                elif key == cfg.keybinds["spawn_box"]:
-                    resize_mode.commit_box_editing(resize)
-                    do_spawn_picker()
-                elif key == cfg.keybinds["resize"]:
-                    resize_mode.commit_box_editing(resize)
-                    do_enter_resize()
-                elif key == cfg.keybinds["save_layout"]:
-                    resize_mode.commit_box_editing(resize)
-                    do_save_layout()
-                elif key == cfg.keybinds["cycle_preset"]:
-                    resize_mode.commit_box_editing(resize)
-                    do_cycle_preset()
-                elif key == cfg.keybinds["new_preset"]:
-                    resize_mode.commit_box_editing(resize)
-                    do_new_preset()
-                elif key == cfg.keybinds["help"]:
-                    resize_mode.commit_box_editing(resize)
-                    do_enter_help()
-                continue
 
             # Sorted by position, not declaration order in the preset
             # file — module-to-module movement (Left/Right, and Tab/
