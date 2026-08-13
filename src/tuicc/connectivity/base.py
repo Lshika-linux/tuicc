@@ -47,27 +47,14 @@ class WifiBackend(ABC):
 
 class WifiAgent(ABC):
     """The contract a wifi backend's own D-Bus "Agent"/"secrets agent"
-    must fulfil — one per WifiBackend of the same protocol, mutually
-    exclusive by config, exactly like WifiBackend/WIFI_BACKENDS itself
-    (see registry.py's build_wifi_agent()). Generalized out of
-    IwdAgent (the only implementation until NetworkManagerAgent) once
-    a second one needed the exact same ROLE through a structurally
-    similar but not identical D-Bus mechanism — main.py's own call
-    sites read this contract generically (`wifi_agent`), never asking
-    which concrete backend it is.
-
-    Deliberately NOT extended to bluetooth: BluezAgent's
-    reply_pairing(bool) is a fundamentally different shape than
-    reply_passphrase(str) (yes/no vs typed text) — there is, and is
-    expected to stay, exactly one bluetooth backend/agent pair, so
-    there's nothing to generalize there.
-
-    `mailbox` (an AgentMailbox instance) is a plain constructor-set
-    attribute on every implementation, not forced through an abstract
-    property here — same "expose the live object, not a snapshot"
-    convention AgentMailbox's own module docstring already
-    establishes; the ceremony of an abstract property buys nothing
-    over just documenting the expectation.
+    must fulfil — one per WifiBackend, mutually exclusive by config
+    (see registry.py's build_wifi_agent()). main.py's call sites read
+    this contract generically (`wifi_agent`), never asking which
+    concrete backend it is. Deliberately not extended to bluetooth:
+    BluezAgent's reply_pairing(bool) is a fundamentally different shape
+    than reply_passphrase(str). `mailbox` is a plain constructor-set
+    attribute on every implementation, not an abstract property — see
+    AgentMailbox's own module docstring for that convention.
     """
     @abstractmethod
     def start(self) -> None:
