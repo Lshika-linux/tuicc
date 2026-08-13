@@ -58,8 +58,8 @@ def _is_binary(states: list[dict]) -> bool:
     information the dot already carries. An N-way cycle (3+ states,
     e.g. Performance Mode's power-saver/balanced/performance) can't:
     a single filled dot doesn't distinguish which of 3+ states it is
-    even with a per-state color (found live — the bracket text stays
-    for those, only dropped for plain toggles).
+    even with a per-state color — the bracket text stays for those,
+    only dropped for plain toggles.
     """
     return len(states) == 2
 
@@ -104,10 +104,10 @@ def _row_kind(current_name: str | None, error: str | None, action_error: str | N
     follows).
 
     Priority: pending > action_error > poll_error > normal.
-    action_error outranks a plain poll error — found live building
-    this module: the last thing the user DID (pressed Enter, the
-    command failed) is more relevant than the last thing that was
-    merely observed (a status_command poll failing independently).
+    action_error outranks a plain poll error: the last thing the user
+    DID (pressed Enter, the command failed) is more relevant than the
+    last thing that was merely observed (a status_command poll failing
+    independently).
     """
     if pending:
         return "pending"
@@ -218,18 +218,14 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             preview_text.append(("!! SHELL=TRUE !!", theme.get("urgent", 0)))
         if action_error:
             # The failed command's own captured output (see
-            # control._run_detached_detecting_quick_failure) — found
-            # live, this used to be invisible entirely. One
-            # preview_text ENTRY per physical line, not one entry
-            # holding an embedded "\n" — draw_centered_lines
-            # (render_utils.py) positions each entry as exactly one
-            # row via its own x/y math; a raw "\n" inside a single
-            # entry's text just makes curses jump to column 0 of the
-            # next real terminal row, escaping the box entirely —
-            # found live, a multi-line command like gammastep's (3
-            # separate "Error: ..." lines) rendered the first line
-            # positioned correctly and the rest floating unpositioned
-            # elsewhere on screen.
+            # control._run_detached_detecting_quick_failure) — see
+            # CLAUDE/VISION.md's R3 section for the gammastep/Night
+            # Light example this surfaces. One preview_text entry per
+            # physical line, not one entry holding an embedded "\n":
+            # draw_centered_lines (render_utils.py) positions each
+            # entry as exactly one row via its own x/y math, so a raw
+            # "\n" inside a single entry just makes curses jump to
+            # column 0 of the next real terminal row, escaping the box.
             for line in action_error.splitlines():
                 preview_text.append((f"⚠ {line}", theme.get("urgent", 0)))
 

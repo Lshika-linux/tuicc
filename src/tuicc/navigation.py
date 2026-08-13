@@ -50,12 +50,10 @@ class NavItem:
     preview_text: list[tuple[str, int]] | None = None
     # True if preview_text represents something urgent (sysmon.py's
     # diagnostics row: real failed units/OOM/errors, not "all clear") —
-    # found live, asked for: preview.py's own border color is what
-    # signals "pay attention here" everywhere else selection/status
-    # colors are used in this codebase, so a preview showing a real
-    # problem should color THAT border urgent too, not just the text
-    # inside it. False (the default) leaves preview.py's border exactly
-    # as it already was for every other module's own preview_text.
+    # colors preview.py's whole border urgent, not just the text inside
+    # it, matching how urgent/selection colors are used everywhere else
+    # in this codebase. False (the default) leaves preview.py's border
+    # exactly as it already was for every other module's preview_text.
     preview_urgent: bool = False
 
 

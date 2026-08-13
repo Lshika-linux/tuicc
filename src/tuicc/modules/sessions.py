@@ -86,8 +86,8 @@ def collapse() -> int | None:
     handle_row sets ActionContext.reselect_item_id: nav_items() no
     longer reports the just-selected action id the instant this
     collapses, which would otherwise trip main.py's stale-selection
-    recovery into jumping to the sidebar, same bug found live for the
-    expand direction.
+    recovery into jumping to the sidebar (the same failure mode as the
+    expand direction).
     """
     global _expanded_slot
     slot = _expanded_slot
@@ -275,9 +275,9 @@ def handle_row(ctx, item, cfg):
     # See ActionContext.reselect_item_id's docstring — without this,
     # the just-selected "sessions:row:N" id vanishes from nav_items()'
     # own output the moment _expanded_slot changes (it now reports
-    # this slot's 4 actions instead), which tripped main.py's "no
-    # longer valid, recover somehow" fallback into jumping to whatever
-    # the sidebar shows — found live, not what expanding a row should do.
+    # this slot's 4 actions instead), tripping main.py's "no longer
+    # valid, recover somehow" fallback into jumping to the sidebar
+    # instead of landing on the newly-revealed actions.
     ctx.reselect_item_id = f"sessions:action:{_expanded_slot}:{ACTIONS[0]}"
     return False, None
 
@@ -295,7 +295,7 @@ def handle_action(ctx, item, cfg):
         _expanded_slot = None
         # Same reasoning as handle_row/collapse() — nav_items() drops
         # this action id the instant _expanded_slot resets, which would
-        # otherwise trip the sidebar-jump recovery bug found live.
+        # otherwise trip the sidebar-jump recovery fallback.
         # Unlike load below, save has no reason to jump to the sidebar
         # (nothing new appeared to look at) — just back to browsing,
         # cursor on the row just saved.

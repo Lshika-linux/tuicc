@@ -110,22 +110,11 @@ class IwdAgent(WifiAgent):
 
     def stop(self) -> None:
         """No-op if not running. Replies to any still-pending request
-        with a Canceled error BEFORE tearing the connection down —
-        found live, genuinely reproducible: main.py's finally block
-        (or a plain Ctrl+C) calling this while a passphrase overlay is
-        still open used to just close the connection out from under
-        iwd, leaving its own blocked Network.Connect() call waiting on
-        a peer that had simply vanished mid-request instead of getting
-        a normal, in-protocol answer. Suspected (not proven — no way
-        to reproduce a daemon segfault on demand) trigger for a real
-        iwd crash (SIGSEGV, systemd auto-restarted it) hit live this
-        session while doing exactly this kind of abrupt-disconnect
-        testing. Even setting the crash aside, there's no reason to
-        rely on iwd handling a dropped peer gracefully when a clean
-        Canceled reply costs nothing. Best-effort UnregisterAgent
-        afterward — we're tearing the connection down either way, so a
-        failure there (iwd already gone, bus already closing) isn't
-        worth surfacing.
+        with a Canceled error before tearing the connection down — see
+        CLAUDE/NOTES/known-limitations.md#agent-shutdown-cancels-pending
+        for why. Best-effort UnregisterAgent afterward — the connection
+        is torn down either way, so a failure there isn't worth
+        surfacing.
         """
         if self._thread is None:
             return
