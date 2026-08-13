@@ -1,8 +1,13 @@
 # TUI Command Center
+## Status: early / experimental
 
-Minimal UI design, maximal control over everyday tasks. (A LOT OF SCREENSHOTS FURTHER DOWN)
+Minimal UI design, maximal control over everyday tasks. 
 
 Built on a core that communicates with the WM (see lower, or wiki..), with everything else as **swappable modules**.
+
+Controlled with Tab/Shift+Tab, arrows and Enter
+
+![tuicc's core layout (sidebar, sessions, launcher, preview, connectivity, power menu) with media/system/bars/control spawned in via F6 — those four aren't in the packaged default preset yet](./screenshot.png)
 
 You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
 - your workspaces and what's in them (sidebar.py);
@@ -19,59 +24,6 @@ You summon tuicc with a key-combo, and you get modules to see and control the sy
   (sysmon.py);
 - a power menu (power_menu.py);
 - a clock (clock.py).
-
-Missing something? 
-- See wiki, write a module!
-
-Don´t like some of the modules above? 
-- Shit man, I'm not here to dictate your modules, make them go away or move them around in the resize tool.
-
-Don´t like that it´s fullscreen? 
-- That's ok too! You absolutely can run it not-fullscreen.. I recommend leaving it floating tho, otherwise preview.py has a bad bad time. (We need to hide tuicc from the preview, and if tuicc is tiled, there's an obvious blank spot in the workspace)
-
-
-This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
-
-![tuicc's core layout (sidebar, sessions, launcher, preview, connectivity, power menu) with media/system/bars/control spawned in via F6 — those four aren't in the packaged default preset yet](./screenshot.png)
-https://github.com/Lshika-linux/tuicc
-
-## Why
-
-Oh lord, that's the big question.
-
-Because I don't want to rice, I want to use my 8gb ram i5 warrior of a thinkpad.
-I rice a little, just a pinch of rice, but primarily I want to use without resource drain. I want a functioning, no-bullshit, no-bells-and-whistles space, and I hope to build that. If you vibe with that, you're in the right place. (Colors and styling are of course customizable in the config — there's even a color picker menu hidden behind F1 hehe - I'm still trying to make it look appealing, don't worry.)
-
-What Claude has recommended me to write here:
-
-Existing tiling WM status bars and launchers tend to be single-purpose
-and WM-specific. tuicc aims for one keybind, one place, that adapts to
-whichever tiling WM (or scrolling WM) you're actually running.
-
-He's overselling. This is not a corporate project vision presentation. This is me, in my room, with a thinkpad, wanting a cool control center, but also liking low CPU/RAM usage. (yes, the code isn´t optimized fully, I know. Thank you for bringing that up! Once tuicc is in a good place, I'll begin further optimization)
-
-## Status: early / experimental
-
-Tuicc is maintained by me alone. Currently testing sway/i3 daily driving. Once I make it not annoying to use, that will be v0.1.0, realistically most likely around September 2026.
-
-But you could/should absolutely try it out now! (SWAY is stable, I3 is still broken-ish :c )
-Right now it can:
-
-- Read live window/workspace state from **sway** and **i3** via the `sway.py` and `i3.py` providers (expandable to any WM, I hope!), including floating windows alongside tiled ones
-- Render a workspace sidebar and a live preview of the focused workspace's windows, with proper Unicode box-drawing and a configurable color theme
-- Tab through workspaces in the sidebar — the preview follows your selection, independent of the WM's own focus
-- Arrow-key navigate into the preview and between individual windows (tiled and floating), then Enter to actually focus that window or switch to that workspace, dismissing tuicc
-- Fuzzy-search and launch apps from a horizontal launcher strip, spawned onto whichever workspace the sidebar currently has selected — not by switching focus first, but by spawning normally and moving the new window once it appears
-- Show wifi and bluetooth status, connect to known AND new networks (typing a passphrase when one's needed, via a real D-Bus agent registered with iwd/NetworkManager — see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference) for both supported backends) and pair new bluetooth devices
-- System toggles you define yourself — night light, airplane mode, power profiles, do-not-disturb, whatever on/off (or multi-state cycling) shell command your own setup already uses; a status check plus a command per state, nothing hardcoded to a specific tool
-- See what's playing over MPRIS (any player that supports it — browsers, Spotify, mpv with the right plugin, ...), control play/pause/next/previous, switch which audio output device is default, and (optionally, if you have `cava` installed) a small live frequency visualizer next to the output list
-- Vertical VOL/BRI/BAT gauges, display-only for now (no ←→-adjust interaction yet — see wiki for status)
-- A system module: CPU/RAM per open window (CLOSE/KILL/renice), a compact CPU/RAM/disk/load/temperature/swap stats grid, and a one-line diagnostics summary (failed systemd units, OOM kills, deduped journal errors) that expands into the real detail on hover
-  (control, media, bars, and the system module aren't in the packaged default layout preset yet — spawn any of them with `F6`, or add a `[[box]]` for one to your own preset; see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference))
-- A power menu (lock, logout, reboot, shutdown, all user-defined) as a simple keyboard-navigable list, each entry with an optional confirm prompt and an optional keyboard shortcut
-- Global keyboard shortcuts — bind a key like `Ctrl+L` to any power-menu action, and it fires from anywhere in the running app, not just when that entry happens to be selected
-- Load layout, navigation, provider, and theme settings from a TOML config, with transparent, human-editable presets (no hidden defaults in code) — colors accept named values, hex, or [R,G,B], approximated to the nearest of curses's 256-color palette
-- Both providers are covered by a small fixture-based test suite (`tests/`), recorded from real sway and i3 sessions, so provider changes can be checked without a running WM, covering everything from provider parsing to layout math to config validation
 
 ## A closer look
 
@@ -96,6 +48,7 @@ Right now it can:
 ![Media module's Now Playing and Output lists](./screenshots/media-scrollable.png)
 
 **System gives you a live per-window resource readout, plus what's actually wrong on the machine.** CPU/RAM per open window (with CLOSE/KILL/NICE actions), a compact CPU/RAM/DISK/LOAD/temperature/swap stats grid, and a one-line diagnostics summary — failed systemd units, OOM kills, and deduped journal errors — that expands on hover into the real detail behind each issue.
+I like this because I like when my PC tells me what broke :D
 
 ![System module's per-window stats and diagnostics summary, with an expanded issue detail](./screenshots/system-info.png)
 
@@ -104,6 +57,21 @@ Not yet built:
 - scrollable-WM support (`scroll`/niri, see "Writing your own WM provider" below, most likely not in V0.1.0 tho :c unless someone would want to help);
 - a `quick_actions` module exists in the code but isn't wired into the default layout yet (reserved for something more open-ended later).
 - ←→-adjust interaction for the bars module's gauges (display-only for now, see above)
+- Weather display of some kind.
+- Calendar, perhaps? considering if this is in scope/useful
+- These will be added eventually, but right now, the priority is a stable V0.1.0
+
+Missing something? 
+- See wiki, write a module!
+
+Don´t like some of the modules above? 
+- Shit man, I'm not here to dictate your modules, make them go away or move them around in the resize tool.
+
+Don´t like that it´s fullscreen? 
+- That's ok too! You absolutely can run it not-fullscreen.. I recommend leaving it floating tho, otherwise preview.py has a bad bad time. (We need to hide tuicc from the preview, and if tuicc is tiled, there's an obvious blank spot in the workspace)
+
+
+This is an early project of mine — what I'm excited about is that it's theoretically possible to run on any tiling WM, as long as you're able to write your own WM provider: **the only part of the code that talks directly to your WM** and translates it into tuicc's data.
 
 ## Try it 
 
@@ -115,6 +83,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
+- this way it's a clean install and you will need to visit the config in ~/.config to set it up.
+Wiki is helpful here, see [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference)).
+- if thats too much trouble for a random repo, I understand xd, quick install is for you
+
 
 ## Quick install 
 
@@ -147,7 +119,7 @@ block to paste in and reload yourself. Re-run it any time to update
 overwrites an existing `config.toml`).
 
 Prefer to see exactly what it does first, or don't want to pipe a
-script straight into bash? Commendable! 
+script straight into bash? Your safety concerns are valid! 
 
     `curl -fsSL <url above> -o install.sh`
 
@@ -157,11 +129,11 @@ read it, then
 
 Quick navigation cheat sheet: Tab/Shift+Tab (or arrows) move between
 items, rolling into the next/previous module at either end; Left/Right
-jump straight to a module's first item; Enter runs the selected thing
-and dismisses tuicc (hides it, keeps it running) except for the
-launcher, connectivity, sessions, control, media, and system modules, which stay open; Escape
-does the same dismiss at the top level; typing anywhere opens the
-launcher. Full details, every key, and how it all actually decides
+switches between modules. + Enter to select something. Start writing at
+any point to summon the launcher. You can use arrows to change where 
+launcher will move the launched window after it spawns it.
+
+Full details, every key, and how it all actually decides
 where to go: [Keybindings](https://github.com/Lshika-linux/tuicc/wiki/Keybindings)
 on the wiki.
 
@@ -453,6 +425,11 @@ see this work on more than just sway and i3.
 
 ## Testing
 
+Tests are written by Claude, and I can't understand them just yet. That's ass.
+I will revisit tests around V0.1.0 to make sure they actually are useful :<
+
+!!! Claude talking:
+
 ```bash
 nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney])' --run 'pytest tests/ -v'
 ```
@@ -464,12 +441,50 @@ is tested directly. Modules' actual `draw()` functions and `main.py`'s
 event loop aren't covered (yet?) — both need a real curses screen to
 test meaningfully.
 
+!!! End Claude talking.
+
+
 ## License
 
-GPLv3 — see [LICENSE](LICENSE) for the full text. In short: you're free to
+GPLv3 — see [LICENSE](LICENSE) for the full text. You're free to
 use, modify, and distribute tuicc, including commercially, but if you
 distribute a modified version, it must stay open source under the same
-license. So that everybody gets a better tuicc :)
+license. I chose this, so that everybody gets a better tuicc :)
+
+## Important PSA 
+
+Hello, my name is Rafi, I am the single maintainer of tuicc.. also a paramedic - definitely not a professional developer.
+I am actively refining the tuicc concept since 01 2026, decided to learn modular infrastructure, so tuicc could serve others
+
+IMPORTANT AI USE DISCLAMER:
+I am learning Python and WM architecture along the way. Since I don't have human code reviewers, AI writes code, but I review everything, try to understand every line, and catch BS to the best of my ability before committing. At least 3 different AI chatbots cross-check the codebase regularly. I am building this, I own the architecture, and I'm learning every single day.
+
+To any human with experience in development who reads this - If you see something wrong in the code, let me know. Please, I want to create tuicc with solid code. Any feedback is extremely valuable to me. Reddit wont talk to me. 
+
+THIS README IS WRITTEN BY ME! (Claude helps me by adding new features, and with keeping this README up to date, but i revisit and rewrite in my own words.)
+
+Some things on the way:
+- v0.1.0 once I confirm sway+i3 variants are behaving predictably enough for daily use
+- docstring rework - they are annoyingly long, AI style. It's painful to look at, I need to make them bearable, move context to own document.
+- Wiki actually written by me - WIKI IS USEFUL AND UP TO DATE! but right now its written by AI with me just reading through it and editing the worst slop. This is the tradeoff I chose to still bring you up to date documentation for now :c
+
+- TUICC should work in most any terminal, but is developed using Kitty
+
+
+## Why
+
+Oh lord, that's the big question.
+
+Because I don't want to rice, I want to use my 8gb ram i5 warrior of a thinkpad.
+I rice a little, just a pinch of rice, but primarily I want to use without resource drain. I want a functioning, no-bullshit, no-bells-and-whistles space, and I hope to build that. If you vibe with that, you're in the right place. (Colors and styling are of course customizable in the config — there's even a color picker menu hidden behind F1 hehe - I'm still trying to make it look appealing, don't worry.)
+
+What Claude has recommended me to write here:
+
+Existing tiling WM status bars and launchers tend to be single-purpose
+and WM-specific. tuicc aims for one keybind, one place, that adapts to
+whichever tiling WM (or scrolling WM) you're actually running.
+
+He's overselling. This is not a corporate project vision presentation. This is me, in my room, with a thinkpad, wanting a cool control center, but also liking low CPU/RAM usage. (The code isn´t as resource conserving as it could be, I know. Thank you for bringing that up! Once tuicc is feature complete and working reliably, I'll begin further optimization)
 
 ## Professional tip for my elite readers who got all the way down here
 
@@ -479,4 +494,4 @@ it looks sick af. Try it, really — just launch it with
 missing 256-color support, since cool-retro-term doesn't report
 itself as 256-color-capable by default.
 
-Have a blessed day <3
+THANK YOU FOR READING! 
