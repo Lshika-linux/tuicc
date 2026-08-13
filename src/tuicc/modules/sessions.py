@@ -82,7 +82,7 @@ def collapse() -> int | None:
     """Leaves the expanded (level 2) state, back to browsing all three
     slot rows — main.py calls this on Escape while a slot is expanded.
     Returns the slot that WAS expanded (None if none was), so the
-    caller can reselect "sessions:row:<slot>" directly — same reason
+    caller can reselect "sessions:<slot>:row" directly — same reason
     handle_row sets ActionContext.reselect_item_id: nav_items() no
     longer reports the just-selected action id the instant this
     collapses, which would otherwise trip main.py's stale-selection
@@ -209,7 +209,7 @@ def draw(stdscr, box, ctx, module_name):
             continue
 
         is_this_expanded = slot == _expanded_slot
-        is_row_selected = f"sessions:row:{slot}" == ctx.selected_id
+        is_row_selected = f"sessions:{slot}:row" == ctx.selected_id
         name = _slot_name(ctx.config, slot)
         # selected only applies to the name while browsing (level 1) —
         # once expanded the cursor has moved onto one of the actions,
@@ -261,7 +261,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     for i, slot in enumerate(range(1, SLOT_COUNT + 1)):
         row = y + 1 + i
         items.append(NavItem(
-            id=f"sessions:row:{slot}",
+            id=f"sessions:{slot}:row",
             rect=(x + 1, row, w - 2, 1),
             focus_target=str(slot),
             target_kind="session_row",
@@ -273,7 +273,7 @@ def handle_row(ctx, item, cfg):
     global _expanded_slot
     _expanded_slot = int(item.focus_target)
     # See ActionContext.reselect_item_id's docstring — without this,
-    # the just-selected "sessions:row:N" id vanishes from nav_items()'
+    # the just-selected "sessions:N:row" id vanishes from nav_items()'
     # own output the moment _expanded_slot changes (it now reports
     # this slot's 4 actions instead), tripping main.py's "no longer
     # valid, recover somehow" fallback into jumping to the sidebar
@@ -299,7 +299,7 @@ def handle_action(ctx, item, cfg):
         # Unlike load below, save has no reason to jump to the sidebar
         # (nothing new appeared to look at) — just back to browsing,
         # cursor on the row just saved.
-        ctx.reselect_item_id = f"sessions:row:{slot}"
+        ctx.reselect_item_id = f"sessions:{slot}:row"
         return False, None
 
     if action == "load":

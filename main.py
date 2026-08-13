@@ -1549,47 +1549,47 @@ def main(stdscr):
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
                 mode_stack.append("launcher")
                 active_module = "launcher"
-            elif key == 27 and sessions_mode.is_expanded():
-                # Escape collapses an expanded session slot back to
-                # browsing all three rows, same "one level at a time"
-                # idea as resize_mode's browsing/editing split — but
-                # unlike that split, this needs no dedicated hijack
-                # tier above: Tab/other-module navigation already works
-                # unchanged while expanded (nav_items() alone decides
-                # what's navigable), so only Escape itself needs
-                # special-casing, right here, ahead of the plain
-                # top-level Escape (dismiss) below. Reselect the row
-                # directly (see collapse()'s docstring) for the same
-                # reason do_apply_reselect's reselect_item_id branch
-                # exists — the id this had selected a moment ago
-                # (an action within the slot) is about to vanish from
-                # nav_items() the instant collapse() runs.
-                collapsed_slot = sessions_mode.collapse()
-                if collapsed_slot is not None:
-                    selected_id = f"sessions:row:{collapsed_slot}"
-                    active_module = "sessions"
-            elif key == 27 and media_mode.is_expanded():
-                # Same idea as sessions.py's own Escape-collapse branch
-                # above, mirrored for media.py's now-playing rows — see
-                # media.py's module docstring for why it needed the
-                # same two-level model.
-                collapsed_bus_name = media_mode.collapse()
-                if collapsed_bus_name is not None:
-                    selected_id = f"media:{collapsed_bus_name}:row"
-                    active_module = "media"
-            elif key == 27 and sysmon_mode.is_expanded():
-                # Same idea as sessions.py's/media.py's own Escape-
-                # collapse branches above, mirrored for sysmon.py's
-                # window rows (VISION.md's R6).
-                collapsed_window_id = sysmon_mode.collapse()
-                if collapsed_window_id is not None:
-                    selected_id = f"sysmon:{collapsed_window_id}:row"
-                    active_module = "sysmon"
-            elif key == 27:  # Escape, no active input claim: dismiss at top level
-                if cfg.return_to_origin and origin_region_id is not None:
-                    provider.focus_region(origin_region_id)
-                dismissed = True
-                provider.dismiss_self()
+            elif key == 27:
+                # Escape collapses whichever two-level module (sessions/
+                # media/sysmon) is currently expanded back to browsing,
+                # same "one level at a time" idea as resize_mode's
+                # browsing/editing split — but unlike that split, this
+                # needs no dedicated hijack tier above: Tab/other-module
+                # navigation already works unchanged while expanded
+                # (nav_items() alone decides what's navigable), so only
+                # Escape itself needs special-casing, right here, ahead
+                # of the plain top-level dismiss. At most one of the
+                # three can plausibly be expanded at once in practice
+                # (each is scoped to its own module), but collapse()
+                # itself is safe to call unconditionally either way —
+                # all three mirror sessions.py's own collapse() exactly,
+                # returning None (a harmless no-op) when nothing was
+                # expanded — so trying each in turn and stopping at the
+                # first real hit needs no separate is_expanded() guard.
+                # Reselect the row directly (see collapse()'s own
+                # docstring) for the same reason do_apply_reselect's
+                # reselect_item_id branch exists — the id this had
+                # selected a moment ago (an action within the slot) is
+                # about to vanish from nav_items() the instant collapse()
+                # runs. All three modules share the same "module:value:row"
+                # id shape, confirmed live before relying on it here.
+                for mod_name, collapse_fn in (
+                    ("sessions", sessions_mode.collapse),
+                    ("media", media_mode.collapse),
+                    ("sysmon", sysmon_mode.collapse),
+                ):
+                    collapsed = collapse_fn()
+                    if collapsed is not None:
+                        selected_id = f"{mod_name}:{collapsed}:row"
+                        active_module = mod_name
+                        break
+                else:
+                    # Nothing was expanded — no active input claim:
+                    # dismiss at top level.
+                    if cfg.return_to_origin and origin_region_id is not None:
+                        provider.focus_region(origin_region_id)
+                    dismissed = True
+                    provider.dismiss_self()
     finally:
         status_worker.stop()
         cava_reader.stop()

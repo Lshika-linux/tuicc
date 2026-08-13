@@ -108,7 +108,7 @@ def test_handle_action_save_sets_reselect_item_id_to_its_own_row(tmp_path, monke
 
     handle_action(ctx, item, cfg=_FakeConfig())
 
-    assert ctx.reselect_item_id == "sessions:row:1"
+    assert ctx.reselect_item_id == "sessions:1:row"
 
 
 # ---------- handle_action: load ----------
@@ -280,7 +280,7 @@ def test_collapse_clears_expanded_slot():
 
 
 def test_collapse_returns_the_slot_that_was_expanded():
-    # main.py uses this to reselect "sessions:row:<slot>" directly —
+    # main.py uses this to reselect "sessions:<slot>:row" directly —
     # see collapse()'s docstring for why (nav_items() drops the
     # just-selected action id the instant this runs).
     _reset_module_state()
