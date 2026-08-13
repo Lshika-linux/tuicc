@@ -89,34 +89,16 @@ def module_of_item(item: NavItem) -> str:
 def same_row_neighbor(
     items: list[NavItem], selected_id: str | None, direction: int, wrap: bool = False,
 ) -> NavItem | None:
-    """The next item to the left (direction=-1) or right (direction=+1)
-    of the currently-selected one, within the SAME module and sharing
-    its exact row (rect's y) — lets Left/Right step across a module's
-    own horizontal list of items (e.g. sessions.py's LOAD/SAVE/DEL/NAME
-    row) before module_next_keys/module_prev_keys fall back to their
-    usual "jump to the next/previous module" behavior. None if there's
-    no current selection, or no other item shares both this item's
-    module and row (the overwhelmingly common case — most modules lay
-    items out in a single column, one per row, where this is always a
-    no-op and Left/Right behave exactly as before).
-
-    NOT the spatial nearest-neighbor search this module's own docstring
-    describes removing — that was unconstrained 2D search across the
-    WHOLE layout, unpredictable specifically because of overlapping
-    floating windows in the preview. This is narrower and doesn't share
-    that problem: same module, same exact row, nothing else even
-    considered, so there's no "which of several equally-near neighbors"
-    ambiguity to get wrong.
-
-    wrap=True cycles back to the row's other end past either boundary
-    instead of returning None there — opt-in, not the default: most
-    same-row lists still want to fall through to the normal jump-to-
-    next-module behavior at the row's edge, matching every other
-    module's Left/Right. sessions.py's level-2 (an expanded slot) is a
-    deliberate exception — Tab/Shift+Tab/Left/Right should all just
-    cycle LOAD/SAVE/DEL/NAME in place there, the same way resize_mode's
-    editing level is already a deliberate exception to normal
-    navigation — see main.py's call sites for exactly when it's passed.
+    """The next item left (direction=-1) or right (+1) of the selected
+    one, within the SAME module and exact row (rect's y) — lets
+    Left/Right step across a module's own horizontal row (e.g.
+    sessions.py's LOAD/SAVE/DEL/NAME) before falling back to jump-to-
+    next-module. None if there's no selection or no row-mate (the
+    common single-column case, a no-op). Narrower than the removed
+    spatial nearest-neighbor search (see module docstring): same
+    module, same exact row only, no ambiguity to get wrong. wrap=True
+    (opt-in — see main.py's call sites) cycles instead of returning
+    None at the row's end, for level-2 sessions.py-style exceptions.
     """
     if selected_id is None:
         return None
@@ -189,21 +171,13 @@ def next_item_across_modules(
     items: list[NavItem], module_names: list[str], active_module: str | None, selected_id: str | None
 ) -> NavItem | None:
     """Tab's full behavior: next_item_in_module's result, or — once
-    that's exhausted — the first item of the next module, walking
-    forward through as many modules as it takes (wrapping via
-    next_module_name, bounded to len(module_names) hops so an
-    all-empty module_names can't loop forever) until one actually has
-    an item. A single next-module lookup isn't enough: modules with
-    zero nav items are common, not a rare edge case — launcher (typing
-    captures it instead), preview, and clock all have none — so
-    landing on one must not silently swallow the keypress. Found live:
-    this used to leave Tab (and Shift+Tab, see prev_item_across_modules)
-    permanently stuck the moment selection reached Power Menu's last
-    item, since position order puts launcher (empty) immediately after
-    it in the packaged default preset — every further Tab press
-    recomputed the exact same "next module has nothing" result and did
-    nothing, with no way out except a different key. Returns None only
-    if every module is empty.
+    exhausted — the first item of the next module, walking forward
+    through as many modules as it takes (wrapping via next_module_name,
+    bounded to len(module_names) hops) until one actually has an item.
+    A single next-module lookup isn't enough since modules with zero
+    nav items are common (launcher, preview, clock) — see
+    CLAUDE/GUIDE.md's "Known open issues" for the stuck-Tab bug this
+    fixes. Returns None only if every module is empty.
     """
     next_item = next_item_in_module(items, active_module, selected_id)
     if next_item is not None:

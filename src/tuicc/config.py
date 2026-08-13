@@ -179,18 +179,13 @@ def next_free_preset_number() -> int:
 
 def save_new_preset(layout: Layout) -> int:
     """Writes layout as a brand-new numbered preset file under
-    USER_PRESETS_DIR, atomically (same reasoning as session.py's
-    save_session). Never touches an existing preset number — picks the
-    next free one via next_free_preset_number(), since tomli_w's
-    round-trip would silently strip any hand-written comments (like
-    preset 1.toml's) a regenerated file can't get back.
-
-    Returns the preset number used. This never touches config.toml
-    itself, same "never risk corrupting hand-written config" principle
-    documented above for USER_PRESETS_DIR vs a single shared layout
-    file — set_active_preset() below is the (surgical, comment-safe)
-    companion that actually switches config.toml's [layout] preset
-    over to a number this wrote.
+    USER_PRESETS_DIR, atomically. Never touches an existing preset
+    number — picks the next free one via next_free_preset_number(),
+    since tomli_w's round-trip would silently strip any hand-written
+    comments a regenerated file can't get back. Returns the preset
+    number used; never touches config.toml itself — set_active_preset()
+    is the comment-safe companion that switches config.toml's [layout]
+    preset over to a number this wrote.
     """
     preset_number = next_free_preset_number()
     save_layout_to_preset(layout, preset_number)
@@ -236,30 +231,14 @@ def available_preset_numbers() -> list[int]:
 
 
 def _patch_config_line(section: str, key: str, replacement_line: str) -> None:
-    """Rewrites ONLY the first `key = ...` line found inside `[section]`
-    in USER_CONFIG_PATH, leaving every other line — including comments
-    and their exact formatting — byte-for-byte untouched. Not a
-    tomllib-parse-then-tomli_w-dump round-trip, which would silently
-    strip every comment in a file the user hand-edits (see this
-    module's docstring on why presets are separate per-number files in
-    the first place — this is where that same constraint has to be
-    worked around instead of just avoided). Shared by set_active_preset,
-    set_theme_color, and set_session_name — the places in the codebase
-    that patch config.toml directly rather than regenerating it.
-
-    If `key` isn't found inside `[section]`, it's appended to the end
-    of that section instead of silently doing nothing — needed for
-    set_session_name, where [sessions] (added well after [layout]/
-    [theme] existed) may simply not be in an existing user's
-    config.toml yet. If `[section]` itself isn't found at all, a new
-    section is appended at the end of the file. set_active_preset/
-    set_theme_color never actually exercise this path in practice —
-    [layout]/[theme] are sections load_config() already requires just
-    to start up, so a config that loads successfully always has both —
-    but it's not worth a separate function just to special-case that.
-
-    Atomic write (tmp + replace), same pattern as save_new_preset/
-    session.py's save_session.
+    """Rewrites only the first `key = ...` line found inside `[section]`
+    in USER_CONFIG_PATH, leaving every other line — comments included
+    — byte-for-byte untouched. Not a tomllib/tomli_w round-trip, which
+    would silently strip comments. Shared by set_active_preset,
+    set_theme_color, set_session_name. If `key` (or even `[section]`)
+    isn't found, it's appended rather than silently doing nothing —
+    needed for set_session_name, since [sessions] may not exist in an
+    older config.toml yet. Atomic write (tmp + replace).
     """
     lines = USER_CONFIG_PATH.read_text().splitlines(keepends=True)
 
@@ -384,30 +363,15 @@ def _build_session_names(user_data: dict) -> dict:
 
 def _build_control_toggles(user_data: dict) -> list:
     """[[control.toggle]] -> a list of {"label", "shell_true", "states"}
-    dicts, each "states" entry {"name", "status_command", "command",
-    "color"}. .get("control", {}).get("toggle", []) rather than direct
-    indexing (unlike quick_actions/power_menu above): the packaged
+    dicts. .get()-with-default (not direct indexing): the packaged
     default ships every example commented out, so a fresh install's
-    control.toggle is legitimately absent, not an oversight to guard
-    against — direct indexing would KeyError on the very install this
-    feature ships to by default.
-
-    A 2-state entry ("off"/"on") and a 3+-state one ("power-saver"/
-    "balanced"/"performance") are the exact same shape here — see
-    VISION.md's R5 section for why this ended up unified into one
-    contract instead of a separate binary "toggle" + N-state "cycle".
-    Advancing through states is `(current_index + 1) % len(states)`
-    regardless of how many there are.
-
-    Every state but the LAST must have its own status_command (exit
-    0 = "currently in this state", checked in declaration order, first
-    match wins) — the last state's is optional: if every earlier
-    state's probe came back false, the current state must be whichever
-    one is left, a sound conclusion from exhaustive checking, not a
-    guess. A non-last state missing status_command, or any state
-    missing name/command, is a real config mistake -> raise, not a
-    silently invented default (this file's own long-standing
-    no-silent-fallback rule, see CONTRIBUTING.md).
+    control.toggle is legitimately absent. A 2-state on/off toggle and
+    a 3+-state cycle share one contract here — see CLAUDE/VISION.md's
+    R5 section for why. Every state but the last must have its own
+    status_command (checked in order, first match wins; the last is
+    implied by elimination). A non-last state missing status_command,
+    or any state missing name/command, raises rather than inventing a
+    default (see CONTRIBUTING.md's no-silent-fallback rule).
     """
     toggles = []
     for toggle_data in user_data.get("control", {}).get("toggle", []):
@@ -467,26 +431,14 @@ DEFAULT_SYSMON_BLOCKS = [
 
 def _build_sysmon_blocks(user_data: dict) -> list:
     """[[sysmon.block]] -> a list of {"metric", "enabled", "column",
-    "row", "warning", "urgent", "label"} dicts — the System module's
-    own single source of truth for which stat blocks show at all, where
-    each one sits, and what counts as warning/urgent for it. See
+    "row", "warning", "urgent", "label"} dicts. See
     CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why this is
-    config-driven rather than constants in modules/sysmon.py.
-
-    Falls back to DEFAULT_SYSMON_BLOCKS (above) when [sysmon] has no
-    [[block]] entries — same .get()-with-fallback reasoning [audio]'s
-    own section established for a config section landing after initial
-    release; an existing config.toml predating this must not lose its
-    whole System module over a missing section.
-
-    "row" is really just this block's own ORDER within its column, not
-    a literal shared row index across every column — columns don't
-    have to have the same number of blocks (today's default column 1
-    has 3, columns 2/3 have 2 each), so gaps/non-contiguous row numbers
-    are fine; only the relative order within one column matters.
-    warning/urgent are optional (None, the default, when a metric isn't
-    given either) — a block with neither never gets threshold-colored,
-    always plain text.
+    config-driven rather than constants in modules/sysmon.py. Falls
+    back to DEFAULT_SYSMON_BLOCKS when [sysmon] has no [[block]]
+    entries. "row" is this block's order within its column, not a
+    literal shared index — columns can have different block counts, so
+    gaps are fine. warning/urgent default to None (never
+    threshold-colored) when a metric doesn't set either.
     """
     raw_blocks = user_data.get("sysmon", {}).get("block")
     if not raw_blocks:
