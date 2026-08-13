@@ -20,7 +20,7 @@ BUS_NAME = "net.connman.iwd"
 # own module docstring for why nothing blocks waiting for an answer),
 # and iwd's Connect() call itself only gets its reply once the user
 # actually types something and confirms, all the way over in main.py's
-# "connectivity_passphrase" input_claim tier. That can legitimately
+# mode_stack "connectivity_passphrase" tier. That can legitimately
 # take much longer than a plain property read. Generous but bounded:
 # if the user just walks away without answering, iwd's own agent-
 # request timeout (not under this codebase's control) eventually

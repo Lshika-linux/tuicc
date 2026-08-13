@@ -517,8 +517,10 @@ Two modules:
   `brightness.py`) are NOT built yet: still needs Domain wiring for
   both backends, the actual slider draw/grab UI, and — per this
   section's original interaction spec (Enter grabs, ←→ adjust, Enter/
-  Esc releases, arrows free since Tab is canonical navigation) — a 4th
-  `input_claim` (R2) consumer, since slider grab/release is a clean fit
+  Esc releases, arrows free since Tab is canonical navigation) — a new
+  `mode_stack` tier (R2's `input_claim`, since fully replaced by
+  `mode_stack` — see `CLAUDE/NOTES/design-decisions.md
+  #mode-stack-phase-1`), since slider grab/release is a clean fit
   for that mechanism unlike resize_mode's own deferred case. **Update:
   sliders did NOT land inside control after all — see R8.** Live
   iteration with the user concluded a continuous gauge is a different

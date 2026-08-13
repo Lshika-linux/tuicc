@@ -4,8 +4,8 @@ connect/disconnect happens on the StatusWorker's background thread
 (ctx.status), never blocking the render loop.
 
 CLAUDE/VISION.md's R4 added two more input claims this module owns the
-display state for, same "module-level state, main.py notices and sets
-input_claim on its behalf" idiom sessions.py's naming field
+display state for, same "module-level state, main.py notices and pushes
+onto mode_stack on its behalf" idiom sessions.py's naming field
 established: a wifi passphrase prompt (is_entering_passphrase()'s own
 quartet, driven by iwd_agent.py's IwdAgent registering a D-Bus agent
 with iwd) and a bluetooth pairing confirm (is_confirming_pairing(),
@@ -14,7 +14,7 @@ outside normal navigation entirely — an iwd/bluez daemon callback can
 arrive at any time, not just right after a keypress — so main.py
 notices them via IwdAgent.mailbox.has_pending()/BluezAgent.mailbox.
 has_pending() each frame, not via dispatch_action() the way every
-other input_claim consumer in this codebase is entered. See
+other mode_stack tier in this codebase is entered. See
 agent_mailbox.py's own module docstring for the cross-thread handoff
 this all rests on.
 

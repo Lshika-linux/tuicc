@@ -32,8 +32,8 @@ BUS_NAME = "org.bluez"
 # RequestAuthorization (which publishes an AgentMailbox request and
 # returns immediately — see agent_mailbox.py's own module docstring),
 # and bluez's Pair() call itself only gets its reply once the user
-# actually answers, all the way over in main.py's "connectivity_pairing"
-# input_claim tier — same reasoning as iwd.py's CONNECT_TIMEOUT_SECONDS.
+# actually answers, all the way over in main.py's mode_stack
+# "connectivity_pairing" tier — same reasoning as iwd.py's CONNECT_TIMEOUT_SECONDS.
 # If the user walks away, bluez's own agent request timeout eventually
 # cancels it from bluez's side, sending our agent Cancel — BluezAgent's
 # dispatch loop notices that immediately (it never blocks waiting on

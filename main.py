@@ -380,41 +380,34 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    # VISION.md's R2 (input claim): which module currently owns raw
-    # keystrokes, generalizing what used to be launcher.typing_mode
-    # checked directly. None means no one has stolen input — an
-    # unbound printable key auto-claims for the launcher (ambient
-    # "type anywhere" is sugar for that auto-claim), same as before.
-    # Sole remaining consumer: "launcher" (typing/search) — the last
-    # genuine text-input claim still living here. sessions_naming/
-    # sysmon_nice (Phase 1), connectivity_passphrase/connectivity_pairing
-    # (Phase 2), and help_colors/help (Phase 3) have all migrated off
-    # this onto mode_stack (see its own comment below, and
-    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1) — folding
-    # this whole variable into that stack, one tier at a time.
+    # VISION.md's R2 (mode_stack, née "input claim"): which module
+    # currently owns raw keystrokes, generalizing what used to be
+    # launcher.typing_mode checked directly. "normal" (never popped)
+    # means no one has stolen input — an unbound printable key
+    # auto-claims for the launcher (ambient "type anywhere" is sugar for
+    # that auto-claim), same as before. Four phases in, this now covers
+    # every original consumer: sessions_naming/sysmon_nice (Phase 1),
+    # connectivity_passphrase/connectivity_pairing (Phase 2), help/
+    # help_colors (Phase 3, the first genuinely 2-level-nested pair —
+    # "help" can push "help_colors" on top of itself), launcher (Phase
+    # 4) — see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for
+    # the full rationale and each phase's own postmortem. The
+    # `input_claim: str | None` variable this replaced is fully retired
+    # as of Phase 4 — nothing in this file assigns to it any more.
     # resize_mode's own two-level browsing/editing session
-    # (resize.active/resize.editing) is deliberately NOT migrated onto
-    # this — it isn't a text-input claim at all (arrow-key resize
-    # deltas, move_toggle, delete_box, F1/F3/F4/F6 reachable from either
-    # level), a structurally different kind of hijack; see VISION.md's
-    # R2 section for why that'd be a bigger, separate pass. Each
+    # (resize.active/resize.editing) and spawn_picker.active are
+    # deliberately NOT on this stack yet — neither is a text-input claim
+    # (arrow-key resize deltas, move_toggle, delete_box, F1/F3/F4/F6
+    # reachable from either level), a structurally different kind of
+    # hijack; see VISION.md's R2 section for why folding those in is a
+    # bigger, separate pass (resize's own browsing tier falls through to
+    # normal dispatch on an unhandled key, which the plain
+    # still_claiming bool contract every current MODE_HANDLERS entry
+    # uses doesn't fit — needs a 3-state result instead). Each
     # consumer's own module-level state (LauncherState.typing_mode,
     # HelpState.color_editing, sessions.py's _naming_slot) is untouched
-    # by this — this variable is kept in sync with it at every entry/
-    # exit point below, not a replacement for it.
-    input_claim = None
-
-    # Real stack gradually replacing input_claim's string-tier dispatch
-    # — see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for the
-    # full rationale. Coexists with input_claim above during the
-    # migration: "normal" (never popped) means nothing on the stack is
-    # claiming input, matching input_claim is None; any other top-of-
-    # stack value is looked up in MODE_HANDLERS below. Three phases in:
-    # sessions_naming/sysmon_nice (Phase 1), connectivity_passphrase/
-    # connectivity_pairing (Phase 2), help/help_colors (Phase 3, the
-    # first genuinely 2-level-nested pair — "help" can push
-    # "help_colors" on top of itself). Only launcher/spawn_picker/resize
-    # remain on input_claim or their own dedicated bool.
+    # by this — this stack is kept in sync with it at every entry/exit
+    # point below, not a replacement for it.
     mode_stack: list[str] = ["normal"]
 
     # True from the moment dismiss_self() is called until the next real
@@ -722,6 +715,79 @@ def main(stdscr):
             return False
         return True
 
+    # Phase 4: launcher's ambient "type anywhere to search apps" claim —
+    # mode_stack's very first historical consumer (VISION.md's R2), last
+    # of the original input_claim tiers to migrate. Needs three
+    # nonlocals — the most of any handler so far — since it's the only
+    # tier that touches focus_id (Up/Down shifts the ambient launch
+    # target) on top of the selected_id/active_module restore every
+    # exit path already needed.
+    def handle_launcher(key):
+        nonlocal focus_id, selected_id, active_module
+        # Up/Down shift the ambient-typing launch target (focus_id)
+        # without leaving typing mode — otherwise launching from
+        # anywhere always targets focus_id regardless of which module
+        # you'd been browsing, with no way to see (let alone change)
+        # that target while typing. Left/Right are already spoken for
+        # by launcher_mode.handle_typing_key itself (they move which
+        # search RESULT is selected); arrow keys never collide with
+        # typed characters (outside the printable range that function
+        # checks), including under vim_mode — vim's own j/k duplicates
+        # are a separate keybind (cfg.keybinds["vim_down"/"vim_up"]),
+        # not checked here, so they still type normally.
+        if key == cfg.keybinds["up"]:
+            current = focus_id if focus_id is not None else state.focused_region_id
+            focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
+            return True
+        if key == cfg.keybinds["down"]:
+            current = focus_id if focus_id is not None else state.focused_region_id
+            focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, 1)
+            return True
+        if key == cfg.keybinds["confirm"]:
+            selected = launcher_mode.resolve_selected(launcher)
+            if selected is not None:
+                cmd, app_id_hint = selected
+                known_ids = {w.id for r in state.regions for w in r.windows}
+                # .desktop Exec= is spec'd to never be shell-interpreted.
+                pid = spawn_detached(cmd, shell_true=False)
+                # See Provider.no_focus_next_window()'s docstring —
+                # called right after the pid is known, well before the
+                # spawned window has had a chance to map and steal
+                # focus/fullscreen from tuicc.
+                provider.no_focus_next_window(pid)
+                # focus_id is only ever set by explicitly selecting a
+                # sidebar region item — without one selected (or
+                # without a sidebar in the layout at all), fall back to
+                # whatever's actually focused right now, same live-
+                # follow pattern preview.py's draw() uses. app_id_hint
+                # (see launcher.scan_desktop_apps) is only a fallback —
+                # resolve_pending_move always tries the pid tier first,
+                # this just gives process()'s grace-period downgrade
+                # something to fall back to for single-instance apps
+                # whose pid will never appear on a window.
+                pending_moves.queue_launcher_spawn(
+                    moves,
+                    focus_id if focus_id is not None else state.focused_region_id,
+                    known_ids, pid, app_id_hint, time.monotonic(),
+                )
+                launcher_mode.exit_typing_mode(launcher)
+                selected_id = launcher.saved_selected_id
+                active_module = launcher.saved_active_module
+                return False
+            # selected is None (no search results): nothing happens,
+            # typing_mode stays True — not an implicit cancel.
+            return True
+        if not launcher_mode.handle_typing_key(launcher, key, cfg):
+            # handle_typing_key exited on its own (Escape, or Backspace
+            # on an empty query) — release the claim the same way the
+            # confirm branch above does explicitly, and restore the
+            # pre-typing selection the same way a successful confirm
+            # does too.
+            selected_id = launcher.saved_selected_id
+            active_module = launcher.saved_active_module
+            return False
+        return True
+
     MODE_HANDLERS = {
         "sessions_naming": handle_sessions_naming,
         "sysmon_nice": handle_sysmon_nice,
@@ -729,6 +795,7 @@ def main(stdscr):
         "connectivity_pairing": handle_connectivity_pairing,
         "help": handle_help,
         "help_colors": handle_help_colors,
+        "launcher": handle_launcher,
     }
 
     def any_two_level_module_expanded():
@@ -831,11 +898,13 @@ def main(stdscr):
                         mode_stack.pop()
 
             connectivity_wants_input = (
-                input_claim is None and pending_confirm is None
+                pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
-                # Still needed even though connectivity itself no longer
-                # touches input_claim (Phase 2) — launcher still does,
-                # and this must keep gating against it too.
+                # mode_stack[-1] == "normal" alone now covers every
+                # tier input_claim is None used to gate against (Phase
+                # 4 retired that variable — nothing assigns to it any
+                # more, so checking it here would've been permanently
+                # True and contributed nothing).
                 and mode_stack[-1] == "normal"
             )
             # Also fires while ALREADY in one of these two tiers, not
@@ -1184,70 +1253,6 @@ def main(stdscr):
                     mode_stack.pop()
                 continue
 
-            if input_claim == "launcher":
-                # Up/Down shift the ambient-typing launch target
-                # (focus_id) without leaving typing mode — otherwise
-                # launching from anywhere always targets focus_id
-                # regardless of which module you'd been browsing, with
-                # no way to see (let alone change) that target while
-                # typing. Left/Right are already
-                # spoken for by launcher_mode.handle_typing_key itself
-                # (they move which search RESULT is selected); arrow
-                # keys never collide with typed characters (outside the
-                # printable range that function checks), including
-                # under vim_mode — vim's own j/k duplicates are a
-                # separate keybind (cfg.keybinds["vim_down"/"vim_up"]),
-                # not checked here, so they still type normally.
-                if key == cfg.keybinds["up"]:
-                    current = focus_id if focus_id is not None else state.focused_region_id
-                    focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
-                elif key == cfg.keybinds["down"]:
-                    current = focus_id if focus_id is not None else state.focused_region_id
-                    focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, 1)
-                elif key == cfg.keybinds["confirm"]:
-                    selected = launcher_mode.resolve_selected(launcher)
-                    if selected is not None:
-                        cmd, app_id_hint = selected
-                        known_ids = {w.id for r in state.regions for w in r.windows}
-                        # .desktop Exec= is spec'd to never be shell-interpreted.
-                        pid = spawn_detached(cmd, shell_true=False)
-                        # See Provider.no_focus_next_window()'s docstring —
-                        # called right after the pid is known, well
-                        # before the spawned window has had a chance to
-                        # map and steal focus/fullscreen from tuicc.
-                        provider.no_focus_next_window(pid)
-                        # focus_id is only ever set by explicitly selecting a
-                        # sidebar region item — without one selected (or
-                        # without a sidebar in the layout at all), fall back
-                        # to whatever's actually focused right now, same
-                        # live-follow pattern preview.py's draw() uses.
-                        # app_id_hint (see launcher.scan_desktop_apps) is only
-                        # a fallback — resolve_pending_move always tries the
-                        # pid tier first, this just gives process()'s
-                        # grace-period downgrade something to fall back to
-                        # for single-instance apps whose pid will never
-                        # appear on a window.
-                        pending_moves.queue_launcher_spawn(
-                            moves,
-                            focus_id if focus_id is not None else state.focused_region_id,
-                            known_ids, pid, app_id_hint, time.monotonic(),
-                        )
-                        launcher_mode.exit_typing_mode(launcher)
-                        input_claim = None
-                        selected_id = launcher.saved_selected_id
-                        active_module = launcher.saved_active_module
-                    # selected is None (no search results): nothing happens,
-                    # typing_mode stays True — not an implicit cancel.
-                elif not launcher_mode.handle_typing_key(launcher, key, cfg):
-                    # handle_typing_key exited on its own (Escape, or
-                    # Backspace on an empty query) — release the claim
-                    # the same way the confirm branch above does
-                    # explicitly, and restore the pre-typing selection
-                    # the same way a successful confirm does too.
-                    input_claim = None
-                    selected_id = launcher.saved_selected_id
-                    active_module = launcher.saved_active_module
-                continue
 
             if spawn_picker.active:
                 choice = resize_mode.choose(spawn_picker, key)
@@ -1484,11 +1489,11 @@ def main(stdscr):
                 do_enter_help()
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module)
-                input_claim = "launcher"
+                mode_stack.append("launcher")
                 active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
-                input_claim = "launcher"
+                mode_stack.append("launcher")
                 active_module = "launcher"
             elif key == 27 and sessions_mode.is_expanded():
                 # Escape collapses an expanded session slot back to

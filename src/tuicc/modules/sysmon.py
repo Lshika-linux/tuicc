@@ -65,7 +65,7 @@ def _reconcile_expanded_state(windows: list) -> None:
         _expanded_window_id = None
 
 
-# ---------- NICE input (a 4th input_claim consumer, see main.py) ----------
+# ---------- NICE input (main.py's mode_stack "sysmon_nice" tier) ----------
 
 def is_editing_nice() -> bool:
     return _nice_target is not None

@@ -253,6 +253,8 @@ def draw(stdscr, box, ctx, module_name):
 def nav_items(box, ctx, module_name) -> list[NavItem]:
     """Empty on purpose — this first pass is display-only, see this
     module's own docstring. Grab/adjust interaction (a real NavItem per
-    bar, TARGET_KIND + input_claim handling) is a follow-up pass.
+    bar, TARGET_KIND + a mode_stack tier of its own — see main.py's
+    MODE_HANDLERS registry, CLAUDE/NOTES/design-decisions.md
+    #mode-stack-phase-1) is a follow-up pass.
     """
     return []

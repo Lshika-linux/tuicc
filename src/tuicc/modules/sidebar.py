@@ -47,7 +47,7 @@ def _build_slots(ctx):
 
 def shift_workspace_id(current_id, total_workspaces, delta):
     """current_id shifted by delta, wrapping within 1..total_workspaces
-    — used by main.py's "launcher" input_claim tier to let Up/Down move
+    — used by main.py's mode_stack "launcher" tier to let Up/Down move
     the ambient-typing launch target while still typing, without
     leaving typing mode. current_id may be None or non-numeric — falls
     back to slot 1 rather than raising, since this is UI convenience,
