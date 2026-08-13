@@ -1,45 +1,18 @@
-"""System monitor module (VISION.md's R6): a scrollable per-window
-CPU/RAM list on top (fixed VISIBLE_SLOTS-visible, same windowed_list.py
-mechanic media.py's Now Playing/Output sections already use), a
-compact multi-column system-stats block in the middle (CPU/RAM/disk/
-load/temp/hottest-sensor/throttle/swap — columns side by side, not one
-value per line, since the box's own row budget can't fit that), and a
-one-line diagnostics summary at the bottom (failed units + OOM +
-deduped general errors — hover shows the full breakdown via preview.py,
-same NavItem.preview_text mechanism every other module's hover-preview
-already uses).
+"""System monitor module (CLAUDE/VISION.md's R6): a scrollable per-window
+CPU/RAM list on top (fixed VISIBLE_SLOTS window, same windowed_list.py
+mechanic media.py's sections use), a compact multi-column system-stats
+block in the middle (CPU/RAM/disk/load/temp/hottest-sensor/throttle/
+swap, columns side by side since the row budget can't fit one value per
+line), and a one-line diagnostics summary at the bottom (failed units +
+OOM + deduped general errors; hover shows the full breakdown via
+preview.py).
 
-Window rows use the exact two-level browsing/expanded model sessions.py
-established (see that module's own docstring for the full reasoning):
-level 1 is one row per window with CLOSE/KILL/NICE dimmed at the box's
-right edge; Enter "expands" the row, lighting those three actions up
-and moving the cursor onto them (_action_positions here is sessions.py's
-own _action_positions, same right-aligned layout, 3 actions instead of
-4). NICE additionally opens its own small inline numeric input
-("-3_", same in-place-inline-text idiom sessions.py's rename field
-uses) rather than running immediately — is_editing_nice()/
-start_nice_edit()/handle_nice_key()/apply_nice_edit() are the hooks
-main.py's own input_claim dispatch calls into for that, mirroring
-sessions.py's is_naming()/start_naming()/handle_naming_key()/
-apply_naming() quartet shape exactly.
-
-NICE only ever WRITES 0..19 (positive/"nicer" only) — lowering
-niceness (negative values) needs CAP_SYS_NICE/root tuicc doesn't
-assume it has, and os.setpriority() would just fail depending on the
-kernel; restricting the input range to what's always safe sidesteps
-that failure mode entirely rather than handling it after the fact.
-CLOSE/KILL both act through pieces that already exist elsewhere:
-Provider.close_window() (already implemented on both sway.py/i3.py, no
-provider changes needed) and a plain pending_confirm dict routed
-through actions.py's existing spawn_detached(shell_true=False) —
-KILL needed zero changes to actions.py itself, `kill -9 <pid>` already
-splits cleanly via shlex.split, exactly like sessions.py's own "del"
-action.
-
-_expanded_window_id/_nice_target/_nice_input are plain module-level
-state — same "private, nothing else needs to reach into" pattern
-sessions.py's _expanded_slot/_naming_slot/_name_input and media.py's
-_expanded_bus_name already use.
+Window rows use the same two-level browsing/expanded row model as
+sessions.py (CLOSE/KILL/NICE), and NICE opens its own inline numeric
+input like sessions.py's rename field. See
+CLAUDE/NOTES/design-decisions.md#sysmon-module-design for the full
+reasoning, NICE's write-range restriction, and how CLOSE/KILL reuse
+existing pieces rather than adding new ones.
 """
 
 import curses
@@ -201,7 +174,7 @@ def _resource_drain_key(cpu_percent: float | None, rss_kb: int | None):
 
 
 def sort_windows_by_drain(windows: list, known_stats: list | None = None) -> list:
-    """Most resource-intensive window first — found live, asked for.
+    """Most resource-intensive window first.
 
     `windows` items are expected to carry their own .cpu_percent/
     .rss_kb (procmon.WindowStat — what _build_rows()/nav_items() work
@@ -266,27 +239,13 @@ def _current_nice(pid: int) -> int | None:
 
 
 def _friendly_app_name(app_id: str | None) -> str:
-    """The app's own display name ("Firefox", "Visual Studio Code"),
-    not the raw app_id ("firefox", "code") a window row would otherwise
-    show — found live, asked for: the raw window TITLE ("settings.json
-    - tuicc - Visual Studio Code") is what this module showed at
-    first, and it read as noise for a resource-monitor row, where
-    "which APP is this" matters far more than "which specific document/
-    tab". Reuses launcher.py's own scan_desktop_apps() cache (matching
-    a window's app_id against whichever .desktop entry's own
-    StartupWMClass=/filename hint equals it — case-insensitively here,
-    looser than pending_moves.py's own app_id tier, which needs an
-    EXACT match to disambiguate between multiple pending spawns of
-    possibly-identical app_ids; a display-name lookup has no such
-    collision risk, so the looser match is fine) rather than a second,
-    hardcoded app_id->name table, which CONTRIBUTING.md's "no hardcoded
-    personal preferences" rule would rule out anyway (there's no
-    generic way to know every app_id's own preferred display name in
-    advance). Falls
-    back to the raw app_id itself when no .desktop entry matches — a
-    window from an app with no .desktop file at all (a dev build, a
-    custom script) is a real, expected case, not a bug to special-case
-    around.
+    """The app's own display name ("Firefox"), not the raw app_id
+    ("firefox") or the window title. See
+    CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why, and how
+    it's resolved via launcher.py's scan_desktop_apps() cache rather
+    than a hardcoded table. Falls back to the raw app_id when no
+    .desktop entry matches — a window from an app with no .desktop file
+    (a dev build, a custom script) is a real, expected case.
     """
     if not app_id:
         return "?"
@@ -298,15 +257,11 @@ def _friendly_app_name(app_id: str | None) -> str:
 
 
 def _format_window_label(win_stat, available_w: int) -> str:
-    """"[13% 24M] Visual Studio Code…" — the CPU/RAM readout ALWAYS
-    shows in full (fixed-width, never truncated away) since it's the
-    actual point of a system-monitor row; the friendly app name (see
-    _friendly_app_name) gets whatever width is left over, truncated
-    with a trailing "…" when it doesn't fit. Found live: showing the
-    full window title first meant a long title (VS Code/Firefox tab
-    titles routinely run 40+ characters) silently pushed the CPU/RAM
-    numbers themselves off the edge of the box entirely — the least
-    useful part winning the space over the most useful part.
+    """"[13% 24M] Visual Studio Code…" — the CPU/RAM readout always
+    shows in full; the friendly app name (see _friendly_app_name) gets
+    whatever width is left over, truncated with a trailing "…". See
+    CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why the
+    numbers take priority over the name.
     """
     cpu_str = f"{win_stat.cpu_percent:.0f}%" if win_stat.cpu_percent is not None else "?%"
     ram_str = f"{win_stat.rss_kb / 1024:.0f}M" if win_stat.rss_kb is not None else "?M"
@@ -323,11 +278,8 @@ def _format_window_label(win_stat, available_w: int) -> str:
 # ---------- middle "compact stats" section ----------
 
 # Fixed width per grid cell ("LABEL value", left-justified/truncated to
-# this) — found live, asked for ("uklidit spodní část, takhle je to
-# nevzhledné"): a loose run-on line of "LABEL value  LABEL value  ..."
-# with no fixed column boundaries read as cluttered and hard to scan.
-# A real 3-column table, values consistently starting at the same
-# column on every row, is what actually reads as tidy.
+# this) — see CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for
+# why a real fixed-column table reads better than a loose run-on line.
 GRID_COL_WIDTH = 18
 
 
@@ -335,24 +287,17 @@ def _grid_row(cells: list[tuple[str, list[tuple[str, str]]]]) -> list[tuple[str,
     """Joins (label, value_segments) pairs into one row of (text, role)
     segments — role in {"label", "value", "urgent"}, resolved to an
     actual theme color by draw() (this function stays pure/curses-free,
-    same reasoning every other formatting helper here does). Found
-    live, asked for: metric labels (CPU, RAM, ...) in accent color, the
-    rest in plain text color, "ať se v tom lépe scanuje" — a flat single
-    color read as a wall of text, not something you could scan at a
-    glance for just the labels or just the values.
+    same reasoning every other formatting helper here does).
 
     value_segments lets one value carry a differently-colored suffix —
     HOT's own THROTTLED marker (see _format_stats_grid) needs to stay
     urgent-red even though the temperature reading right before it is
     plain text.
 
-    Every cell EXCEPT the last is padded/truncated to GRID_COL_WIDTH so
-    the next column lines up; the last cell is left its natural length,
-    since nothing needs to align after it. Found live: HOT's own
-    describe_sensor() label ("58°C (CPU (Package id 0))") routinely
-    runs past GRID_COL_WIDTH — truncating it the same way the earlier,
-    alignment-only columns need to be truncated would cut off exactly
-    the part that answers "why am I looking at this sensor".
+    Every cell except the last is padded/truncated to GRID_COL_WIDTH so
+    the next column lines up; the last cell is left its natural length.
+    See CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why this
+    matters for HOT's own describe_sensor() label specifically.
     """
     segments: list[tuple[str, str]] = []
     for i, (label, value_segments) in enumerate(cells):
@@ -438,12 +383,9 @@ def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: d
         if not ram:
             return label, [("?/? GiB", "value")]
         gib = 1024 * 1024  # ram's own values are in kB (see sysinfo.get_ram_info)
-        # RAM/DISK show used/available amounts, not a bare percent —
-        # found live, asked for ("RAM 70% je fajn ale lepší by bylo
-        # U/A v GiB"): a percentage alone doesn't say how much room is
-        # actually left. GiB (binary, /1024²) since that's the unit
-        # the kernel's own MemTotal/MemAvailable already round to. The
-        # color still follows the real usage PERCENT even though the
+        # RAM/DISK show used/available amounts, not a bare percent — see
+        # CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid. The color
+        # still follows the real usage percent even though the
         # displayed text doesn't show one.
         text = f"{ram['used_kb'] / gib:.1f}/{ram['available_kb'] / gib:.1f} GiB"
         return label, [(text, _role(ram["percent"]))]
@@ -464,11 +406,9 @@ def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: d
         return label, [(text, "value")]  # never threshold-colored — see module docstring
 
     if metric == "cputemp":
-        # "CPUTEMP", not just "TEMP" — found live, asked for clarity
-        # against the HOT block right below it in the packaged default
-        # layout: same value, but the bare label didn't make clear
-        # it's specifically the CPU package, not "temperature" in
-        # general.
+        # "CPUTEMP", not just "TEMP" — see
+        # CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why,
+        # against the HOT block often sitting right below it.
         entry = sensors_data.get("cpu_temp") if sensors_data else None
         value = entry[0] if entry else None
         return label, [(_temp_text(value), _role(value))]
@@ -483,18 +423,10 @@ def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: d
             text, role = "?°C", "value"
         segments = [(text, role)]
         # THROTTLED is a CPU-thermal flag (core_throttle_count deltas,
-        # see sysinfo.py) — rides along on HOT's own cell specifically:
-        # in the packaged default layout it's the one cell with no
-        # fixed-width neighbor to its right (column 1's own 3rd row —
-        # the other two columns only have 2 entries), so it's the one
-        # place THROTTLED can't get silently clipped by column width.
-        # If you reposition "hot" into a row that DOES share width with
-        # another column, or disable it outright, THROTTLED can get
-        # clipped or stop showing entirely — a consequence of that
-        # layout choice, documented in config.toml's own [sysmon]
-        # comment, not something this function tries to work around.
-        # Urgent-colored (its own segment) so it actually draws the eye
-        # once it's visible at all — found live, asked for.
+        # see sysinfo.py) — rides along on HOT's own cell specifically,
+        # its own urgent-colored segment. See
+        # CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid for why
+        # that placement matters (column-width clipping risk).
         if sysinfo_data and sysinfo_data.get("throttled_recently"):
             segments.append((" THROTTLED", "urgent"))
         return label, segments
@@ -516,29 +448,17 @@ def _compute_metric_cell(metric: str, sysinfo_data: dict | None, sensors_data: d
 def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None,
                         blocks: list[dict]) -> list[list[tuple[str, str]]]:
     """The System module's own compact stats block — one column per
-    distinct `block["column"]` value, one row per block WITHIN that
+    distinct `block["column"]` value, one row per block within that
     column, in `block["row"]` order (a pure sort key, not a literal
-    shared row index — see config.toml's own [[sysmon.block]] comment).
-    `blocks` is ctx.config.sysmon_blocks: every block a user configures
-    is a real config.toml value (config.py's own DEFAULT_SYSMON_BLOCKS
-    reproduces today's packaged layout when [sysmon] has no [[block]]
-    entries at all) — found live, asked for directly: "ten config by
-    měl být to jedno místo kde nastavuješ všechno ohledně boxíku".
+    shared row index). `blocks` is ctx.config.sysmon_blocks — every
+    block is a real config.toml `[[sysmon.block]]` value (config.py's
+    DEFAULT_SYSMON_BLOCKS reproduces the packaged layout when none are
+    configured) — see CLAUDE/VISION.md's R6 section for why layout and
+    thresholds are config-driven rather than constants here.
 
-    Rendered row-by-row via _grid_row, same as before this became
-    configurable: columns don't all need the same number of rows (the
-    packaged default's column 1 has 3 blocks, columns 2/3 have 2 each)
-    — a row with only ONE column's block on it makes that block's own
-    cell the LAST one by definition, so _grid_row leaves it its full
-    natural width instead of squeezing it into a fixed GRID_COL_WIDTH.
-    This is what protects a long value (HOT's own describe_sensor()
-    label, in the packaged default) from truncating — a user who moves
-    that block somewhere it now shares a row with others takes on that
-    same truncation risk themselves, a consequence of their own layout
-    choice, not something this function tries to prevent for them.
-
-    A disabled block (enabled=false) is simply skipped, not rendered as
-    an empty cell.
+    Rendered row-by-row via _grid_row; columns don't all need the same
+    number of rows. A disabled block (enabled=false) is simply skipped,
+    not rendered as an empty cell.
     """
     enabled_blocks = [b for b in blocks if b.get("enabled", True)]
     columns: dict[int, list[tuple[str, list[tuple[str, str]]]]] = {}
@@ -672,15 +592,13 @@ def draw(stdscr, box, ctx, module_name):
 
         elif kind == "stats_line":
             # payload is a list of (text, role) segments from
-            # _format_stats_grid — role in {"label","value","urgent"}
-            # — drawn one after another so metric labels (CPU, RAM,
-            # ...) read in accent color and values in plain text,
-            # found live, asked for ("dej ty označení metriky ...
-            # accent barvou, a zbytek normální barvou, ať se v tom líp
-            # scanuje"). Clipped to inner_w across the WHOLE row, not
-            # per-segment, so a long last segment (HOT's own describe_
-            # sensor label) still degrades the same way a plain string
-            # would have.
+            # _format_stats_grid — role in {"label","value","urgent"} —
+            # drawn one after another so metric labels read in accent
+            # color and values in plain text (see
+            # CLAUDE/NOTES/design-decisions.md#sysmon-stats-grid).
+            # Clipped to inner_w across the whole row, not per-segment,
+            # so a long last segment (HOT's own describe_sensor label)
+            # still degrades the same way a plain string would have.
             col_x = x + 2
             remaining = max(inner_w, 0)
             role_colors = {
@@ -703,10 +621,8 @@ def draw(stdscr, box, ctx, module_name):
         elif kind == "diagnostics":
             # Same "●/○ dot signals status, independent of selection;
             # text color signals selection" split control.py's own
-            # toggle rows already use — found live, asked for ("uklidit
-            # spodní část"): a plain "Diagnostics: All clear" text line
-            # didn't read as a STATUS the way every other module's own
-            # dot-led rows do.
+            # toggle rows already use — a plain text line didn't read
+            # as a status the way every other module's dot-led rows do.
             diag = payload
             has_issues = _diagnostics_has_issues(diag)
             is_row_selected = "sysmon:diagnostics" == ctx.selected_id

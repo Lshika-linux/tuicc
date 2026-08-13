@@ -3,29 +3,19 @@
 region/window aren't module-specific — any module reporting a region
 or window item expects the same underlying action (focus_region /
 focus_window), so these live here rather than in a module file.
-Wifi/bluetooth toggle logic, by contrast, IS module-specific (only
-connectivity.py knows what "toggle" means for that data), so those
-handlers self-register from connectivity.py instead — same pattern
-quick_actions.py uses for its own TARGET_KIND.
+Module-specific target_kinds (e.g. wifi/bluetooth toggles) self-register
+from their own module instead — see connectivity.py, quick_actions.py.
 
-Handler signature: (ctx, item, cfg) -> (should_dismiss, pending). ctx
-is an ActionContext bundling the WM provider and the connectivity
-worker. should_dismiss=True means tuicc calls Provider.dismiss_self()
-after this runs — hides tuicc, the process keeps running. This never
-terminates tuicc; the only way to actually quit is Ctrl+C (main.py's
-try/finally handles cleanup for that path). pending, if not None,
-becomes the new pending_confirm value — see its "dismiss_after_confirm"
-key for the same meaning, deferred until the y/n answer comes in.
+Handler signature: (ctx, item, cfg) -> (should_dismiss, pending). ctx is
+an ActionContext bundling the WM provider and the status worker.
+should_dismiss=True means tuicc calls Provider.dismiss_self() after this
+runs (hide, don't quit — see CLAUDE/NOTES/design-decisions.md
+#dismiss-vs-quit). pending, if not None, becomes the new pending_confirm
+value, deferred until the y/n answer comes in.
 
-dispatch_action/handle_pending_confirm below are pure, value-returning
-functions, not ActionContext mutators — the same carve-out
-resize_mode.choose()/help_mode.apply_color_edit() get from their
-sibling modules' usual "state-first, mutate in place" convention.
-pending_confirm deliberately stays a plain ad hoc dict here rather than
-a dataclass: four different producer call sites (sessions.py,
-power_menu.py, quick_actions.py) build it with different key subsets,
-and none of them should have to agree on a shared schema just because
-this file needs to read a few of those keys back out.
+pending_confirm deliberately stays a plain ad hoc dict, not a dataclass:
+four different producer call sites (sessions.py, power_menu.py,
+quick_actions.py) build it with different key subsets.
 """
 
 import os
@@ -78,22 +68,11 @@ class ActionContext:
     # reset" idiom as main.py's own expect_focus_reclaim.
     reselect_region_id: str | None = None
     # A handler sets this to an exact NavItem id to ask main.py to move
-    # selection there directly, no lookup against the current frame's
-    # (possibly already-stale) nav item list needed — unlike
-    # reselect_region_id above, which searches for a region-kind item
-    # matching a property (since the exact sidebar item id isn't known
-    # to a handler outside sidebar.py/sidebar_compact.py), this is for
-    # a handler that already knows precisely which id it wants,
-    # typically its own module's. sessions.py's "expand a row" handler
-    # sets this to that slot's first action — needed because expanding
-    # changes what sessions.py's own nav_items() reports on the very
-    # next frame, which would otherwise make the just-selected row id
-    # vanish from the list and trip main.py's "selection no longer
-    # valid" recovery (a region-kind fallback search, meant for real
-    # external focus changes) into jumping to the sidebar instead —
-    # found live. None (the default) means no request; main.py clears
-    # it back to None once consumed, same single-use idiom as
-    # reselect_region_id/expect_focus_reclaim.
+    # selection there directly, no lookup needed — see
+    # CLAUDE/NOTES/design-decisions.md#reselect-item-id-vs-region-search
+    # for when this is used instead of reselect_region_id above. None
+    # (the default) means no request; main.py clears it back to None
+    # once consumed, same single-use idiom as reselect_region_id.
     reselect_item_id: str | None = None
 
 
@@ -101,52 +80,32 @@ def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
     """Run cmd as a detached background process that survives tuicc
     exiting right after this call.
 
-    cmd is normally a string — shell_true=True runs it through the
-    shell (needed for real shell syntax: pipes, ;, &&, $VARS); off by
-    default, it's split into plain argv and run directly, no shell
-    involved, so no part of cmd is ever interpreted as shell syntax.
-    cmd may also be a pre-split list (session.py's saved cmdline
-    already is one, from /proc/<pid>/cmdline) — passed straight
-    through rather than re-joined and re-split, which could mangle an
-    argument that legitimately contains a space. Shared by main.py
-    (launcher, confirm-dialog, and session-restore spawns) and
-    quick_actions.py/power_menu.py's immediate (non-confirm) actions,
-    so there's exactly one place that decides how a command becomes a
-    process.
+    cmd is normally a string — shell_true=True runs it through the shell
+    (needed for pipes/;/&&/$VARS); off by default, it's split into plain
+    argv and run directly, no shell involved. cmd may also be a
+    pre-split list (session.py's saved cmdline already is one) — passed
+    straight through rather than re-joined and re-split, which could
+    mangle an argument that legitimately contains a space. Shared by
+    every spawn site in the codebase, so there's exactly one place that
+    decides how a command becomes a process.
 
-    Returns the spawned process's pid — lets a caller match it against
-    Window.pid later (see pending_moves.py), on providers that expose
-    one. The pid is only ever exact for the shell_true=False path: with
-    shell_true=True the pid belongs to the shell, not necessarily the
-    GUI process it eventually execs.
+    Returns the spawned pid, for matching against Window.pid later (see
+    pending_moves.py) — only exact for shell_true=False; with
+    shell_true=True the pid belongs to the shell, not the GUI process it
+    eventually execs.
 
-    log_path=None (the default, every existing call site) keeps stdout/
-    stderr going to DEVNULL exactly as before. When given, the spawned
-    process's stdout+stderr are captured there instead — real
-    diagnostic data for "this saved command silently didn't produce a
-    window." Confirmed live, not just theorized: a saved Obsidian
-    session entry's captured cmdline (`electron <asar path>`, from
-    /proc/<pid>/cmdline) fails with `Error: Cannot find module
-    'electron'` when run exactly as captured — the real launcher is a
-    wrapper script that sets up environment (NixOS packages Electron
-    apps this way) before exec'ing into that same binary, and
-    /proc/<pid>/cmdline only ever captures argv *after* that exec, so
-    the wrapper's env setup is invisible to it. Discarded into DEVNULL,
-    that crash looked identical to "never started at all" from the
-    outside — no window, no error, no way to tell those two failure
-    modes apart without this.
+    log_path=None (default) sends stdout/stderr to DEVNULL. When given,
+    they're captured there instead — real diagnostic data for "this
+    saved command silently didn't produce a window" instead of a crash
+    looking identical to "never started at all." See
+    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for the
+    concrete bug this exists for.
 
-    env=None (the default) inherits tuicc's own environment exactly as
-    subprocess.Popen always has. When given (session.py's captured
-    /proc/<pid>/environ snapshot, see read_environ()), it's layered on
-    top of a copy of the current environment — captured values win,
-    since the whole point is restoring app-specific setup a plain
-    relaunch wouldn't have — *except* for _ALWAYS_LIVE_ENV_KEYS
-    (WAYLAND_DISPLAY, DISPLAY, XDG_RUNTIME_DIR, etc.), which always come
-    from the current environment regardless of what the snapshot says:
-    a session saved today and loaded after a relogin/reboot would
-    otherwise carry yesterday's now-nonexistent socket paths straight
-    into the respawned process.
+    env=None (default) inherits tuicc's own environment. When given
+    (session.py's captured /proc/<pid>/environ snapshot), it's layered
+    on top of the current environment with captured values winning,
+    except for _ALWAYS_LIVE_ENV_KEYS — see
+    CLAUDE/NOTES/design-decisions.md#spawn-detached-env-layering.
     """
     if shell_true:
         popen_cmd = cmd
