@@ -152,10 +152,10 @@ def test_run_state_command_raises_for_an_unknown_state_name():
 
 
 # ---------- run_state_command's confirmation wait ----------
-# Found live: pending/blink (StatusWorker) is tied directly to how long
-# this function takes to return — it used to return the instant the
-# command was spawned, well before status_command could confirm the
-# real effect, making the module look "frozen" in between.
+# pending/blink (StatusWorker) is tied directly to how long this
+# function takes to return — returning the instant the command is
+# spawned, well before status_command can confirm the real effect,
+# would make the module look "frozen" in between.
 
 def test_run_state_command_returns_as_soon_as_confirmed(monkeypatch):
     monkeypatch.setattr(control, "_run_detached_detecting_quick_failure", lambda command, shell_true: None)

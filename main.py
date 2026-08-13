@@ -240,28 +240,15 @@ def main(stdscr):
             # live.
             poll_interval=1,
         ),
-        # Tried as a push domain (battery.watch(), select.poll() on
-        # /sys/class/power_supply/*/uevent) — reverted, see
-        # battery.py's own live finding. Back to a plain fast poll,
-        # same mechanism proven to work for VOL/BRI.
+        # Tried as a push domain (battery.watch()) — reverted, back to a
+        # plain fast poll. See
+        # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable for
+        # why; battery.watch() is left in place, tested, for a future
+        # revisit, just not wired in here.
         Domain(
             name="battery",
             poll=lambda: battery.aggregate(battery.get_packs(), battery.get_ac_online()),
             actions={},
-            # Found live, empirically, on this exact machine (T480):
-            # select.poll() on BAT0/BAT1's own `uevent` attribute never
-            # fired once across several real charger unplug/replug
-            # cycles — confirmed by running battery.watch() with a
-            # 30s fallback and a live logger; every event that arrived
-            # was exactly 30s apart (the fallback), never sooner, and
-            # the underlying data hadn't changed anyway. The kernel's
-            # documented power_supply sysfs poll() support evidently
-            # isn't reliably wired up for this attribute on this kernel/
-            # driver combination — not something user space can verify
-            # ahead of time, and not something worth re-attempting
-            # blindly. battery.watch() itself is left in place (tested,
-            # does what its own docstring says) for a future revisit on
-            # different hardware, just not wired in here anymore.
             poll_interval=0.3,
         ),
         Domain(
@@ -592,10 +579,10 @@ def main(stdscr):
         while True:
             # Third tier between the two below: media.py's now-playing
             # marquee scroll advances one character every
-            # MARQUEE_STEP_SECONDS of wall-clock time regardless — but
-            # the idle 1000ms redraw cadence below meant it only ever
-            # got REDRAWN once a second, turning a smooth 1-character
-            # slide into a visible ~3-character jump. Found live.
+            # MARQUEE_STEP_SECONDS of wall-clock time regardless — the
+            # idle 1000ms redraw cadence below would only ever redraw it
+            # once a second, turning a smooth 1-character slide into a
+            # visible ~3-character jump.
             marquee_active = media_mode.has_scrolling_content(status_worker.get("media"))
 
             # Lazy cava lifecycle: only run the visualizer subprocess
@@ -815,9 +802,9 @@ def main(stdscr):
                     # deliberately selected elsewhere in the sidebar) — a
                     # manually-selected focus_id must never be silently
                     # overridden by a spawn resolving in the background.
-                    # Found live: preview staying blank forever (not just
-                    # during the transient co-location window) after a
-                    # session restore completed, for the rest of that
+                    # Without this, the preview stayed blank forever (not
+                    # just during the transient co-location window) after
+                    # a session restore completed, for the rest of that
                     # same tuicc toggle.
                     focus_id = resolved_target_regions[-1]
 

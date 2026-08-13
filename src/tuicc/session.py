@@ -108,13 +108,9 @@ def capture_window(window: Window, region_id: str, provider) -> dict | None:
     entry=None — cmdline alone is still enough to attempt a relaunch)
     when it doesn't. Matters because /proc/<pid>/cmdline only ever
     captures argv *after* any launcher wrapper script has already
-    exec'd into the real process — on NixOS, GUI apps are commonly
-    packaged as exactly such a wrapper (setting up env before exec'ing
-    into the raw binary), so the plain cmdline alone can be missing
-    exactly the context a relaunch needs. Found live: a saved Obsidian
-    entry's cmdline relaunched bare fails with `Cannot find module
-    'electron'` — see spawn_detached()'s docstring for the fix this
-    enables on the restore side.
+    exec'd into the real process — see
+    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for the
+    concrete failure this enables spawn_detached() to fix on restore.
     """
     pid = window.pid if window.pid is not None else provider.resolve_pid(window.id)
     if pid is None:

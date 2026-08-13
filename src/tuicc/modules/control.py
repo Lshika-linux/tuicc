@@ -166,10 +166,9 @@ def draw(stdscr, box, ctx, module_name):
             text_color, attr = _pending_blink_style(theme)
             dot, dot_color = "●", (text_color | attr)
         elif kind == "action_error":
-            # Found live: a toggle's command failing (e.g. gammastep
-            # exiting immediately for lack of GeoClue2) used to produce
-            # zero visible feedback — the row just silently kept
-            # showing its old (correct, but uninformative) state.
+            # See CLAUDE/VISION.md's R3 section (gammastep/Night Light
+            # example) — a failing command used to produce zero visible
+            # feedback, the row just silently kept its old state.
             dot, dot_color = "⚠", theme.get("urgent", 0)
             text_color, attr = theme.get("urgent", 0), curses.A_BOLD
         elif kind == "poll_error":

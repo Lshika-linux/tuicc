@@ -635,10 +635,9 @@ def test_enrich_pids_fills_in_pid_for_a_new_unclaimed_window():
     # relied entirely on app_id matching, which fails outright for
     # apps whose real runtime app_id doesn't match their .desktop
     # entry's hint (common for Python/Electron apps launched via a
-    # bare interpreter). Found live: this left a spawn's window
-    # sitting wherever the WM opened it — unmoved — which is also
-    # what triggered tuicc losing fullscreen when that happened to be
-    # tuicc's own workspace.
+    # bare interpreter). Without this fix, a spawn's window would sit
+    # wherever the WM opened it — unmoved — which also triggers tuicc
+    # losing fullscreen when that happens to be tuicc's own workspace.
     provider = _FakeProvider(resolved_pids={"2": 555})
     queue = PendingMovesQueue(entries=[{"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty"), _window("2", "blanket", pid=None)]

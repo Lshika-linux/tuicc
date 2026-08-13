@@ -64,10 +64,10 @@ def test_signal_to_percent_equal_dbm_gives_equal_percent():
 
 
 # ---------- iwd: _connect_succeeded ----------
-# Found live: Network.Connect() itself returns cleanly (no D-Bus
-# error) even when the passphrase was wrong — ConnectedNetwork simply
-# never becomes the attempted network. See IwdBackend.connect()'s own
-# docstring for the full reproduction.
+# See CLAUDE/NOTES/design-decisions.md#iwd-connect-false-success —
+# Network.Connect() itself returns cleanly (no D-Bus error) even when
+# the passphrase was wrong; ConnectedNetwork simply never becomes the
+# attempted network.
 
 def test_connect_succeeded_when_connected_network_matches():
     station_props = {"ConnectedNetwork": ("o", "/net/connman/iwd/0/4/target_psk")}

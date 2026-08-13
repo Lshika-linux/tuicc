@@ -287,11 +287,11 @@ def test_get_action_error_survives_a_successful_poll_on_the_same_domain():
 
 
 # ---------- get_action_error_for() ----------
-# Found live building modules/connectivity.py's hover-preview: unlike
-# control.py (each [[control.toggle]] gets its own domain, one item
-# per domain — plain get_action_error() is already correctly scoped
-# there), wifi/bluetooth share ONE domain across many networks/devices,
-# so a plain per-domain error can't tell which ITEM it belongs to.
+# Unlike control.py (each [[control.toggle]] gets its own domain, one
+# item per domain — plain get_action_error() is already correctly
+# scoped there), wifi/bluetooth share ONE domain across many networks/
+# devices, so a plain per-domain error can't tell which item it
+# belongs to — see modules/connectivity.py's hover-preview.
 
 def test_get_action_error_for_is_none_before_any_action():
     worker = StatusWorker([_domain("wifi")])
@@ -441,12 +441,11 @@ def test_resumed_worker_polls_again():
 
 
 # ---------- request_action: pending_key ----------
-# Found live building R5's audio/ backend — set_volume(sink_id, percent)
-# needs two pieces of data, but "is THIS SINK being adjusted" (the
-# pending identity the UI actually cares about) has to stay just
-# sink_id, not the whole (sink_id, percent) tuple, which would never
-# match a second, different volume request for the same sink still in
-# flight.
+# audio's set_volume(sink_id, percent) needs two pieces of data, but
+# "is THIS SINK being adjusted" (the pending identity the UI actually
+# cares about) has to stay just sink_id, not the whole (sink_id,
+# percent) tuple, which would never match a second, different volume
+# request for the same sink still in flight.
 
 def test_pending_key_defaults_to_arg_when_omitted():
     # Backward compatible — every existing wifi/bluetooth call site

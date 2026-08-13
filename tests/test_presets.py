@@ -578,9 +578,9 @@ def test_build_control_toggles_parses_a_2_state_toggle():
 
 
 def test_build_control_toggles_parses_an_n_state_cycle_with_colors():
-    # Found live with the user: a 3-way cycle (Performance Mode) is the
-    # exact same contract as a 2-state toggle, just more states —
-    # advancing is (index + 1) % len(states) regardless of N.
+    # A 3-way cycle (Performance Mode) is the exact same contract as a
+    # 2-state toggle, just more states — advancing is
+    # (index + 1) % len(states) regardless of N.
     user_data = {
         "control": {
             "toggle": [{

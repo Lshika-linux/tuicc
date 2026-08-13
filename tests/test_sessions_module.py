@@ -61,7 +61,7 @@ def test_handle_row_sets_reselect_item_id_to_the_slots_first_action():
     # See ActionContext.reselect_item_id's docstring — without this,
     # expanding a row makes its own id vanish from nav_items() on the
     # next frame, tripping main.py's stale-selection recovery into
-    # jumping to the sidebar instead. Found live.
+    # jumping to the sidebar instead.
     _reset_module_state()
     ctx = _FakeCtx()
     item = SimpleNamespace(focus_target="2")

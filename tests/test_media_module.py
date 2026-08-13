@@ -95,8 +95,9 @@ def test_source_label_ignores_a_non_http_url():
 def test_source_label_prefers_identity_over_own_apps_own_domain():
     # Spotify tags tracks with an open.spotify.com URL — that's the
     # app's OWN web player, not "you're browsing this site" the way a
-    # real browser tab's URL is. Found live: showed "[open.spotify.com]"
-    # for the desktop app, which read as if Spotify were a browser tab.
+    # real browser tab's URL is. Without this, the desktop app would
+    # show "[open.spotify.com]", reading as if Spotify were a browser
+    # tab.
     player = _player(
         url="https://open.spotify.com/track/abc", desktop_entry="spotify", identity="Spotify",
     )
