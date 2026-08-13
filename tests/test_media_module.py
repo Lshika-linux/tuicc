@@ -139,6 +139,14 @@ def test_has_scrolling_content_false_for_no_players():
     assert has_scrolling_content(None) is False
 
 
+def test_has_scrolling_content_true_for_a_short_but_wide_cjk_body():
+    # 10 CJK characters (well under MARQUEE_LENGTH_THRESHOLD=18 by plain
+    # len()) but 20 terminal columns wide — must still be detected as
+    # scrolling, not missed by a char-count-only heuristic.
+    player = _player(artist="スペシャルウィーク", title="あず未和氣")
+    assert has_scrolling_content([player]) is True
+
+
 # ---------- marquee_text ----------
 
 def test_marquee_text_returns_as_is_when_it_fits():
@@ -159,6 +167,33 @@ def test_marquee_text_scrolls_over_time():
 
 def test_marquee_text_zero_width_returns_empty():
     assert marquee_text("anything", width=0, now=0.0) == ""
+
+
+def test_marquee_text_fits_check_uses_display_width_not_char_count():
+    # 8 CJK characters = 16 terminal columns, well over width=10 despite
+    # len(text) == 8 passing a plain len()-based fits check.
+    text = "スペシャルウィーク"[:8]
+    result = marquee_text(text, width=10, now=0.0)
+    assert result != text
+
+
+def test_marquee_text_result_never_exceeds_width_in_columns_for_cjk_text():
+    from tuicc.text_width import display_width
+    text = "スペシャルウィーク（CV. 和氣あず未）"
+    for now in (0.0, 1.0, 5.0, 12.3):
+        result = marquee_text(text, width=10, now=now)
+        assert display_width(result) <= 10
+
+
+def test_marquee_text_never_splits_a_wide_character():
+    from tuicc.text_width import display_width
+    text = "和氣あず未" * 3
+    result = marquee_text(text, width=7, now=2.0)
+    # Every character in a valid result must be one of the source
+    # glyphs — a split wide character would produce something outside
+    # that set (there's no such thing as half a glyph on a terminal).
+    assert all(ch in text + "   " for ch in result)
+    assert display_width(result) <= 7
 
 
 # ---------- is_expanded / collapse ----------

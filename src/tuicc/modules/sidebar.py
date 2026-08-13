@@ -11,6 +11,7 @@ import curses
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline
+from tuicc.text_width import display_width, truncate_to_width
 from tuicc.title_condense import condense_title
 
 
@@ -93,7 +94,7 @@ def draw(stdscr, box, ctx, module_name):
             label = f" {ws_id} "
             label_color = text_color
         try:
-            stdscr.addstr(item_y, x + 2, label[:max(w - 4, 0)], label_color)
+            stdscr.addstr(item_y, x + 2, truncate_to_width(label, max(w - 4, 0)), label_color)
         except curses.error:
             pass
 
@@ -105,12 +106,12 @@ def draw(stdscr, box, ctx, module_name):
                 available = max(w - 4, 0)
 
                 try:
-                    chunk = app[:available]
+                    chunk = truncate_to_width(app, available)
                     stdscr.addstr(item_y + 1 + i, x + 2, chunk, text_color | curses.A_BOLD)
-                    cx = x + 2 + len(chunk)
+                    cx = x + 2 + display_width(chunk)
                     end = x + 2 + available
                     if detail and cx + 1 < end:
-                        stdscr.addstr(item_y + 1 + i, cx, f" {detail}"[:end - cx], text_color | curses.A_DIM)
+                        stdscr.addstr(item_y + 1 + i, cx, truncate_to_width(f" {detail}", end - cx), text_color | curses.A_DIM)
                 except curses.error:
                     pass
             existing_count = len(region.windows)
@@ -122,7 +123,7 @@ def draw(stdscr, box, ctx, module_name):
         # them rather than interleaved.
         for i, app in enumerate(preview_apps):
             try:
-                stdscr.addstr(item_y + 1 + existing_count + i, x + 2, app[:max(w - 4, 0)], urgent_color)
+                stdscr.addstr(item_y + 1 + existing_count + i, x + 2, truncate_to_width(app, max(w - 4, 0)), urgent_color)
             except curses.error:
                 pass
 

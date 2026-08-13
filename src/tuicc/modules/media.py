@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, eighth_block_level
+from tuicc.text_width import display_width, truncate_to_width
 from tuicc.windowed_list import section_nav_indices as _section_nav_indices
 from tuicc.windowed_list import section_rows as _section_rows
 from tuicc.windowed_list import header_with_count as _header_with_count
@@ -124,23 +125,26 @@ def _player_label(player) -> str:
 
 
 def marquee_text(text: str, width: int, now: float) -> str:
-    """text as-is if it already fits width. Otherwise a width-wide
-    sliding window into "text + gap" repeated, advancing one character
-    every MARQUEE_STEP_SECONDS of wall-clock time — same "no per-frame
-    state needed, time.time() already is the shared clock" reasoning
-    _pending_blink_style uses, just taking `now` as an explicit
-    parameter instead of calling time.time() internally, so this stays
-    unit-testable without a real clock (draw() passes time.time() in).
+    """text as-is if it already fits width (measured in terminal
+    COLUMNS, see text_width.py — a CJK title can be well over `width`
+    columns wide despite having few enough characters to pass a plain
+    len() check). Otherwise a width-wide sliding window into "text +
+    gap" repeated, advancing one character every MARQUEE_STEP_SECONDS
+    of wall-clock time — same "no per-frame state needed, time.time()
+    already is the shared clock" reasoning _pending_blink_style uses,
+    just taking `now` as an explicit parameter instead of calling
+    time.time() internally, so this stays unit-testable without a real
+    clock (draw() passes time.time() in).
     """
     if width <= 0:
         return ""
-    if len(text) <= width:
+    if display_width(text) <= width:
         return text
     gap = "   "
     looped = text + gap
     offset = int(now / MARQUEE_STEP_SECONDS) % len(looped)
-    doubled = looped + looped  # a width-wide slice never runs off the end
-    return doubled[offset:offset + width]
+    doubled = looped + looped  # a character-index slice never runs off the end
+    return truncate_to_width(doubled[offset:], width)
 
 
 # A rough "this body text probably won't fit a typical box, so it's
@@ -157,7 +161,12 @@ MARQUEE_LENGTH_THRESHOLD = 18
 
 
 def has_scrolling_content(players: list | None) -> bool:
-    return any(len(_body_label(p)) > MARQUEE_LENGTH_THRESHOLD for p in (players or []))
+    # display_width, not len() — a CJK-heavy body can be well past the
+    # threshold in actual terminal columns while still having few
+    # enough characters to pass a plain len() check, which would make
+    # this false-negative (miss the fast redraw cadence) for exactly
+    # the titles most likely to need it.
+    return any(display_width(_body_label(p)) > MARQUEE_LENGTH_THRESHOLD for p in (players or []))
 
 
 def is_expanded() -> bool:
@@ -414,8 +423,8 @@ def draw(stdscr, box, ctx, module_name):
             else:
                 source = _source_label(player)
                 prefix = f"[{source}] " if source else ""
-            prefix = prefix[:available_w]  # degrade gracefully if even the prefix alone can't fit
-            body_w = max(available_w - len(prefix), 0)
+            prefix = truncate_to_width(prefix, available_w)  # degrade gracefully if even the prefix alone can't fit
+            body_w = max(available_w - display_width(prefix), 0)
             label = f"{prefix}{marquee_text(body, body_w, now)}"
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
@@ -475,7 +484,7 @@ def draw(stdscr, box, ctx, module_name):
             # has_cava is computed once, above the main loop — see its
             # own docstring for why it no longer depends on THIS row.
             reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if has_cava else 0
-            rest = f" {sink.name}"[:max(inner_w - 1 - reserved_w, 0)]
+            rest = truncate_to_width(f" {sink.name}", max(inner_w - 1 - reserved_w, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, rest, text_color | attr)
