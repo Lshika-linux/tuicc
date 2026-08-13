@@ -385,12 +385,12 @@ def main(stdscr):
     # checked directly. None means no one has stolen input — an
     # unbound printable key auto-claims for the launcher (ambient
     # "type anywhere" is sugar for that auto-claim), same as before.
-    # Remaining consumers: "launcher" (typing/search), "help_colors"
-    # (help_mode's inline color editor) — genuine text-input claims, the
-    # shape R2 was designed for. sessions_naming/sysmon_nice (Phase 1)
-    # and connectivity_passphrase/connectivity_pairing (Phase 2) have
-    # migrated off this onto mode_stack (see its own comment below,
-    # and CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1) — folding
+    # Sole remaining consumer: "launcher" (typing/search) — the last
+    # genuine text-input claim still living here. sessions_naming/
+    # sysmon_nice (Phase 1), connectivity_passphrase/connectivity_pairing
+    # (Phase 2), and help_colors/help (Phase 3) have all migrated off
+    # this onto mode_stack (see its own comment below, and
+    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1) — folding
     # this whole variable into that stack, one tier at a time.
     # resize_mode's own two-level browsing/editing session
     # (resize.active/resize.editing) is deliberately NOT migrated onto
@@ -404,15 +404,17 @@ def main(stdscr):
     # exit point below, not a replacement for it.
     input_claim = None
 
-    # Phase 1 of migrating input_claim's string-tier dispatch onto a real
-    # stack — see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for
-    # the full rationale. Coexists with input_claim above during the
+    # Real stack gradually replacing input_claim's string-tier dispatch
+    # — see CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for the
+    # full rationale. Coexists with input_claim above during the
     # migration: "normal" (never popped) means nothing on the stack is
     # claiming input, matching input_claim is None; any other top-of-
-    # stack value is looked up in MODE_HANDLERS below. Only
-    # sessions_naming/sysmon_nice are migrated so far — every other
-    # tier (connectivity/help/launcher/spawn_picker/resize) still runs
-    # through input_claim or its own dedicated bool, unchanged.
+    # stack value is looked up in MODE_HANDLERS below. Three phases in:
+    # sessions_naming/sysmon_nice (Phase 1), connectivity_passphrase/
+    # connectivity_pairing (Phase 2), help/help_colors (Phase 3, the
+    # first genuinely 2-level-nested pair — "help" can push
+    # "help_colors" on top of itself). Only launcher/spawn_picker/resize
+    # remain on input_claim or their own dedicated bool.
     mode_stack: list[str] = ["normal"]
 
     # True from the moment dismiss_self() is called until the next real
@@ -526,6 +528,7 @@ def main(stdscr):
 
     def do_enter_help():
         help_mode.enter(help_state)
+        mode_stack.append("help")
 
     def do_apply_reselect():
         # See ActionContext.reselect_region_id/reselect_item_id's
@@ -663,11 +666,69 @@ def main(stdscr):
             return False
         return True
 
+    # Phase 3: help_mode.py's whole panel. First mode_stack tier with
+    # real 2-level nesting — "help" (browsing the panel/pages) can push
+    # "help_colors" (editing one color value) on top of itself, then
+    # pop back to "help" landing on the colors page it came from, not
+    # exiting entirely. help_state.active stays the depth-agnostic
+    # source of truth for "is the panel showing at all" (true at either
+    # depth) — draw()'s own call site and connectivity_wants_input's
+    # guard both still read it directly, deliberately not touched here.
+    def handle_help(key):
+        if help_state.page is None:
+            help_mode.select_page(help_state, key)
+            if help_state.page is None and key == 27:  # Escape
+                help_state.active = False
+                return False
+            return True
+        if help_state.page == "colors":
+            if key == cfg.keybinds["up"]:
+                help_mode.move_color_index(help_state, -1)
+            elif key == cfg.keybinds["down"]:
+                help_mode.move_color_index(help_state, 1)
+            elif key == cfg.keybinds["confirm"]:
+                help_mode.start_color_edit(help_state, get_raw_theme_values())
+                mode_stack.append("help_colors")
+            elif key == 27:  # Escape
+                help_state.page = None
+            return True
+        if key == 27:  # Escape
+            help_state.page = None
+        return True
+
+    def handle_help_colors(key):
+        # nonlocal needed here specifically: the original
+        # `theme_pairs = reassign_theme_pairs(...)` ran directly in
+        # main()'s own loop body, a same-scope reassignment. Nested in
+        # this closure without `nonlocal`, it would silently shadow the
+        # outer theme_pairs instead of updating it — the color would
+        # still save correctly to cfg.theme/config.toml, but on-screen
+        # rendering (which reads the real outer theme_pairs every
+        # frame) would never see the change until restart. Confirmed by
+        # review as the only new nonlocal this migration needs —
+        # help_state/cfg/mode_stack are all mutated via method/
+        # attribute/subscript, never rebound.
+        nonlocal theme_pairs
+        if key == cfg.keybinds["confirm"]:
+            result = help_mode.apply_color_edit(help_state)
+            if result is not None:
+                role, color, typed_value = result
+                cfg.theme[role] = color
+                theme_pairs = reassign_theme_pairs(cfg.theme)
+                set_theme_color(role, typed_value)
+                return False
+            return True
+        if not help_mode.type_color_key(help_state, key):
+            return False
+        return True
+
     MODE_HANDLERS = {
         "sessions_naming": handle_sessions_naming,
         "sysmon_nice": handle_sysmon_nice,
         "connectivity_passphrase": handle_connectivity_passphrase,
         "connectivity_pairing": handle_connectivity_pairing,
+        "help": handle_help,
+        "help_colors": handle_help_colors,
     }
 
     def any_two_level_module_expanded():
@@ -773,8 +834,8 @@ def main(stdscr):
                 input_claim is None and pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
                 # Still needed even though connectivity itself no longer
-                # touches input_claim (Phase 2) — help_colors/launcher
-                # still do, and this must keep gating against them too.
+                # touches input_claim (Phase 2) — launcher still does,
+                # and this must keep gating against it too.
                 and mode_stack[-1] == "normal"
             )
             # Also fires while ALREADY in one of these two tiers, not
@@ -1110,64 +1171,17 @@ def main(stdscr):
                 continue
 
             if mode_stack[-1] != "normal":
-                # sessions_naming/sysmon_nice (Phase 1) and
-                # connectivity_passphrase/connectivity_pairing (Phase 2)
-                # — one generic dispatch site for every mode_stack tier,
-                # in the same priority slot the old `input_claim == "..."`
-                # blocks this replaces used to occupy (before
-                # help_colors). Priority ordering between tiers is no
-                # longer about check order here — mutual exclusion is
-                # structural now (one stack, one top); see
+                # sessions_naming/sysmon_nice (Phase 1),
+                # connectivity_passphrase/connectivity_pairing (Phase 2),
+                # help/help_colors (Phase 3) — one generic dispatch site
+                # for every mode_stack tier, at any nesting depth
+                # (help_colors sits on top of help). Priority ordering
+                # between tiers is not about check order here — mutual
+                # exclusion is structural (one stack, one top); see
                 # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
                 still_claiming = MODE_HANDLERS[mode_stack[-1]](key)
                 if not still_claiming:
                     mode_stack.pop()
-                continue
-
-            if input_claim == "help_colors":
-                # Third consumer — extracted out of help_state.active's
-                # own dispatch below into its own early tier for the
-                # same reason sessions_naming is: it's a text-input
-                # claim (type a color, Enter applies, Escape cancels),
-                # not part of the page-selection/menu navigation
-                # help_state.active otherwise handles. input_claim only
-                # clears on a SUCCESSFUL apply — an invalid color value
-                # (apply_color_edit returns None, state.color_error set
-                # for display) keeps editing open so the user can just
-                # fix it and retry, same as before this migration.
-                if key == cfg.keybinds["confirm"]:
-                    result = help_mode.apply_color_edit(help_state)
-                    if result is not None:
-                        role, color, typed_value = result
-                        cfg.theme[role] = color
-                        theme_pairs = reassign_theme_pairs(cfg.theme)
-                        set_theme_color(role, typed_value)
-                        input_claim = None
-                elif not help_mode.type_color_key(help_state, key):
-                    input_claim = None
-                continue
-
-            if help_state.active:
-                if help_state.page is None:
-                    help_mode.select_page(help_state, key)
-                    if help_state.page is None and key == 27:  # Escape
-                        help_state.active = False
-                    continue
-
-                if help_state.page == "colors":
-                    if key == cfg.keybinds["up"]:
-                        help_mode.move_color_index(help_state, -1)
-                    elif key == cfg.keybinds["down"]:
-                        help_mode.move_color_index(help_state, 1)
-                    elif key == cfg.keybinds["confirm"]:
-                        help_mode.start_color_edit(help_state, get_raw_theme_values())
-                        input_claim = "help_colors"
-                    elif key == 27:  # Escape
-                        help_state.page = None
-                    continue
-
-                if key == 27:  # Escape
-                    help_state.page = None
                 continue
 
             if input_claim == "launcher":
@@ -1345,11 +1359,10 @@ def main(stdscr):
                 # sessions.py's "name" action calls start_naming() on
                 # itself (module-owned state, same as _expanded_slot) —
                 # this is where main.py notices and claims input on its
-                # behalf, mirroring how help_state's own "confirm" branch
-                # sets input_claim = "help_colors" right next to its own
-                # start_color_edit() call above. Pushed onto mode_stack,
-                # not input_claim — see CLAUDE/NOTES/design-decisions.md
-                # #mode-stack-phase-1.
+                # behalf, mirroring how handle_help's own colors-page
+                # confirm branch pushes "help_colors" right next to its
+                # own start_color_edit() call. See
+                # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1.
                 if sessions_mode.is_naming():
                     mode_stack.append("sessions_naming")
                 # sysmon.py's own NICE action calls start_nice_edit() on
