@@ -41,22 +41,12 @@ RESTORE_STAGGER_SECONDS = 0.3
 
 def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: set[str]) -> Window | None:
     """The window that satisfies entry, or None if nothing does yet.
-
-    entry needs "known_ids" (the snapshot taken before spawning) and may
-    optionally carry "pid" and/or "app_id" — either can be None when
-    unknown (a plain launcher spawn has no pre-known app_id; a provider
-    without pid support, i3 today, never has one).
-
-    Matches in three exclusive tiers — pid, then app_id, then any
-    remaining unclaimed new window — each only considering windows not
-    already in claimed. See CLAUDE/NOTES/design-decisions.md
-    #pending-move-tiers for why the tiers don't cascade and how same-
-    app_id entries avoid colliding.
-
-    Doesn't mutate claimed itself — the caller adds the result's id once
-    it actually commits to the match (calls move_window_to_region), so a
-    per-tier scan here never has a side effect to undo if the caller
-    decides not to use the result.
+    entry needs "known_ids" and may carry "pid"/"app_id" (either may be
+    None). Matches in three exclusive tiers — pid, then app_id, then any
+    remaining unclaimed new window — see
+    CLAUDE/NOTES/design-decisions.md#pending-move-tiers for why they
+    don't cascade. Doesn't mutate claimed itself — the caller adds the
+    result's id only once it commits to the match.
     """
     new_windows = [w for w in current_windows if w.id not in entry["known_ids"] and w.id not in claimed]
     if not new_windows:
@@ -131,18 +121,13 @@ def queue_launcher_spawn(queue: PendingMovesQueue, target_region, known_ids: set
 
 
 def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: list, known_ids: set, now: float) -> None:
-    """Pops one entry off restore_queue (session.py's load queue) and
-    spawns it, staggered by RESTORE_STAGGER_SECONDS so a multi-window
-    session restore doesn't fire every process in the same frame.
-    No-ops if restore_queue is empty — checked before the stagger-time
-    comparison, so an empty queue never touches last_restore_launch and
-    a later real restore isn't held back by a stale timestamp.
-
-    Every restore spawn gets a log_path under SPAWN_LOG_DIR and passes
-    session_entry.get("env") through to spawn_detached() — see
-    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for why a
-    saved cmdline can crash on relaunch in a way its own argv gives no
-    hint of, and why the captured environment matters.
+    """Pops one entry off restore_queue and spawns it, staggered by
+    RESTORE_STAGGER_SECONDS. No-ops if restore_queue is empty (checked
+    before the stagger-time comparison, so an empty queue never blocks
+    a later real restore on a stale timestamp). Passes
+    session_entry.get("env") through to spawn_detached() and a log_path
+    under SPAWN_LOG_DIR — see
+    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for why.
     """
     if not restore_queue:
         return
@@ -188,27 +173,15 @@ def process(
     own_region_id: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Resolves every entry in queue against current_windows: enriches
-    still-unknown pids (see _enrich_pids), downgrades pid- to app_id-
-    matching after PID_GRACE_SECONDS, moves + optionally floats a
-    matched window, then reclaims focus for tuicc unless dismissed is
-    True — focusing a scratchpadded tuicc window un-hides it on sway/i3,
-    so this must not fire while tuicc was deliberately dismissed after
-    the spawn but before it resolved. Entries past MOVE_TIMEOUT_SECONDS
-    with no match are dropped, but tuicc still reclaims focus (unless
-    dismissed) first — see CLAUDE/NOTES/design-decisions.md
-    #pending-moves-process-contract for why that matters even on a
-    give-up.
-
-    fullscreen_only is passed straight through to provider.focus_self().
-
-    Returns (reclaimed_focus, resolved_target_regions) — see
+    pids, downgrades pid- to app_id-matching after PID_GRACE_SECONDS,
+    moves+floats a matched window, then reclaims focus unless dismissed
+    (must not un-hide a deliberately-dismissed tuicc). Entries past
+    MOVE_TIMEOUT_SECONDS are dropped but still reclaim focus first.
+    own_region_id decides whether to request force_relayout (see
+    CLAUDE/NOTES/wm-quirks.md#fullscreen-suppresses-layout). Returns
+    (reclaimed_focus, resolved_target_regions) — see
     CLAUDE/NOTES/design-decisions.md#pending-moves-process-contract for
-    what main.py does with each and the bugs this contract fixes.
-
-    own_region_id (wherever tuicc's own window currently lives) decides
-    whether to ask focus_self() for force_relayout when an entry
-    resolves onto it — see CLAUDE/NOTES/wm-quirks.md
-    #fullscreen-suppresses-layout. None never requests it.
+    the full contract and the bugs it fixes.
     """
     _enrich_pids(queue, provider, current_windows)
     reclaimed_focus = False

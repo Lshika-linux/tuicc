@@ -119,16 +119,10 @@ def get_ac_online(base_path: str = POWER_SUPPLY_PATH) -> bool | None:
 
 def aggregate(packs: list[BatteryPack], ac_online: bool | None = None) -> dict | None:
     """One combined {"percent", "status", "ac_online"} view across every
-    pack. percent is energy-weighted, not a plain average, when every
-    pack reports both energy_now/energy_full — see
-    CLAUDE/NOTES/design-decisions.md#battery-energy-weighted-percent for
-    why and the concrete numbers that motivated it. status is "Charging"
-    if any pack is, else "Discharging" if any pack is, else the first
-    pack's own status verbatim. ac_online is passed through from
-    get_ac_online() unchanged — this function doesn't compute it itself.
-
-    None (not a dict) if `packs` is empty — "no battery in this
-    machine", not "0%", same None-vs-[] discipline as get_packs().
+    pack — percent energy-weighted when possible, status pack-OR'd,
+    ac_online passed through unchanged. See
+    CLAUDE/NOTES/design-decisions.md#battery-energy-weighted-percent.
+    None (not a dict) if `packs` is empty — "no battery", not "0%".
     """
     if not packs:
         return None
@@ -155,35 +149,16 @@ def aggregate(packs: list[BatteryPack], ac_online: bool | None = None) -> dict |
 
 def watch(stop_event, base_path: str = POWER_SUPPLY_PATH, poll_timeout: float = 1.0,
           fallback_seconds: float = 2.0):
-    """Generator: primarily blocks on the kernel's own change notification
-    for every currently-present BAT* pack, via select.poll() on each
-    pack's `uevent` sysfs attribute (POLLPRI|POLLERR) — the same
-    mechanism upowerd/acpid use internally. Yields once per detected
-    change; the caller re-runs get_packs()/aggregate() itself to get the
-    fresh value — this generator never reads/interprets battery data,
-    only waits for "something about it changed". Also yields on its own
-    every fallback_seconds even with no kernel event, since not every
-    driver reliably calls power_supply_changed() for every field this
-    cares about — a pure push design has no way to recover if the
-    kernel never signals a change, so this bounds the worst-case
-    staleness instead of leaving it open-ended.
+    """Generator: blocks on the kernel's own change notification for
+    every BAT* pack (select.poll() on each `uevent` attribute), yielding
+    once per detected change or every fallback_seconds regardless — the
+    caller re-runs get_packs()/aggregate() itself for the fresh value.
 
     NOT currently wired in — confirmed empirically unreliable on real
-    hardware. See CLAUDE/NOTES/known-limitations.md#battery-push-unreliable
-    for what was tested, why, and the sysfs poll()-arming quirk this
-    implementation depends on (the first poll() call after opening a
-    fresh fd fires spuriously; reading the file "arms" it for real
-    detection on subsequent calls).
-
-    No packs present at generator-start time returns immediately without
-    yielding — main.py's wiring is expected not to register this as a
-    push domain in that case.
-
-    poll_timeout bounds how often poll() itself returns to recheck
-    stop_event/the fallback deadline between real kernel events;
-    independent of fallback_seconds, the actual worst-case staleness
-    bound — poll_timeout must be <= fallback_seconds for that bound to
-    hold (enforced below).
+    hardware. See CLAUDE/NOTES/known-limitations.md
+    #battery-push-unreliable for what was tested, the sysfs poll()-
+    arming quirk this depends on, and what poll_timeout/fallback_seconds
+    each actually bound.
     """
     packs = get_packs(base_path)
     if not packs:

@@ -77,35 +77,13 @@ class ActionContext:
 
 
 def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
-    """Run cmd as a detached background process that survives tuicc
-    exiting right after this call.
-
-    cmd is normally a string — shell_true=True runs it through the shell
-    (needed for pipes/;/&&/$VARS); off by default, it's split into plain
-    argv and run directly, no shell involved. cmd may also be a
-    pre-split list (session.py's saved cmdline already is one) — passed
-    straight through rather than re-joined and re-split, which could
-    mangle an argument that legitimately contains a space. Shared by
-    every spawn site in the codebase, so there's exactly one place that
-    decides how a command becomes a process.
-
-    Returns the spawned pid, for matching against Window.pid later (see
-    pending_moves.py) — only exact for shell_true=False; with
-    shell_true=True the pid belongs to the shell, not the GUI process it
-    eventually execs.
-
-    log_path=None (default) sends stdout/stderr to DEVNULL. When given,
-    they're captured there instead — real diagnostic data for "this
-    saved command silently didn't produce a window" instead of a crash
-    looking identical to "never started at all." See
-    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for the
-    concrete bug this exists for.
-
-    env=None (default) inherits tuicc's own environment. When given
-    (session.py's captured /proc/<pid>/environ snapshot), it's layered
-    on top of the current environment with captured values winning,
-    except for _ALWAYS_LIVE_ENV_KEYS — see
-    CLAUDE/NOTES/design-decisions.md#spawn-detached-env-layering.
+    """Run cmd (shell string or pre-split argv list) as a detached
+    background process that survives tuicc exiting. Shared by every
+    spawn site. Returns the spawned pid (exact only for
+    shell_true=False). log_path captures stdout+stderr instead of
+    DEVNULL — see CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash.
+    env layers over the current environment except _ALWAYS_LIVE_ENV_KEYS
+    — see CLAUDE/NOTES/design-decisions.md#spawn-detached-env-layering.
     """
     if shell_true:
         popen_cmd = cmd
@@ -160,20 +138,10 @@ BASE_HANDLERS = {
 
 def dispatch_action(ctx, handlers, item, cfg):
     """Looks up handlers.get(item.target_kind) and runs it, returning
-    (should_dismiss, pending) straight from the handler — same shape
-    every handler already returns (see the module docstring) — or
-    (False, None) if there's no handler registered for this
-    target_kind at all. handlers is passed in explicitly (main.py
-    passes render.ACTION_HANDLERS) rather than imported here, so this
-    module stays as ignorant of render.py as it already is of any
-    specific module.
-
-    Both of this function's call sites in main.py are only ever
-    reached with pending_confirm already None — the pending_confirm-
-    is-not-None tier intercepts and continues first otherwise — so
-    the caller can unconditionally assign pending_confirm from this
-    function's return value, without an `if pending is not None:`
-    guard, and get the exact same result.
+    (should_dismiss, pending) straight from the handler, or (False,
+    None) if no handler is registered. handlers is passed in explicitly
+    (main.py passes render.ACTION_HANDLERS) so this module stays as
+    ignorant of render.py as it is of any specific module.
     """
     handler = handlers.get(item.target_kind)
     if handler is None:
@@ -182,23 +150,15 @@ def dispatch_action(ctx, handlers, item, cfg):
 
 
 def handle_pending_confirm(ctx, pending, key, cfg):
-    """Resolves a y/n confirm dialog. On confirm_yes (OR confirm — the
-    same Enter used to confirm everything else, accepted here too since
-    "yes" is itself a kind of confirm and pressing Enter reads as
-    intuitive muscle memory once you're used to it elsewhere in tuicc;
-    confirm_no has no such alternate, only its own bound key answers
-    "no"): runs whichever action `pending` describes — branching on
+    """Resolves a y/n confirm dialog. confirm_yes (or confirm — Enter
+    doubles as "yes" here too, confirm_no has no such alternate) runs
+    whichever action `pending` describes — branching on
     `"restore_entries" in pending`, not a discriminator field, matching
-    how sessions.py/power_menu.py/quick_actions.py all build this dict
-    — and returns (pending["dismiss_after_confirm"], None). On
-    confirm_no: returns (False, None). Any other key leaves the dialog
-    open, unchanged: (False, pending). Same (should_dismiss, pending)
-    return order as dispatch_action/every handler, for consistency
-    within this file.
-
-    The caller still calls provider.dismiss_self() and does its own
-    dismissed=True bookkeeping when should_dismiss comes back True —
-    neither is reachable from the dict alone.
+    how sessions.py/power_menu.py/quick_actions.py build this dict — and
+    returns (pending["dismiss_after_confirm"], None). confirm_no
+    returns (False, None). Any other key leaves the dialog open
+    unchanged: (False, pending). The caller still calls
+    provider.dismiss_self() itself when should_dismiss comes back True.
     """
     if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
         if "restore_entries" in pending:
