@@ -283,7 +283,11 @@ def set_theme_color(role: str, value: str) -> None:
     type into a single-line field and isn't supported here, only by
     hand-editing config.toml directly).
     """
-    _patch_config_line("theme", role, f'{role} = "{value}"\n')
+    # tomli_w.dumps, not an f-string: value is free text (help_mode's
+    # color editor lets you type any printable char) and needs real
+    # TOML escaping — a literal `"` would otherwise terminate the
+    # string early and corrupt config.toml on next load.
+    _patch_config_line("theme", role, tomli_w.dumps({role: value}))
 
 
 def set_session_name(slot: int, value: str) -> None:
@@ -292,7 +296,11 @@ def set_session_name(slot: int, value: str) -> None:
     a custom name back to the "Slot <N>" default — see load_config's
     session_names).
     """
-    _patch_config_line("sessions", f"name_{slot}", f'name_{slot} = "{value}"\n')
+    # See set_theme_color's matching comment — same free-text-needs-
+    # real-escaping reasoning (session names accept the same printable
+    # range, including `"`).
+    key = f"name_{slot}"
+    _patch_config_line("sessions", key, tomli_w.dumps({key: value}))
 
 
 def get_raw_theme_values() -> dict:

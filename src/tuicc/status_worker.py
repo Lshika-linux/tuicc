@@ -56,8 +56,13 @@ class StatusWorker:
         self._poll_interval = poll_interval  # shared default — see Domain.poll_interval's own docstring
         # Per-domain, not one shared value — a domain with its own
         # (shorter) poll_interval becomes due on its own schedule,
-        # independent of every other domain's.
-        self._last_poll = {name: 0.0 for name in self._domains}
+        # independent of every other domain's. -inf, not 0.0: the due
+        # check is `now - last_poll > interval` against
+        # time.monotonic(), whose reference point is undefined (on a
+        # freshly-started container it can start near 0) — 0.0 would
+        # make the first poll wait out poll_interval on such a
+        # machine instead of firing immediately.
+        self._last_poll = {name: float("-inf") for name in self._domains}
 
         self._lock = threading.Lock()
         # None (not []) until the first poll actually completes, same

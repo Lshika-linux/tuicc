@@ -3,6 +3,8 @@ mechanism that makes ~/.config/tuicc/presets/<N>.toml the live, editable
 file, seeded once from the packaged template.
 """
 
+import tomllib
+
 import pytest
 
 import tuicc.config as config_module
@@ -353,6 +355,20 @@ def test_set_theme_color_does_not_match_a_role_name_prefix(tmp_path, monkeypatch
     assert 'border_selected = "cyan"\n' in result
 
 
+def test_set_theme_color_escapes_a_literal_quote_in_the_value(tmp_path, monkeypatch):
+    # A raw f-string embed (the old implementation) breaks config.toml
+    # the moment the value itself contains a `"` — must round-trip
+    # through tomllib cleanly instead of just "look right".
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[theme]\naccent = "blue"\n')
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_theme_color("accent", 'weird "quoted" value')
+
+    result = config_path.read_text()
+    assert tomllib.loads(result)["theme"]["accent"] == 'weird "quoted" value'
+
+
 # ---------- get_raw_theme_values ----------
 
 def test_get_raw_theme_values_returns_every_role(tmp_path, monkeypatch):
@@ -529,6 +545,21 @@ def test_set_session_name_appends_a_brand_new_section_when_missing_entirely(tmp_
     assert "[sessions]\n" in result
     assert 'name_1 = "Work"\n' in result
     assert "preset = 1\n" in result  # untouched
+
+
+def test_set_session_name_escapes_a_literal_quote_in_the_value(tmp_path, monkeypatch):
+    # Typed straight from the sessions module's rename field, which
+    # accepts any printable char (see handle_naming_key) — a raw
+    # f-string embed (the old implementation) breaks config.toml the
+    # moment the name itself contains a `"`.
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[sessions]\nname_1 = "Slot 1"\n')
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_session_name(1, 'quoted "name" here')
+
+    result = config_path.read_text()
+    assert tomllib.loads(result)["sessions"]["name_1"] == 'quoted "name" here'
 
 
 def test_set_session_name_can_write_an_empty_value(tmp_path, monkeypatch):

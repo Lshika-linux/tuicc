@@ -364,6 +364,27 @@ def test_domain_with_no_poll_interval_uses_the_shared_default():
         worker.stop()
 
 
+def test_first_poll_fires_even_when_monotonic_starts_near_zero(monkeypatch):
+    # time.monotonic()'s reference point is undefined — on a freshly-
+    # started container it can start near 0 instead of the large value
+    # a long-uptime machine gives. _last_poll's own init must not
+    # assume "large enough to already exceed poll_interval". Shifted
+    # (not fixed) so it still advances at the real rate — _wait_until
+    # below needs a genuinely ticking clock for its own deadline.
+    import tuicc.status_worker as status_worker_module
+    real_monotonic = time.monotonic
+    offset = real_monotonic() - 0.05
+    monkeypatch.setattr(status_worker_module.time, "monotonic", lambda: real_monotonic() - offset)
+
+    worker = StatusWorker([_domain("wifi", poll=lambda: ["net1"])], poll_interval=999)
+    worker.start()
+    try:
+        _wait_until(lambda: worker.get("wifi") is not None)
+        assert worker.get("wifi") == ["net1"]
+    finally:
+        worker.stop()
+
+
 def test_domain_with_a_short_poll_interval_refreshes_independently_of_the_shared_default():
     call_count = {"n": 0}
 
