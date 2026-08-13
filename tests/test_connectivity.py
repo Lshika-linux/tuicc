@@ -59,8 +59,12 @@ def test_signal_to_percent_clamped_to_0_100():
     assert _signal_to_percent(0) == 100      # absurdly strong, must not exceed 100
 
 
-def test_signal_to_percent_equal_dbm_gives_equal_percent():
-    assert _signal_to_percent(-8300) == _signal_to_percent(-8300)
+def test_signal_to_percent_exact_midpoint():
+    # Per the function's own documented spec (-30 dBm = 100%, -90 dBm =
+    # 0%, linear in between): -60 dBm is exactly halfway, so this must
+    # read 50%. Derived independently from the spec, not from the
+    # implementation's own formula.
+    assert _signal_to_percent(-6000) == 50
 
 
 # ---------- iwd: _connect_succeeded ----------

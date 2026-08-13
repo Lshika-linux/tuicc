@@ -71,6 +71,14 @@ def test_hex_to_curses_color_without_hash_prefix():
 
 
 def test_rgb_to_curses_color_cube_formula():
-    # Spot-check the formula directly for a known midpoint color.
-    # (135, 135, 135) is exactly level index 2 on each channel.
-    assert rgb_to_curses_color((135, 135, 135)) == 16 + (2 * 36) + (2 * 6) + 2
+    # (135, 135, 135) is exactly level index 2 on each channel — hardcoded
+    # result (16 + 2*36 + 2*6 + 2 = 102), not recomputed here.
+    assert rgb_to_curses_color((135, 135, 135)) == 102
+
+
+def test_rgb_to_curses_color_distinguishes_channel_order():
+    # A symmetric RGB input (same level on r/g/b, as above) can't catch a
+    # channel-order bug in the r*36 + g*6 + b formula — e.g. swapping the
+    # r/g multipliers would still pass. (255, 135, 0) has distinct levels
+    # per channel (r=5, g=2, b=0): 16 + 5*36 + 2*6 + 0 = 208, hardcoded.
+    assert rgb_to_curses_color((255, 135, 0)) == 208

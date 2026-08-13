@@ -173,7 +173,10 @@ def test_aggregate_single_pack_energy_weighted():
     pack = BatteryPack(name="BAT0", percent=82, status="Discharging",
                         energy_now=18000000, energy_full=22000000)
     result = aggregate([pack])
-    assert result["percent"] == round(100 * 18000000 / 22000000)
+    # 18,000,000 / 22,000,000 * 100 = 81.818...% -> rounds to 82.
+    # Hardcoded, not recomputed here, so a rounding/arithmetic bug in
+    # aggregate() itself can't hide by being reproduced identically.
+    assert result["percent"] == 82
     assert result["status"] == "Discharging"
 
 
@@ -187,7 +190,7 @@ def test_aggregate_falls_back_to_percent_average_when_energy_missing_on_any_pack
     without_energy = BatteryPack(name="BAT1", percent=40, status="Discharging",
                                   energy_now=None, energy_full=None)
     result = aggregate([with_energy, without_energy])
-    assert result["percent"] == round((80 + 40) / 2)  # 60, plain average — NOT energy-weighted
+    assert result["percent"] == 60  # plain average of 80 and 40 — NOT energy-weighted
 
 
 def test_aggregate_real_t480_values_diverge_from_plain_average():
@@ -203,10 +206,13 @@ def test_aggregate_real_t480_values_diverge_from_plain_average():
 
     result = aggregate([bat0, bat1])
 
-    plain_average = round((6 + 15) / 2)
-    energy_weighted = round(100 * (1310000 + 10500000) / (22620000 + 68700000))
-    assert energy_weighted != plain_average  # the real machine actually exercises this divergence
-    assert result["percent"] == energy_weighted
+    # Energy-weighted: (1,310,000 + 10,500,000) / (22,620,000 + 68,700,000)
+    # * 100 = 12.9327...% -> rounds to 13. Hardcoded independently of
+    # aggregate()'s own formula, same reasoning as the test above.
+    assert result["percent"] == 13
+    # A plain average of the raw percents (6, 15) would read 10 — a real,
+    # meaningfully different number from what the machine actually showed.
+    assert result["percent"] != round((6 + 15) / 2)
 
 
 def test_aggregate_status_charging_wins_over_not_charging():
