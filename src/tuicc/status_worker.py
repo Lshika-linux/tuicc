@@ -167,20 +167,14 @@ class StatusWorker:
             return len(self._pending) > 0
 
     def request_action(self, domain_name, action_name, arg=None, pending_key=None):
-        """arg is whatever the registered action callable needs — for
-        wifi/bluetooth that's always been a single id (ssid/device_id),
-        but a domain whose action needs more than one piece of data
-        (audio's set_volume(sink_id, percent)) can pass a tuple/whatever
-        shape its own Domain.actions callable expects to unpack.
-
-        pending_key is what is_pending()/has_pending() actually track
-        — defaults to arg itself (unchanged behavior for every
-        existing caller, wifi/bluetooth's own id-is-both-things case).
-        Pass it explicitly when arg isn't a sensible pending identity
-        on its own — audio's set_volume wants "is THIS SINK being
-        adjusted" (sink_id alone), not "is this exact (sink_id,
-        percent) tuple pending" (which would never match a second,
-        different volume request for the same sink still in flight).
+        """arg is whatever the registered action callable needs — a
+        single id (ssid/device_id) for wifi/bluetooth, or a
+        tuple/whatever shape a domain's own action expects (e.g.
+        audio's set_volume(sink_id, percent)). pending_key is what
+        is_pending()/has_pending() track — defaults to arg, but should
+        be passed explicitly when arg isn't itself a sensible pending
+        identity (audio wants "is THIS SINK adjusted", not "is this
+        exact tuple pending").
         """
         if pending_key is None:
             pending_key = arg

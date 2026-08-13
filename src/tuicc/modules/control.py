@@ -99,15 +99,9 @@ def _row_suffix(kind: str, is_binary: bool, current_name: str | None, error: str
 def _row_kind(current_name: str | None, error: str | None, action_error: str | None, pending: bool) -> str:
     """Which of the four mutually-exclusive ways a toggle's row can
     render, decided once so draw() doesn't repeat this priority logic
-    inline (and so it's testable without a real curses screen — see
-    connectivity.py's own _build_rows for the established pattern this
-    follows).
-
-    Priority: pending > action_error > poll_error > normal.
-    action_error outranks a plain poll error: the last thing the user
-    DID (pressed Enter, the command failed) is more relevant than the
-    last thing that was merely observed (a status_command poll failing
-    independently).
+    inline. Priority: pending > action_error > poll_error > normal —
+    action_error outranks a plain poll error since the last thing the
+    user DID is more relevant than the last thing merely observed.
     """
     if pending:
         return "pending"

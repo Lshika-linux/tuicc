@@ -131,20 +131,14 @@ class PushWorker:
 
     def request_action(self, domain_name, action_name, arg=None, pending_key=None):
         """Same shape as StatusWorker's own request_action (see its
-        docstring for pending_key's own reasoning) — but run on a
-        short-lived thread per call instead of a shared serialized
-        queue, since a push domain has no shared _run() loop to queue
-        against. No ordering guarantee across two concurrent actions on
-        the SAME domain — acceptable today (every current push domain
-        is read-only or low-frequency); revisit with a real per-domain
-        queue if a push domain ever needs one.
-
-        Re-refreshes immediately after the action runs (mirrors
-        StatusWorker's own "a domain just acted on is always re-polled
-        immediately") — domain.watch() SHOULD also notice the resulting
-        change on its own, but isn't guaranteed to be instant (depends
-        on the underlying event source's own timing), so this covers
-        the gap rather than waiting on it.
+        docstring for pending_key), but run on a short-lived thread per
+        call instead of a shared serialized queue, since a push domain
+        has no shared _run() loop. No ordering guarantee across two
+        concurrent actions on the same domain — acceptable today, every
+        current push domain being read-only or low-frequency.
+        Re-refreshes immediately after the action runs, since
+        domain.watch() noticing the change isn't guaranteed to be
+        instant.
         """
         if pending_key is None:
             pending_key = arg

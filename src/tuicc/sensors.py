@@ -170,17 +170,12 @@ class SensorsSource:
 
     def poll(self) -> dict | None:
         """None once `sensors` is confirmed missing — an optional
-        feature simply not showing up, not an error StatusWorker's own
-        error-capture path should ever see (same tolerance as
-        CavaReader's own missing-binary case). A dict
-        {"cpu_temp": (value, chip, feature) | None,
-         "hottest": (value, chip, feature) | None}
-        once sensors genuinely ran, even if this particular machine
-        happens to expose neither a recognizable CPU package chip nor
-        any temp*_input reading at all — "checked, found nothing"
+        feature not showing up, not an error (same tolerance as
+        CavaReader's missing-binary case). Else a dict
+        {"cpu_temp": (value, chip, feature) | None, "hottest": (...) |
+        None} once sensors genuinely ran — "checked, found nothing"
         (both fields None) is a different state from "couldn't check
-        at all" (this whole method returning None), same None-vs-[]
-        discipline the rest of this codebase uses.
+        at all" (this method returning None).
         """
         if self._binary_missing:
             return None

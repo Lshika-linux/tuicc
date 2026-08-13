@@ -52,20 +52,13 @@ CAVA_RIGHT_GAP = 1  # same "don't render flush against the border" margin Now Pl
 
 
 def _cava_row_level(raw_height: int, row_idx: int, num_rows: int) -> int:
-    """One bar's height (0..ASCII_MAX_RANGE, cava's own fixed range) as
-    seen from just ONE physical output row's point of view. The
-    visualizer's total height is dynamic — one row per currently-
-    connected audio sink, not a fixed count — so this scales cava's
-    fixed range down to whatever 0..(num_rows*8) resolution is actually
-    available this frame, then returns just this row's own 0..8 slice.
-
-    Thin wrapper over render_utils.eighth_block_level, which now owns
-    the actual math — pulled out into a shared helper once modules/
-    bars.py needed the exact same row-slicing technique for its own
-    vertical VOL/BRI/BAT fills (see that function's own docstring).
-    Kept here (not inlined at the one call site below) so the existing
-    cava-specific tests keep reading `_cava_row_level` as this module's
-    own name, unchanged.
+    """One bar's height (0..ASCII_MAX_RANGE) as seen from just ONE
+    physical output row — the visualizer's total height is dynamic (one
+    row per connected sink), so this scales cava's fixed range down to
+    whatever 0..(num_rows*8) resolution is available this frame. Thin
+    wrapper over render_utils.eighth_block_level (shared with
+    modules/bars.py); kept here so existing cava-specific tests keep
+    reading this name unchanged.
     """
     return eighth_block_level(raw_height, ASCII_MAX_RANGE, row_idx, num_rows)
 

@@ -80,19 +80,13 @@ def _connect_succeeded(station_props, network_path):
 
 
 def _network_name_connected_known(connection, network_path):
-    """'known' means iwd has stored credentials for this network (you
-    connected to it before, from iwd or anything else feeding it the
-    same known-networks store) — Connect() works without a password
-    prompt for these. An unknown network now also connects fine (once
-    an IwdAgent is registered — see agent_mailbox.py/iwd_agent.py) via
-    an interactive passphrase prompt, so `known` is threaded through
-    into WifiNetwork instead of being used to filter the network out.
-
-    Deliberately the lighter of two similar-looking helpers — connect()
-    below only needs a name to match against, called once per network
-    in a scan of the whole list, so it skips _build_wifi_network's own
-    extra KnownNetwork round trip entirely rather than paying that cost
-    for every network just to find the one being connected to.
+    """'known' means iwd has stored credentials for this network —
+    Connect() works without a password prompt for these; an unknown
+    network connects via an interactive passphrase prompt instead (see
+    agent_mailbox.py/iwd_agent.py), so `known` is threaded through
+    rather than used to filter networks out. Deliberately lighter than
+    _build_wifi_network: connect() below only needs a name to match, so
+    it skips the extra KnownNetwork round trip.
     """
     props = _call(
         connection, network_path, "org.freedesktop.DBus.Properties", "GetAll",
@@ -244,16 +238,11 @@ class IwdBackend(WifiBackend):
 
     def is_scanning(self) -> bool:
         """Station.Scanning — the real ground truth for whether iwd's
-        own scan (triggered by scan() above, or by anything else, e.g.
-        iwctl run outside tuicc) is still in progress. Polled as its
-        own StatusWorker Domain (main.py's "wifi_scanning") rather than
-        folded into get_networks()'s own poll, since scan() itself is
-        fire-and-forget with no duration this backend controls —
-        StatusWorker.is_pending("wifi", ...) alone only reflects "we
-        just sent the Scan() call a moment ago", which clears almost
-        immediately since that call itself returns fast — without this,
-        the "Scanning…" label would only ever flicker instead of
-        staying up for the real scan window.
+        scan (triggered by scan() or anything else, e.g. iwctl) is
+        still in progress. Polled as its own StatusWorker Domain rather
+        than folded into get_networks()'s poll: is_pending("wifi", ...)
+        alone clears almost immediately since scan() itself returns
+        fast, which would make the "Scanning…" label flicker.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:

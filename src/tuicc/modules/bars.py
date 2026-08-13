@@ -113,15 +113,11 @@ def _bri_spec(percent: int | None, error: str | None) -> BarSpec:
 
 
 def _bat_spec(data: dict | None, error: str | None) -> BarSpec | None:
-    """data is ctx.status.get("battery") — battery.aggregate()'s own
-    {"percent", "status", "ac_online"} dict, or None either for "no
-    battery hardware on this machine" (error is also None — a normal
-    answer, see battery.py's own get_packs() docstring) or "a battery IS
-    there but the last poll failed" (error is set). Only the second case
-    renders a bar at all — the first returns None here, and draw() omits
-    the BAT bar entirely rather than showing a permanently-broken-
-    looking dash on hardware that will never have one.
-
+    """data is ctx.status.get("battery"), or None either for "no
+    battery hardware" (error also None, a normal answer) or "a battery
+    IS there but the last poll failed" (error set). Only the second
+    case renders a bar — draw() omits BAT entirely rather than showing
+    a permanently-broken dash on hardware that will never have one.
     Three mutually exclusive states, in priority order — see
     CLAUDE/NOTES/design-decisions.md#bars-battery-states.
     """
