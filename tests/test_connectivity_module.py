@@ -251,11 +251,9 @@ def test_selected_bt_index_none_when_not_a_bluetooth_selection():
 
 
 # ---------- _signal_bars ----------
-# Found live, asked for directly: the old 4-asterisk scheme only ever
-# drew the FILLED asterisks, so a weak signal ("*   ") gave no visual
-# cue of "out of how many?" — always all 5 segments now, filled or
-# empty, plain Unicode (▮/▯), not a Nerd Font icon (considered and
-# explicitly rejected — see _signal_bars' own docstring).
+# See CLAUDE/NOTES/design-decisions.md#connectivity-module-design for
+# why this is always all 5 segments (filled or empty), plain Unicode
+# (▮/▯), not a Nerd Font icon.
 
 def test_signal_bars_always_five_segments():
     for signal in (None, 0, 1, 20, 21, 50, 75, 99, 100):
@@ -428,8 +426,9 @@ def test_bt_preview_text_blocked_uses_urgent_color():
 
 
 # ---------- _action_progress_line: connect/disconnect feedback ----------
-# Found live, asked for directly: pressing Enter gave no feedback
-# beyond the row's own blink, and no way to tell WHY a connect failed.
+# See CLAUDE/NOTES/design-decisions.md#connectivity-module-design —
+# pressing Enter alone gave no feedback beyond the row's own blink, and
+# no way to tell why a connect failed.
 
 class _FakeStatus:
     def __init__(self, pending_keys=(), errors_for=None):
@@ -519,10 +518,10 @@ def test_preview_text_progress_scoped_to_the_right_key_only():
 
 
 # ---------- _wifi_scan_preview_text / _bt_discover_preview_text ----------
-# Found live, asked for directly: hovering the Scan/Discover row itself
-# showed the default (unrelated) preview.py content — this is the FULL
-# list at a glance, not just the connectivity_visible_slots window the
-# box's own scrollable section shows.
+# Hovering the Scan/Discover row itself used to show the default
+# (unrelated) preview.py content; this is the full list at a glance,
+# not just the connectivity_visible_slots window the box's own
+# scrollable section shows.
 
 def test_wifi_scan_preview_lists_every_network_not_just_the_window():
     networks = [WifiNetwork(ssid=f"AP{i}", connected=False, signal=50) for i in range(10)]

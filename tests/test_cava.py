@@ -16,7 +16,7 @@ from tuicc.media.cava import CavaReader, parse_cava_line, ASCII_MAX_RANGE
 # ---------- parse_cava_line ----------
 
 def test_parse_cava_line_real_fixture():
-    # Real shape confirmed live against an actual cava run: semicolon-
+    # Real shape confirmed against an actual cava run: semicolon-
     # delimited integers, one per bar.
     assert parse_cava_line("3;7;12;0;16;4") == [3, 7, 12, 0, 16, 4]
 

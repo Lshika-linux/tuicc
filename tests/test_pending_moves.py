@@ -283,10 +283,10 @@ def test_promote_restore_queue_pops_one_and_spawns_it(monkeypatch):
 
 
 def test_promote_restore_queue_passes_a_log_path_under_spawn_log_dir(monkeypatch, tmp_path):
-    # See spawn_detached's docstring — a saved cmdline that crashes on
-    # relaunch (found live: Obsidian on NixOS, missing env a wrapper
-    # script would normally set up) looks identical to "never started"
-    # from the outside without this captured somewhere.
+    # See spawn_detached's docstring and
+    # CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash — a saved
+    # cmdline that crashes on relaunch looks identical to "never
+    # started" from the outside without this captured somewhere.
     calls = []
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(k) or 4242)
     monkeypatch.setattr(pending_moves, "SPAWN_LOG_DIR", tmp_path / "logs")
@@ -302,7 +302,7 @@ def test_promote_restore_queue_passes_a_log_path_under_spawn_log_dir(monkeypatch
 
 
 def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monkeypatch):
-    # See Provider.no_focus_next_window()'s docstring — asked for right
+    # See Provider.no_focus_next_window()'s docstring — called right
     # after the pid is known, before the restored window can steal
     # focus/fullscreen from tuicc.
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)

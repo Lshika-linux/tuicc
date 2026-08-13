@@ -147,11 +147,11 @@ def test_spawn_detached_no_log_path_uses_devnull(monkeypatch):
 
 
 def test_spawn_detached_log_path_redirects_stdout_and_stderr(monkeypatch, tmp_path):
-    # See spawn_detached's docstring: a saved session cmdline that
-    # crashes on relaunch (missing env a wrapper script would normally
-    # set up, found live with Obsidian on NixOS) looks identical to
-    # "never started" from the outside unless its output is captured
-    # somewhere instead of DEVNULL.
+    # See spawn_detached's docstring and
+    # CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash: a saved
+    # session cmdline that crashes on relaunch (missing env a wrapper
+    # script would normally set up) looks identical to "never started"
+    # from the outside unless its output is captured instead of DEVNULL.
     calls = []
     monkeypatch.setattr(subprocess, "Popen", _fake_popen(calls))
     log_path = tmp_path / "logs" / "restore_obsidian_123.log"

@@ -293,7 +293,7 @@ def test_prev_item_in_module_no_items_returns_none():
 
 # ---------- next_item_across_modules / prev_item_across_modules ----------
 #
-# Regression coverage for a real bug found live: next_item_in_module
+# Regression coverage for a real bug: next_item_in_module
 # returning None (module exhausted) used to trigger exactly one
 # next_module_name + first_item_in_module lookup — if THAT module also
 # had zero items (launcher, preview, and clock all do, in the packaged
@@ -418,10 +418,9 @@ def test_resolve_selection_non_region_item_keeps_focus_id_unchanged():
 # The fix for main.py's Left/Right (module_next_keys/module_prev_keys)
 # jumping to a whole different module the instant you try to step
 # across a module's own horizontal row of items (e.g. sessions.py's
-# expanded LOAD/SAVE/DEL/NAME) — found live. Left/Right try this first;
-# None (the overwhelmingly common case for a single-column module)
-# means they fall back to their usual jump-to-module behavior,
-# unaffected.
+# expanded LOAD/SAVE/DEL/NAME). Left/Right try this first; None (the
+# overwhelmingly common case for a single-column module) means they
+# fall back to their usual jump-to-module behavior, unaffected.
 
 def _row_item(module, name, x):
     return NavItem(id=f"{module}:{name}", rect=(x, 0.5, 0.05, 0.02))
