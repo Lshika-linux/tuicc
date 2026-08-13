@@ -170,19 +170,12 @@ class BluezBackend(BluetoothBackend):
             connection.close()
 
     def start_discovery(self) -> None:
-        """bluez ties a discovery session to the CALLING client's own
-        D-Bus connection — it ends automatically the instant that
-        connection closes. Every other method on this backend opens a
-        connection, makes one call, and closes it immediately
-        (get_devices()'s own short-lived-connection style) — doing the
-        same here would end the discovery session before it had any
-        real chance to find anything. Runs the whole StartDiscovery ->
-        wait -> StopDiscovery sequence on its own background thread
-        instead, so a real DISCOVERY_WINDOW_SECONDS window actually
-        elapses without blocking StatusWorker's one shared action-
-        dispatch thread (a blocking call here would stall every other
-        domain too — see status_worker.py's own module docstring).
-        No-op if a discovery window is already running.
+        """Runs StartDiscovery -> wait -> StopDiscovery on its own
+        background thread with a held-open connection, unlike every
+        other method here — see
+        CLAUDE/NOTES/design-decisions.md#bluez-discovery-connection for
+        why that's required, not a style choice. No-op if a discovery
+        window is already running.
         """
         if self._discovery_stop is not None:
             return
@@ -210,19 +203,13 @@ class BluezBackend(BluetoothBackend):
             self._discovery_stop.set()
 
     def is_discovering(self) -> bool:
-        """Adapter1.Discovering — the real ground truth, NOT this
-        backend's own _discovery_stop tracking: reflects reality even
-        if discovery was started by something other than tuicc itself
-        (bluetoothctl, another app), which _discovery_stop alone
-        wouldn't know about. Polled as its own StatusWorker Domain
-        (main.py's "bluetooth_discovering") for the same reason
-        IwdBackend.is_scanning() is — StatusWorker.
-        is_pending("bluetooth", ...) alone only reflects "we just sent
-        StartDiscovery a moment ago", cleared almost immediately since
-        start_discovery() itself returns fast (see its own docstring).
-        Found live, reported directly: without this, the
-        "Discovering…" label in the box only ever flickered instead of
-        staying up for the real discovery window.
+        """Adapter1.Discovering — the real ground truth, not this
+        backend's own _discovery_stop tracking (which wouldn't know
+        about discovery started by bluetoothctl or another app).
+        Polled as its own StatusWorker Domain, same reason
+        IwdBackend.is_scanning() is: is_pending("bluetooth", ...) alone
+        clears almost immediately since start_discovery() itself
+        returns fast, which would make the "Discovering…" label flicker.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:

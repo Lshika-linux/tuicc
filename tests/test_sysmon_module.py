@@ -241,9 +241,8 @@ def test_format_window_label_stats_always_shown_in_full(monkeypatch):
     monkeypatch.setattr(sysmon_module.launcher_mode, "get_apps", lambda: [])
     win = _win(app_id="firefox", cpu=13.0, rss_kb=24 * 1024)
     # Even with almost no room for a name, the "[13% 24M]" stats prefix
-    # itself must never be the part that gets cut — this is the actual
-    # bug found live (a long window title used to push the CPU/RAM
-    # numbers off the edge entirely).
+    # itself must never be the part that gets cut — a long window title
+    # would otherwise push the CPU/RAM numbers off the edge entirely.
     label = _format_window_label(win, available_w=9)
     assert label.startswith("[13% 24M]")
 
@@ -326,10 +325,10 @@ def test_format_stats_grid_shows_unknown_as_question_marks():
 
 def test_format_stats_grid_shows_real_values():
     # Grouped by column, not by row: CPU/CPUTEMP/HOT together (column
-    # 1), RAM/DISK together (column 2), LOAD/SWAP together (column 3) —
-    # found live, asked for. Rendered row-by-row, so row 0 is
-    # CPU+RAM+LOAD, row 1 is CPUTEMP+DISK+SWAP, and row 2 is HOT alone
-    # (column 1's own 3rd entry — the other two columns only have 2).
+    # 1), RAM/DISK together (column 2), LOAD/SWAP together (column 3).
+    # Rendered row-by-row, so row 0 is CPU+RAM+LOAD, row 1 is
+    # CPUTEMP+DISK+SWAP, and row 2 is HOT alone (column 1's own 3rd
+    # entry — the other two columns only have 2).
     sysinfo_data = {
         "cpu_percent": 23.4,
         "ram": {"total_kb": 16_000_000, "used_kb": 4_000_000, "available_kb": 12_000_000, "percent": 25.0},
@@ -356,11 +355,9 @@ def test_format_stats_grid_shows_real_values():
 
 
 def test_format_stats_grid_throttled_flag_appends_to_hot_not_swap():
-    # THROTTLED is a CPU-thermal flag — rides along on HOT's own
-    # cell (the packaged default's own genuinely-unconstrained row),
-    # not SWAP. Found live, asked for: an earlier version put it on
-    # SWAP purely because that's where free row-space happened to be,
-    # which read as unrelated once questioned.
+    # THROTTLED is a CPU-thermal flag — rides along on HOT's own cell
+    # (the packaged default's own genuinely-unconstrained row), not
+    # SWAP, which it has no real relation to.
     sysinfo_data = {
         "cpu_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
@@ -373,10 +370,10 @@ def test_format_stats_grid_throttled_flag_appends_to_hot_not_swap():
 
 
 def test_format_stats_grid_throttled_segment_has_urgent_role():
-    # Found live, asked for: THROTTLED should draw the eye once it's
-    # visible at all — its own segment, colored "urgent" (draw()
-    # resolves this to theme["urgent"]), not lumped into HOT's own
-    # plain-severity temperature reading.
+    # THROTTLED should draw the eye once it's visible at all — its own
+    # segment, colored "urgent" (draw() resolves this to
+    # theme["urgent"]), not lumped into HOT's own plain-severity
+    # temperature reading.
     sysinfo_data = {
         "cpu_percent": None, "disk": None,
         "load_average": None, "throttled_recently": True,
@@ -409,9 +406,9 @@ def test_format_stats_grid_columns_are_fixed_width():
 
 
 def test_format_stats_grid_labels_use_label_role():
-    # Found live, asked for: metric labels (CPU, RAM, ...) in accent
-    # color, values in plain text color, "ať se v tom líp scanuje" —
-    # draw() resolves the "label" role to theme["accent"].
+    # Metric labels (CPU, RAM, ...) render in accent color, values in
+    # plain text color, so the block scans at a glance — draw()
+    # resolves the "label" role to theme["accent"].
     rows = _format_stats_grid(sysinfo_data=None, sensors_data=None, blocks=_DEFAULT_BLOCKS)
     label_texts = [text.strip() for text, role in rows[0] if role == "label"]
     assert "CPU" in label_texts
@@ -466,7 +463,7 @@ def test_format_stats_grid_block_without_thresholds_is_never_colored():
     # packaged default) is deliberately never threshold-colored, even
     # given an extreme value — LOAD needs core-count normalization
     # (not implemented), SWAP has its own documented false-positive
-    # risk (VISION.md).
+    # risk (see CLAUDE/VISION.md's R6 section).
     sysinfo_data = {"load_average": (99.0, 99.0, 99.0)}
     rows = _format_stats_grid(sysinfo_data, None, [_block("load")])
     load_cell = next((text, role) for text, role in rows[0] if "99.0" in text)
@@ -474,8 +471,7 @@ def test_format_stats_grid_block_without_thresholds_is_never_colored():
 
 
 def test_format_stats_grid_disabled_block_is_skipped():
-    # enabled = false hides a block entirely — found live, asked for
-    # directly ("možnost ho tam mít nebo nemít").
+    # enabled = false hides a block entirely.
     sysinfo_data = {"cpu_percent": 50.0, "ram": {"total_kb": 1, "used_kb": 1, "available_kb": 0, "percent": 100.0}}
     blocks = [_block("cpu", column=1, row=1), _block("ram", column=1, row=2, enabled=False)]
     rows = _format_stats_grid(sysinfo_data, None, blocks)
@@ -484,8 +480,7 @@ def test_format_stats_grid_disabled_block_is_skipped():
 
 
 def test_format_stats_grid_user_can_reposition_blocks_into_new_columns():
-    # Found live, asked for directly: "i pozice v těch rows a
-    # collumns" — column/row are real config values, not fixed.
+    # column/row are real config values, not fixed.
     sysinfo_data = {"cpu_percent": 10.0, "load_average": (1.0, 1.0, 1.0)}
     blocks = [_block("load", column=1, row=1), _block("cpu", column=2, row=1, warning=70, urgent=90)]
     rows = _format_stats_grid(sysinfo_data, None, blocks)
@@ -589,8 +584,7 @@ def test_build_rows_always_three_window_slots():
 
 
 def test_build_rows_respects_configured_visible_slots():
-    # Found live, asked for directly: "Počet viditelných řádků, visible
-    # slots" — sysmon_visible_slots is a real config.toml value
+    # sysmon_visible_slots is a real config.toml value
     # (cfg.sysmon_visible_slots), not the hardcoded windowed_list.py
     # default.
     _reset_module_state()

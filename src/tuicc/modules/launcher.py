@@ -41,23 +41,13 @@ _apps_cache = None
 def scan_desktop_apps():
     """Scan DESKTOP_DIRS for .desktop files, return a sorted list of
     (name, exec_command, app_id_hint) tuples. %-prefixed Exec= tokens
-    (%f, %u, %U, %i...) are dropped rather than interpreted, since
-    tuicc launches apps with no file/URL argument to pass them.
-    Entries with NoDisplay=true, or missing Name/Exec, are skipped.
-
-    app_id_hint is StartupWMClass= when the .desktop file sets it —
-    the freedesktop desktop-entry-spec's own documented way to say
-    "this is the app_id/WM_CLASS my windows will have" — falling back
-    to the file's own basename (minus .desktop) when it doesn't, which
-    the same spec documents as the conventional default and matches
-    most apps' actual app_id in practice. Used by main.py's launcher-
-    spawn handling as a fallback match signal (pending_moves.py's
-    app_id tier) for apps whose spawned process's pid never matches
-    any window's pid — most commonly a single-instance app (Firefox,
-    Obsidian, many Electron apps) that just asks an already-running
-    instance to open a new window and exits immediately itself, so the
-    window it opens belongs to a completely different, pre-existing
-    pid than the one tuicc's spawn returned.
+    are dropped (tuicc launches with no file/URL argument to pass
+    them). Entries with NoDisplay=true, or missing Name/Exec, are
+    skipped. app_id_hint is StartupWMClass= when set, else the file's
+    basename — used by pending_moves.py's app_id tier as a fallback
+    match signal for apps whose spawned pid never matches any window's
+    (a single-instance app asking an already-running instance to open
+    a window, then exiting itself).
     """
     apps = []
     seen = set()
@@ -217,21 +207,11 @@ def handle_typing_key(state: LauncherState, key, cfg) -> bool:
     """Mutates state for the launcher's typing-mode editing keys
     (Escape, Backspace, Left/Right, printable characters). Does NOT
     handle the confirm key — resolving and launching a command needs
-    main.py's loop state (known window ids, target region, a
-    timestamp) that this module deliberately doesn't have, same
-    reasoning as resolve_selected(). Escape and Backspace-on-empty-
-    query call exit_typing_mode themselves.
-
-    Returns still_claiming (True unless this call just exited typing
-    mode) — VISION.md's R2 input_claim shape. main.py's dispatch reads
-    this directly instead of re-checking state.typing_mode afterward
-    (a stale-flag "peek" the input_claim mechanism used at first, found
-    live to be exactly the kind of indirection R2 was meant to avoid —
-    see main.py's own comment at its "launcher" input_claim site). The
-    caller still needs to check state.typing_mode itself once, after
-    this returns, to know whether to restore its saved selection — same
-    as it does for a successful confirm, which this function has no
-    part in.
+    main.py's loop state this module deliberately doesn't have, same
+    reasoning as resolve_selected(). Returns still_claiming (True
+    unless this call just exited typing mode) — CLAUDE/VISION.md's R2
+    input_claim shape; main.py's dispatch reads this directly rather
+    than re-checking state.typing_mode afterward.
     """
     if key == 27:  # Escape
         exit_typing_mode(state)

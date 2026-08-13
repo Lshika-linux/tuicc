@@ -2,49 +2,16 @@
 D-Bus (org.freedesktop.NetworkManager), the second WifiBackend
 alongside iwd.py's, for users who don't run iwd.
 
-Real, structural differences from iwd.py, not just different method
-names — worth reading before touching this file:
+Real structural differences from iwd.py (no bulk ObjectManager tree
+walk, per-BSSID not per-SSID access points, no built-in scan-result-to-
+saved-profile link, genuinely async ActivateConnection needing a real
+poll loop) are documented in
+CLAUDE/NOTES/design-decisions.md#networkmanager-vs-iwd — read that
+before touching this file.
 
-1. **No bulk tree walk.** iwd/bluez both implement
-   `org.freedesktop.DBus.ObjectManager.GetManagedObjects()` at their
-   root, letting iwd.py/bluez.py fetch their whole object graph in one
-   call. NetworkManager does NOT expose ObjectManager the same way —
-   its own bespoke `GetAllDevices()`/`Settings.ListConnections()`
-   methods are the real enumeration mechanism, and each object's own
-   properties need their own `Properties.GetAll` call. More D-Bus
-   round trips per poll than iwd.py needs, an accepted cost — no
-   different in spirit from iwd.py's own one-GetAll-per-network
-   pattern, just one level less bulk.
-2. **`AccessPoint` is per-BSSID, not per-SSID.** iwd's `Network`
-   object is already collapsed to one per SSID; NetworkManager's scan
-   results are one `AccessPoint` object per physical radio actually
-   seen (a mesh, or multiple APs on the same SSID, show up as several
-   objects). `merge_access_points_by_ssid()` below is what iwd.py
-   never needed at all.
-3. **No built-in link between a scan result and a saved profile.**
-   iwd's `Network.KnownNetwork` property points straight at it;
-   NetworkManager's `Settings.Connection` profiles are a wholly
-   separate object graph, correlated with a scanned `AccessPoint` only
-   by matching decoded SSID ourselves (`find_known_profile_for_ssid()`).
-4. **`Connect()`-returns-cleanly-even-on-a-wrong-passphrase, same
-   fundamental gotcha we already found and fixed for iwd.py's own
-   `connect()`** — `ActivateConnection()`/`AddAndActivateConnection()`
-   return almost instantly, before real activation even starts. Unlike
-   iwd.py's one-shot post-call property check (Connect() itself blocks
-   for the whole attempt), NetworkManager's activation is genuinely
-   asynchronous even from the CALLING client's own perspective, so
-   this needs an actual bounded poll loop, not a single read — see
-   `_wait_for_activation()`.
-
-**Honesty note, per this feature's own plan**: NetworkManager isn't
-installed on the machine this was built on (it runs iwd) — every pure
-function below is fixture-tested against hand-built, doc-accurate
-D-Bus reply shapes, but the live D-Bus behavior this module drives
-(does `ActivateConnection` really behave as documented on some real
-distro's NM version, does polling `State` really observe the
-transitions assumed here) has NOT been confirmed against a real,
-running NetworkManager. Flagging this explicitly rather than
-presenting it as proven the way iwd.py's own live-tested behavior is.
+NOT YET CONFIRMED against a real, running NetworkManager (built on a
+machine that runs iwd) — see that same note for what's fixture-tested
+vs. genuinely unverified.
 """
 
 import time
@@ -168,19 +135,13 @@ def classify_security(flags, wpa_flags, rsn_flags):
 
 
 def merge_access_points_by_ssid(entries):
-    """Pure logic: the real per-BSSID-vs-per-SSID model mismatch this
-    module's own docstring describes. `entries` is a flat list of
-    already-decoded `{"ssid", "strength", "security", "path",
-    "connected"}` dicts, one per real `AccessPoint` object (`connected`
-    True only for the one entry whose path matches `Device.Wireless.
-    ActiveAccessPoint`). Groups by `ssid`, the strongest `strength`
-    wins as the group's representative security/path/strength, but
-    `connected` is ORed across the WHOLE group — any AP in the group
-    being the active one makes the merged network connected, not just
-    if the strongest one happens to be it. Entries with an empty
-    decoded ssid (a fully hidden AP with no probe-revealed name) are
-    excluded, same as iwd.py never listing those either. Testable
-    without any D-Bus connection.
+    """Pure logic: the per-BSSID-vs-per-SSID model mismatch this
+    module's docstring describes. `entries` is a flat list of decoded
+    `{"ssid", "strength", "security", "path", "connected"}` dicts, one
+    per real `AccessPoint`. Groups by `ssid`; strongest `strength` wins
+    as the group's representative, but `connected` is ORed across the
+    whole group. Entries with an empty decoded ssid (fully hidden AP)
+    are excluded, same as iwd.py. Testable without a D-Bus connection.
     """
     groups = {}
     for entry in entries:
@@ -226,21 +187,14 @@ def find_known_profile_for_ssid(connections, ssid):
 
 
 def known_profile_fields(settings_dict):
-    """Pure logic: given ONE connection's settings dict
-    (`Settings.Connection.GetSettings()`'s own `a{sa{sv}}` reply),
-    `(auto_connect, hidden, last_connected_iso)`. Two real gotchas,
-    both confirmed against NetworkManager's own settings semantics —
-    NOT assumed:
-    - `connection.autoconnect` is OPTIONAL and defaults to `True` when
-      the key is absent entirely — absent is NOT the same as an
-      explicit `False`.
-    - `802-11-wireless.hidden` defaults to `False` when absent.
-    `connection.timestamp` (epoch seconds, 0 or absent meaning "never
-    successfully connected") is converted via `_epoch_to_iso()` to the
-    exact same ISO8601 `"...Z"` shape iwd.py's own `KnownNetwork.
-    LastConnectedTime` already produces, so nothing downstream
-    (`model.py`, `modules/connectivity.py::_format_timestamp`) needs
-    to change for this backend. Testable without any D-Bus connection.
+    """Pure logic: given one connection's settings dict, returns
+    (auto_connect, hidden, last_connected_iso). Two confirmed gotchas:
+    `connection.autoconnect` defaults to `True` when absent (absent is
+    not the same as explicit `False`); `802-11-wireless.hidden`
+    defaults to `False`. `connection.timestamp` is converted via
+    `_epoch_to_iso()` to the same ISO8601 shape iwd.py's
+    `LastConnectedTime` produces, so nothing downstream needs to change
+    for this backend.
     """
     connection = settings_dict.get("connection", {})
     wireless = settings_dict.get("802-11-wireless", {})

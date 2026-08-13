@@ -1,47 +1,23 @@
 """Generic background-polling worker: thread + action queue + pending
 set + cached-snapshot-per-domain + poll interval — the pattern
 connectivity/worker.py's own ConnectivityWorker used to hardcode for
-wifi+bluetooth specifically (mirrors swcc's daemon architecture, a
-background worker feeding cached state to the render loop, but as a
-thread within the same process — tuicc is single-process, so there's
-no need for IPC, just a lock-protected shared state).
+wifi+bluetooth specifically, generalized so control/media/system
+monitor domains can register against the same worker instead of each
+writing their own thread/lock/queue plumbing. See CLAUDE/VISION.md's R3
+section for why there's no thin ConnectivityWorker wrapper class kept
+around this, and for the poll_interval-per-domain story.
 
-VISION.md's R3: connectivity is domain client #1 — main.py builds a
-StatusWorker with "wifi"/"bluetooth" Domains directly, no
-ConnectivityWorker wrapper class in between (an early version of this
-refactor had one; found live that it would've just been an ~8-method
-1-line-pass-through layer mirroring StatusWorker's own API with
-nothing of its own, the exact redundancy R2's input_claim/old-flag
-duplication turned out to be — better to touch connectivity.py's own
-call sites once than carry a permanent, purposeless wrapper). R5
-(control/media) and R6 (system monitor) register their own domains
-against this same worker instead of each writing their own copy of
-this thread/lock/queue plumbing.
+No-silent-failure lands here: a domain's poll() exception is captured
+into that domain's own last_error, and the cached snapshot becomes None
+(not []) for that round, so a module can tell "genuinely nothing there"
+apart from "couldn't check" — see modules/connectivity.py's _build_rows.
 
-No-silent-failure lands here too: a domain's poll() exception no
-longer vanishes into a bare `except Exception: pass` — it's captured
-into that domain's own last_error, and the cached snapshot itself
-becomes None (not []) for that round, so a module rendering it can
-tell "genuinely nothing there" (a real []) apart from "couldn't check"
-(None + last_error) — see modules/connectivity.py's _build_rows for
-where that distinction actually reaches the screen.
-
-Action failures (e.g. a connect() call raising) get the same
-treatment, in a separate `_action_errors` dict (get_action_error()) —
-this WAS left as a known, deliberately deferred gap when R3 first
-landed ("revisit if that turns out to matter in practice"), and it did:
-found live building R5's control module — a toggle's command failing
-fast (gammastep exiting immediately for lack of a GeoClue2 provider,
-on a real test machine) produced zero visible feedback,
-the toggle just silently stayed in its old state. _action_errors is
-its own dict, not reused from poll's `_errors` above, because _run()
-always re-polls every domain in the same loop iteration right after
-processing that iteration's actions (see the `actions or now -
-last_poll > ...` check below) — writing an action error into the same
-slot poll() writes to would get silently clobbered by that very poll's
-own (likely successful) result before any caller read it. Cleared at
-the start of every new action attempt for the same domain, not by a
-subsequent poll.
+Action failures (e.g. a connect() call raising) get the same treatment
+in a separate `_action_errors` dict, not reused from poll's `_errors` —
+_run() always re-polls every domain right after processing that
+iteration's actions, so sharing a slot would let a successful poll
+silently clobber an unread action error. Cleared at the start of every
+new action attempt for the domain, not by a subsequent poll.
 """
 
 import threading
@@ -67,15 +43,10 @@ class Domain:
     poll: Callable[[], list]
     actions: dict = field(default_factory=dict)
     # None (the default) means "use StatusWorker's own shared
-    # poll_interval" — most domains (wifi/bluetooth scans,
-    # control.toggle status checks) are genuinely fine refreshing every
-    # few seconds. A domain can override with its own, shorter value
-    # when that's not true — found live: audio (default sink can change
-    # out from under tuicc — WirePlumber auto-switches to a newly
-    # connected bluetooth device on its own, tuicc didn't initiate it —
-    # see main.py's own audio/media Domain construction) and media
-    # (a song changing mid-playback) both felt "stuck" at the 5s shared
-    # default when tested live.
+    # poll_interval". A domain can override with a shorter value when
+    # something outside tuicc's own control can change it between
+    # polls (audio's default sink, media's now-playing) — see
+    # CLAUDE/VISION.md's R3 section for the concrete story.
     poll_interval: float | None = None
 
 
@@ -95,14 +66,8 @@ class StatusWorker:
         # not a silent-seeming [].
         self._snapshots = {name: None for name in self._domains}
         self._errors = {name: None for name in self._domains}
-        # A domain's last REQUESTED ACTION's error, kept separate from
-        # _errors (poll errors) above — found live matters in practice
-        # (see this class's own module docstring): _run() always
-        # re-polls every domain in the same loop iteration right after
-        # processing actions, so writing an action failure into the
-        # same _errors slot would get silently overwritten by that
-        # very poll's own (likely successful) result before a caller
-        # ever got a chance to read it.
+        # A domain's last requested action's error, kept separate from
+        # _errors (poll errors) above — see the module docstring for why.
         self._action_errors = {name: None for name in self._domains}
         # Which request_action() pending_key the current _action_errors
         # entry actually belongs to — see get_action_error_for()'s own
@@ -178,19 +143,15 @@ class StatusWorker:
             return self._action_errors[domain_name]
 
     def get_action_error_for(self, domain_name, key):
-        """Same as get_action_error(domain_name) above, but returns
-        None unless the error actually belongs to THIS specific key —
-        found live building modules/connectivity.py's hover-preview
-        "connection failed" message: get_action_error() alone is
-        domain-wide, which is exactly right for control.py (each
-        [[control.toggle]] gets its own "toggle:i" domain, one item
-        per domain) but wrong for wifi/bluetooth, where MANY networks/
-        devices share one "wifi"/"bluetooth" domain — without this,
-        selecting a different network after an earlier one's connect
-        attempt failed would still show that earlier network's stale
-        error, misattributed to whatever's selected now. `key` is the
-        same identity request_action()'s own `pending_key` param uses
-        (ssid/device_id here).
+        """Same as get_action_error(domain_name) above, but returns None
+        unless the error actually belongs to THIS specific key.
+        get_action_error() alone is domain-wide, exactly right for
+        control.py (one "toggle:i" domain per item) but wrong for wifi/
+        bluetooth, where many networks/devices share one domain —
+        without this, selecting a different network after an earlier
+        one's connect attempt failed would still show that earlier
+        network's stale error. `key` is the same identity
+        request_action()'s `pending_key` param uses.
         """
         with self._lock:
             if self._action_error_keys[domain_name] != key:
@@ -206,21 +167,14 @@ class StatusWorker:
             return len(self._pending) > 0
 
     def request_action(self, domain_name, action_name, arg=None, pending_key=None):
-        """arg is whatever the registered action callable needs — for
-        wifi/bluetooth that's always been a single id (ssid/device_id),
-        but a domain whose action needs more than one piece of data
-        (audio's set_volume(sink_id, percent), found live building
-        R5's audio/ backend) can pass a tuple/whatever shape its own
-        Domain.actions callable expects to unpack.
-
-        pending_key is what is_pending()/has_pending() actually track
-        — defaults to arg itself (unchanged behavior for every
-        existing caller, wifi/bluetooth's own id-is-both-things case).
-        Pass it explicitly when arg isn't a sensible pending identity
-        on its own — audio's set_volume wants "is THIS SINK being
-        adjusted" (sink_id alone), not "is this exact (sink_id,
-        percent) tuple pending" (which would never match a second,
-        different volume request for the same sink still in flight).
+        """arg is whatever the registered action callable needs — a
+        single id (ssid/device_id) for wifi/bluetooth, or a
+        tuple/whatever shape a domain's own action expects (e.g.
+        audio's set_volume(sink_id, percent)). pending_key is what
+        is_pending()/has_pending() track — defaults to arg, but should
+        be passed explicitly when arg isn't itself a sensible pending
+        identity (audio wants "is THIS SINK adjusted", not "is this
+        exact tuple pending").
         """
         if pending_key is None:
             pending_key = arg

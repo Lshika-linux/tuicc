@@ -48,8 +48,8 @@ def test_dot_glyph_cycle_outline_when_unknown():
 # ---------- _row_suffix ----------
 
 def test_row_suffix_binary_toggle_has_no_text_suffix():
-    # Found live: the dot alone already says on/off — redundant text
-    # was the whole point of this fix.
+    # The dot alone already says on/off — a text suffix would be
+    # redundant.
     assert _row_suffix("normal", is_binary=True, current_name="on", error=None) == ""
     assert _row_suffix("normal", is_binary=True, current_name="off", error=None) == ""
 
@@ -214,9 +214,9 @@ def test_nav_items_preview_flags_shell_true():
 
 
 def test_nav_items_preview_includes_the_action_error_when_present():
-    # Found live: a failed command (gammastep exiting immediately for
-    # lack of GeoClue2) used to be entirely invisible — the error must
-    # reach the preview pane.
+    # See CLAUDE/VISION.md's R3 section — a failed command (gammastep
+    # exiting immediately for lack of GeoClue2) must reach the preview
+    # pane, not stay invisible.
     toggles = [{"label": "Night Light", "shell_true": False,
                 "states": [{"name": "on", "command": "gammastep"}, {"name": "off", "command": "pkill -x gammastep"}]}]
     ctx = _fake_ctx(toggles, action_errors={"toggle:0": "Error: GeoClue2 provider is not installed!"})
@@ -228,8 +228,8 @@ def test_nav_items_preview_includes_the_action_error_when_present():
 
 
 def test_nav_items_preview_splits_a_multiline_action_error_into_separate_entries():
-    # Found live: gammastep's real stderr is 3 separate "Error: ..."
-    # lines. draw_centered_lines (render_utils.py) positions each
+    # gammastep's real stderr is 3 separate "Error: ..." lines.
+    # draw_centered_lines (render_utils.py) positions each
     # preview_text ENTRY as its own row via x/y math — a single entry
     # holding an embedded "\n" makes curses jump to column 0 of the
     # next real terminal row on that "\n", escaping the preview box

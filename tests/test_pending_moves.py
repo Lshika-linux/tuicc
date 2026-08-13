@@ -283,10 +283,10 @@ def test_promote_restore_queue_pops_one_and_spawns_it(monkeypatch):
 
 
 def test_promote_restore_queue_passes_a_log_path_under_spawn_log_dir(monkeypatch, tmp_path):
-    # See spawn_detached's docstring — a saved cmdline that crashes on
-    # relaunch (found live: Obsidian on NixOS, missing env a wrapper
-    # script would normally set up) looks identical to "never started"
-    # from the outside without this captured somewhere.
+    # See spawn_detached's docstring and
+    # CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash — a saved
+    # cmdline that crashes on relaunch looks identical to "never
+    # started" from the outside without this captured somewhere.
     calls = []
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(k) or 4242)
     monkeypatch.setattr(pending_moves, "SPAWN_LOG_DIR", tmp_path / "logs")
@@ -302,7 +302,7 @@ def test_promote_restore_queue_passes_a_log_path_under_spawn_log_dir(monkeypatch
 
 
 def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monkeypatch):
-    # See Provider.no_focus_next_window()'s docstring — asked for right
+    # See Provider.no_focus_next_window()'s docstring — called right
     # after the pid is known, before the restored window can steal
     # focus/fullscreen from tuicc.
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)
@@ -635,10 +635,9 @@ def test_enrich_pids_fills_in_pid_for_a_new_unclaimed_window():
     # relied entirely on app_id matching, which fails outright for
     # apps whose real runtime app_id doesn't match their .desktop
     # entry's hint (common for Python/Electron apps launched via a
-    # bare interpreter). Found live: this left a spawn's window
-    # sitting wherever the WM opened it — unmoved — which is also
-    # what triggered tuicc losing fullscreen when that happened to be
-    # tuicc's own workspace.
+    # bare interpreter). Without this fix, a spawn's window would sit
+    # wherever the WM opened it — unmoved — which also triggers tuicc
+    # losing fullscreen when that happens to be tuicc's own workspace.
     provider = _FakeProvider(resolved_pids={"2": 555})
     queue = PendingMovesQueue(entries=[{"known_ids": {"1"}, "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty"), _window("2", "blanket", pid=None)]

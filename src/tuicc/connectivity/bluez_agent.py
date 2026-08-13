@@ -116,13 +116,12 @@ class BluezAgent:
 
     def stop(self) -> None:
         """No-op if not running. Replies to any still-pending request
-        (Rejected, via cancel_current()) BEFORE tearing the connection
-        down, then best-effort UnregisterAgent — see IwdAgent.stop()'s
-        own docstring for the full reasoning (found live, genuinely
-        reproducible, suspected trigger for a real iwd crash this
-        session — the same abrupt-disconnect-while-pending risk
-        applies here for bluez, even though only iwd was confirmed to
-        actually crash).
+        (Rejected, via cancel_current()) before tearing the connection
+        down, then best-effort UnregisterAgent — same
+        abrupt-disconnect-while-pending risk as IwdAgent.stop(), see
+        CLAUDE/NOTES/known-limitations.md#agent-shutdown-cancels-pending
+        (only iwd was confirmed to actually crash from it, but the same
+        risk applies here for bluez).
         """
         if self._thread is None:
             return

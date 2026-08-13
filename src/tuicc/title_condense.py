@@ -2,7 +2,7 @@
 
 Extracted out of modules/sidebar.py (which had the only copy) so
 modules/preview.py can show the same "what's actually running" text
-instead of just the raw app_id — found live: a kitty window running
+instead of just the raw app_id — without it, a kitty window running
 htop and another running cava both showed as plain "kitty" in the
 preview module, even though the sidebar was already condensing the
 exact same windows' titles down to "htop"/"cava" via this very logic.

@@ -70,31 +70,23 @@ def _signal_to_percent(centi_dbm):
 def _connect_succeeded(station_props, network_path):
     """Pure logic half of connect()'s own post-attempt check: given
     Station's Properties.GetAll reply (read immediately after
-    Connect() returns) and the network path just attempted, whether
-    the connection actually took. See IwdBackend.connect()'s own
-    docstring for why this check exists at all — found live, a wrong
-    passphrase makes Connect() itself return cleanly with no error,
-    ConnectedNetwork simply never becomes the attempted network.
-    Testable without any D-Bus connection.
+    Connect() returns) and the network path just attempted, whether the
+    connection actually took. See
+    CLAUDE/NOTES/design-decisions.md#iwd-connect-false-success for why
+    this check exists at all. Testable without any D-Bus connection.
     """
     connected_network = station_props.get("ConnectedNetwork")
     return connected_network is not None and connected_network[1] == network_path
 
 
 def _network_name_connected_known(connection, network_path):
-    """'known' means iwd has stored credentials for this network (you
-    connected to it before, from iwd or anything else feeding it the
-    same known-networks store) — Connect() works without a password
-    prompt for these. An unknown network now also connects fine (once
-    an IwdAgent is registered — see agent_mailbox.py/iwd_agent.py) via
-    an interactive passphrase prompt, so `known` is threaded through
-    into WifiNetwork instead of being used to filter the network out.
-
-    Deliberately the lighter of two similar-looking helpers — connect()
-    below only needs a name to match against, called once per network
-    in a scan of the whole list, so it skips _build_wifi_network's own
-    extra KnownNetwork round trip entirely rather than paying that cost
-    for every network just to find the one being connected to.
+    """'known' means iwd has stored credentials for this network —
+    Connect() works without a password prompt for these; an unknown
+    network connects via an interactive passphrase prompt instead (see
+    agent_mailbox.py/iwd_agent.py), so `known` is threaded through
+    rather than used to filter networks out. Deliberately lighter than
+    _build_wifi_network: connect() below only needs a name to match, so
+    it skips the extra KnownNetwork round trip.
     """
     props = _call(
         connection, network_path, "org.freedesktop.DBus.Properties", "GetAll",
@@ -148,16 +140,14 @@ def _build_wifi_network(connection, network_path, signal):
 
 class IwdBackend(WifiBackend):
     def get_networks(self) -> list[WifiNetwork]:
-        """No internal try/except Exception here (there used to be one,
-        found live to be exactly the kind of silent failure VISION.md's
-        R3 exists to fix) — a D-Bus failure (iwd not running, SYSTEM
-        bus unreachable, ...) propagates naturally, so
-        status_worker.StatusWorker's poll wrapper can actually catch it
-        and record last_error instead of it vanishing into a bare `[]`
-        indistinguishable from "no networks around". Only resource
-        cleanup (closing the connection) needs its own try/finally —
-        it must run whether get_networks succeeds, raises, or returns
-        early.
+        """No internal try/except Exception here — a D-Bus failure (iwd
+        not running, SYSTEM bus unreachable, ...) propagates naturally,
+        so status_worker.StatusWorker's poll wrapper can catch it and
+        record last_error instead of it vanishing into a bare `[]`
+        indistinguishable from "no networks around" (see CLAUDE/VISION.md's
+        R3, no-silent-failure). Only resource cleanup (closing the
+        connection) needs its own try/finally — it must run whether
+        get_networks succeeds, raises, or returns early.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:
@@ -182,26 +172,11 @@ class IwdBackend(WifiBackend):
         what modules/connectivity.py's hover-preview and the
         passphrase-entry overlay both surface to the user.
 
-        Critical, found LIVE (not documented anywhere, contradicts the
-        naive reading of the D-Bus Agent pattern): iwd's own
-        Network.Connect() can return SUCCESSFULLY — no D-Bus error, no
-        exception here — even when the actual authentication attempt
-        failed. Reproduced deterministically: a deliberately wrong
-        passphrase against a real AP completed Connect() in ~3.4s with
-        a clean, non-error reply, while the Station's own
-        ConnectedNetwork property never changed to the attempted
-        network — iwd apparently considers Connect() "done" once the
-        attempt has been fully processed (right passphrase or wrong),
-        not "authentication actually succeeded". Trusting a clean
-        Connect() return alone made a wrong passphrase look
-        indistinguishable from success — no exception, nothing for
-        StatusWorker to capture, nothing for the UI to show. Fixed by
-        checking the Station's OWN post-attempt ConnectedNetwork
-        against the network path we just tried, immediately after
-        Connect() returns (no extra wait needed — by the time our
-        blocking Connect() call gets its reply, iwd's own internal
-        state for the same operation has already settled), and raising
-        a real, honest error ourselves when they don't match.
+        Does its own post-attempt verification rather than trusting a
+        clean Connect() return — see
+        CLAUDE/NOTES/design-decisions.md#iwd-connect-false-success for
+        why: iwd's Connect() can return successfully even when the
+        actual authentication attempt failed.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:
@@ -263,17 +238,11 @@ class IwdBackend(WifiBackend):
 
     def is_scanning(self) -> bool:
         """Station.Scanning — the real ground truth for whether iwd's
-        own scan (triggered by scan() above, or by anything else, e.g.
-        iwctl run outside tuicc) is still in progress. Polled as its
-        own StatusWorker Domain (main.py's "wifi_scanning") rather than
-        folded into get_networks()'s own poll, since scan() itself is
-        fire-and-forget with no duration this backend controls —
-        StatusWorker.is_pending("wifi", ...) alone only reflects "we
-        just sent the Scan() call a moment ago", which clears almost
-        immediately since that call itself returns fast. Found live,
-        reported directly: without this, the "Scanning…" label in the
-        box only ever flickered instead of staying up for the real
-        scan window.
+        scan (triggered by scan() or anything else, e.g. iwctl) is
+        still in progress. Polled as its own StatusWorker Domain rather
+        than folded into get_networks()'s poll: is_pending("wifi", ...)
+        alone clears almost immediately since scan() itself returns
+        fast, which would make the "Scanning…" label flicker.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:

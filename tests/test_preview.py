@@ -30,11 +30,10 @@ def _window(app_id, title):
 # ---------- _window_label ----------
 
 def test_terminal_window_shows_bracketed_app_id_and_what_is_actually_running():
-    # The exact bug reported live: two kitty windows (one running
-    # htop, one running cava) both showed as plain "kitty" here even
-    # though sidebar.py's own detail line already condensed them
-    # correctly. Asked for live: "[app_id] detail", not "app_id -
-    # detail" or the detail alone.
+    # Regression: two kitty windows (one running htop, one running
+    # cava) both showed as plain "kitty" here even though sidebar.py's
+    # own detail line already condensed them correctly. Expected shape:
+    # "[app_id] detail", not "app_id - detail" or the detail alone.
     cfg = _cfg(terminal_apps=["kitty"])
     assert _window_label(_window("kitty", "htop"), cfg) == "[kitty] htop"
     assert _window_label(_window("kitty", "cava"), cfg) == "[kitty] cava"

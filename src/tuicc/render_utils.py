@@ -38,16 +38,10 @@ def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
 def draw_corner_marks(stdscr, y, x, h, w, color_pair=0, arm=1):
     """Open corner brackets — a short horizontal + vertical arm at each
     of a box's 4 corners — instead of draw_box_outline()'s full
-    rectangle. A minimalist alternative border style (seen in swcc's
-    own window preview), asked for specifically to cut visual clutter
-    where full outlines would otherwise cross/compete with each other
-    in a dense area — modules/preview.py's per-window boxes commonly
-    overlap.
-
-    arm is clamped so opposite corners' arms never touch/overlap on a
-    small box (leaves at least one gap cell between them on each
-    side) — degrades to a bare corner glyph with no arm at all (arm=0)
-    on a box too small for any arm to fit, rather than drawing
+    rectangle. Cuts visual clutter where full outlines would otherwise
+    cross/compete (modules/preview.py's per-window boxes commonly
+    overlap). arm is clamped so opposite corners never touch on a small
+    box, degrading to a bare corner glyph (arm=0) rather than drawing
     something visually wrong.
     """
     if h < 1 or w < 1:
@@ -88,21 +82,11 @@ def draw_centered_lines(stdscr, box, lines):
     """A block of (text, color_pair) lines, centered both horizontally
     and vertically within box. Used for anything a module wants to
     show in place of its normal contents — a Y/N confirmation overlay,
-    a preview of what an item would do — centered the same way
-    everywhere instead of each caller inventing its own positioning.
-
-    When there are more lines than fit in one column, spills into a
-    second column side by side instead of overflowing past the box's
-    own border — found live: sysmon.py's diagnostics breakdown (a
-    single flapping driver's crash dump, 74 distinct dmesg lines) wrote
-    its very first line directly ONTO the box's own top border. The
-    original single-column centering math only clamped its starting
-    row to >= 0 (the SCREEN edge), not >= "the first row actually
-    inside this box's own border" — with more lines than the box had
-    rows for, that clamp landed exactly on the border row itself, not
-    one row below it. Genuinely too much even for two columns still
-    truncates, with a "+N more" marker as the last visible line, rather
-    than trying a third column.
+    a preview of what an item would do. More lines than fit in one
+    column spill into a second column side by side (see
+    CLAUDE/VISION.md's R6 section for the overflow bug this fixes);
+    genuinely too much even for two columns still truncates with a
+    "+N more" marker.
     """
     x, y, w, h = box
     inner_w = max(w - 2, 0)
@@ -168,14 +152,9 @@ def draw_text_panel(stdscr, box, lines, border_color, title=None):
     draw_centered_lines (built for a short confirm dialog, each line
     individually centered), this is for paragraph-shaped content: a
     consistent left margin, one line per row, no per-line centering.
-
-    lines is a list of (text, color_pair) pairs — the caller decides
-    each line's color (e.g. to highlight the currently-selected row in
-    a list), this function only lays them out. Takes an explicit box
-    like every other primitive here (draw_box_outline, draw_filled_box,
-    draw_centered_lines) — a caller wanting "most of the screen, with a
-    margin" computes that box itself, so this can also be used for a
-    sub-region (e.g. one pane of a two-pane page).
+    lines is (text, color_pair) pairs — the caller decides each line's
+    color, this only lays them out. Takes an explicit box like every
+    other primitive here, so it also works for a sub-region.
     """
     x, y, w, h = box
 
@@ -205,22 +184,14 @@ def draw_status_line(stdscr, term_width, text, color_pair):
 
 
 def eighth_block_level(value: int, max_value: int, row_idx: int, num_rows: int) -> int:
-    """value's height (0..max_value) as seen from just ONE physical output
-    row's own 0..8 slice, when the value is rendered as num_rows stacked
-    terminal rows, each with 8 sub-levels of vertical resolution via the
-    eighth-block glyphs (" ▁▂▃▄▅▆▇█"). Without this, a value only has
-    num_rows discrete visual steps (one per whole terminal cell) — moving
-    between two of them looks like a jump, not continuous motion, exactly
-    the "bars don't move consistently with the real percentage" problem
-    swcc's own vertical bars had. Scaling to num_rows*8 steps instead
-    fixes that at any bar height, including num_rows=1.
-
-    row_idx=0 is the TOPMOST row; row_idx=num_rows-1 is the BOTTOMMOST
-    (where a bar visually starts growing from). Pure function — no
-    curses, no state — shared by modules/media.py's cava visualizer
-    (this is where the math originally lived, as `_cava_row_level`,
-    before the bars module needed the exact same technique for its own
-    VOL/BRI/BAT fills) and modules/bars.py.
+    """value's height (0..max_value) as seen from just ONE physical
+    output row's 0..8 slice, when rendered as num_rows stacked terminal
+    rows with 8 sub-levels each via eighth-block glyphs (" ▁▂▃▄▅▆▇█").
+    Without this, a value only has num_rows discrete visual steps —
+    scaling to num_rows*8 makes motion between them continuous, not a
+    jump, at any bar height. row_idx=0 is topmost, row_idx=num_rows-1
+    is bottommost. Pure function, shared by modules/media.py's cava
+    visualizer (where this math originally lived) and modules/bars.py.
     """
     if num_rows <= 0 or max_value <= 0:
         return 0

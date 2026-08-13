@@ -24,12 +24,10 @@ def draw(stdscr, box, ctx, module_name):
     showing_preview = ctx.selected_item is not None and ctx.selected_item.preview_text is not None
 
     # A preview marked urgent (NavItem.preview_urgent — sysmon.py's
-    # diagnostics row when it has real issues, not "all clear") colors
-    # the WHOLE border urgent, taking priority over the plain active/
-    # selected styling below — found live, asked for: the border is
-    # what signals "pay attention here" everywhere else in this
-    # codebase, so a preview showing a real problem should color that
-    # border too, not just the text inside it.
+    # diagnostics row when it has real issues) colors the whole border
+    # urgent, taking priority over the plain active/selected styling
+    # below — the border is what signals "pay attention here"
+    # everywhere else in this codebase.
     if showing_preview and ctx.selected_item.preview_urgent:
         outer_color = theme.get("urgent", 0)
     elif is_active:
@@ -37,14 +35,13 @@ def draw(stdscr, box, ctx, module_name):
     else:
         outer_color = theme.get("border", 0)
 
-    # Camera-viewfinder corner marks for the module's OWN outer box —
-    # asked for live, specifically the opposite of _draw_window()'s own
-    # per-window boxes below (which stay full outlines): this is the
-    # one box in the module that never overlaps anything else, so
-    # there's no "competing lines" problem to solve here, just the
-    # look itself. arm=2, bigger than _draw_window()'s implicit
-    # default — a large box reads better with a proportionally longer
-    # corner arm than a small one would.
+    # Camera-viewfinder corner marks for the module's own outer box —
+    # the opposite of _draw_window()'s own per-window boxes below
+    # (which stay full outlines): this is the one box in the module
+    # that never overlaps anything else, so there's no "competing
+    # lines" problem to solve, just the look itself. arm=2, bigger than
+    # _draw_window()'s implicit default — a large box reads better with
+    # a proportionally longer corner arm than a small one would.
     draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:
@@ -76,19 +73,12 @@ def draw(stdscr, box, ctx, module_name):
 
 
 def _window_label(window, cfg):
-    """Pure logic: what to draw as a window's label inside its preview
-    box — "[app_id] detail" (e.g. "[kitty] htop", "[kitty] cava" for
-    two windows that would otherwise both just show "kitty") when the
-    condensed title adds something real beyond the app's own name,
-    falling back to plain, unbracketed app_id otherwise (a window
-    whose title never adds anything, or a fresh terminal whose title
-    still just IS its app_id). Found live: two kitty windows here both
-    showed as plain "kitty" even though sidebar.py's own detail line
-    already condensed the SAME windows down to "htop"/"cava" — this
-    module just never used that logic (see title_condense.py's own
-    module docstring for where it lives now, shared between both).
-    Truncated to fit the box's own width same as any label here, by
-    the caller.
+    """Pure logic: what to draw as a window's label — "[app_id] detail"
+    (e.g. "[kitty] htop") when the condensed title adds something real
+    beyond the app's own name, else plain unbracketed app_id. See
+    title_condense.py's own module docstring for where that shared
+    condensing logic lives. Truncated to fit the box's width by the
+    caller.
     """
     detail = condense_title(window.app_id, window.title, cfg)
     if detail and detail.lower() != window.app_id.lower():
@@ -113,24 +103,14 @@ def _corner_label(window):
 
 def _corner_positions(win_y, win_x, win_h, win_w, label_len):
     """Pure logic: the four (row, col) positions to draw a label at,
-    one per corner of a box whose outline occupies rows
-    win_y..win_y+win_h-1 and columns win_x..win_x+win_w-1 — inset by
-    one cell from the border on every side, with the right-hand corners
-    right-aligning the label so its END sits flush against that inset,
-    not its start.
-
-    Repeating the SAME label in all four corners (not just top-left,
-    the only one this module used to draw originally) is deliberate:
-    preview boxes commonly overlap (see modules/preview.py's own
-    docstring — a real htop/cava pair did this live), and an
-    overlapping window's own border can hide whichever single corner a
-    label would otherwise be confined to. Asked for live.
-
-    Degenerate/tiny boxes naturally produce duplicate or off-box
-    positions here (e.g. top and bottom coinciding when win_h is
-    small) — harmless, the caller's own curses.error guard around
-    each addstr already handled exactly this for the single-corner
-    case and keeps handling it here.
+    one per corner of a box, inset by one cell from the border, with
+    the right-hand corners right-aligning the label's end against that
+    inset. Repeating the same label in all four corners (not just
+    top-left) is deliberate: preview boxes commonly overlap, and an
+    overlapping window's border can hide whichever single corner a
+    label would otherwise be confined to. Degenerate/tiny boxes can
+    produce duplicate or off-box positions — harmless, the caller's own
+    curses.error guard around each addstr already handles it.
     """
     top = win_y + 1
     bottom = win_y + win_h - 2

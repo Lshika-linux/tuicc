@@ -82,9 +82,9 @@ def get_ram_info(proc_path: str = PROC_PATH) -> dict | None:
     """{"total_kb", "available_kb", "used_kb", "percent"} — same
     MemAvailable-based calculation get_ram_percent() (below) uses, also
     exposing the underlying kB counts so a caller (sysmon.py's own
-    stats grid) can show real used/available amounts in GiB, not just
-    a bare percentage — found live, asked for ("RAM 70% je fajn ale
-    lepší by bylo U/A v GiB"). None under the same conditions
+    stats grid) can show real used/available amounts in GiB, not just a
+    bare percentage — see CLAUDE/NOTES/design-decisions.md
+    #sysmon-stats-grid for why. None under the same conditions
     get_ram_percent() already returns None for (can't read meminfo, or
     no MemTotal).
     """

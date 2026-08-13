@@ -95,8 +95,9 @@ def test_source_label_ignores_a_non_http_url():
 def test_source_label_prefers_identity_over_own_apps_own_domain():
     # Spotify tags tracks with an open.spotify.com URL — that's the
     # app's OWN web player, not "you're browsing this site" the way a
-    # real browser tab's URL is. Found live: showed "[open.spotify.com]"
-    # for the desktop app, which read as if Spotify were a browser tab.
+    # real browser tab's URL is. Without this, the desktop app would
+    # show "[open.spotify.com]", reading as if Spotify were a browser
+    # tab.
     player = _player(
         url="https://open.spotify.com/track/abc", desktop_entry="spotify", identity="Spotify",
     )
@@ -105,8 +106,8 @@ def test_source_label_prefers_identity_over_own_apps_own_domain():
 
 # ---------- _body_label ----------
 # draw() keeps the "[source]" prefix fixed/always-visible and only
-# marquee-scrolls this part — found live, scrolling the whole combined
-# string used to scroll the source tag out of view along with it.
+# marquee-scrolls this part — scrolling the whole combined string would
+# scroll the source tag out of view along with it.
 
 def test_body_label_never_includes_the_source_prefix():
     player = _player(artist="Artist", title="Title", desktop_entry="firefox", url="https://youtube.com/x")
@@ -119,9 +120,9 @@ def test_body_label_falls_back_to_identity():
 
 
 # ---------- has_scrolling_content ----------
-# main.py uses this to decide the redraw cadence — found live, the
-# marquee's own per-0.3s step math was correct but a 1s idle redraw
-# cadence turned a smooth 1-character slide into a visible jump.
+# main.py uses this to decide the redraw cadence — the marquee's own
+# per-0.3s step math is correct, but a 1s idle redraw cadence would
+# turn a smooth 1-character slide into a visible jump.
 
 def test_has_scrolling_content_true_for_a_long_body():
     player = _player(artist="A Really Very Long Artist Name Indeed", title="An Equally Long Title")
@@ -306,9 +307,9 @@ def test_player_section_is_always_exactly_three_rows():
 
 
 def test_player_section_respects_configured_visible_slots():
-    # Found live, asked for directly: "Počet viditelných řádků, visible
-    # slots a to same i pro media" — media_visible_slots is a real
-    # config.toml value, not the hardcoded windowed_list.py default.
+    # media_visible_slots is a real config.toml value, not the
+    # hardcoded windowed_list.py default — the visible-slots count is
+    # meant to be configurable everywhere it's used, media included.
     _reset_module_state()
     ctx = _ctx(snapshots={"media": [_player(bus_name=str(i)) for i in range(6)]})
     ctx.config.media_visible_slots = 4
@@ -453,8 +454,8 @@ def test_cava_row_level_scales_to_however_many_rows_are_available():
     # Same raw_height, more rows available -> proportionally lower
     # per-row level (the bar's total height in "levels" scales UP with
     # more rows, so any single row's own slice reads lower for the
-    # same raw signal) — found live design intent: a visualizer next to
-    # 4 sinks should look meaningfully taller/finer than next to 1.
+    # same raw signal) — a visualizer next to 4 sinks should look
+    # meaningfully taller/finer than next to 1.
     one_row = _cava_row_level(raw_height=ASCII_MAX_RANGE // 2, row_idx=0, num_rows=1)
     four_rows = _cava_row_level(raw_height=ASCII_MAX_RANGE // 2, row_idx=0, num_rows=4)
     assert one_row >= four_rows
@@ -465,8 +466,8 @@ def test_cava_row_level_num_rows_zero_is_zero_not_a_crash():
 
 
 def test_reconcile_clears_expanded_state_when_player_vanishes():
-    # Found live design concern: without this, is_expanded() would keep
-    # reporting True forever for a player that quit while expanded.
+    # Without this, is_expanded() would keep reporting True forever for
+    # a player that quit while expanded.
     _reset_module_state()
     media_module._expanded_bus_name = "org.mpris.MediaPlayer2.gone"
     _build_rows(_ctx(snapshots={"media": [_player(bus_name="org.mpris.MediaPlayer2.other")]}), box_h=20)

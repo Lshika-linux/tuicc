@@ -47,17 +47,10 @@ def _build_slots(ctx):
 def shift_workspace_id(current_id, total_workspaces, delta):
     """current_id shifted by delta, wrapping within 1..total_workspaces
     — used by main.py's "launcher" input_claim tier to let Up/Down move
-    the ambient-typing launch target (ctx.focus_id) while still typing,
-    without leaving typing mode (Left/Right are already spoken for —
-    they move which search RESULT is selected — and arrow keys never
-    collide with typed characters, since they're outside the printable
-    range handle_typing_key checks). current_id may be None (nothing
-    explicitly selected yet) or non-numeric (this codebase's sidebar
-    only ever shows numbered 1..total_workspaces slots to begin with,
-    see _build_slots above — a provider surfacing named workspaces
-    already doesn't fit this sidebar model) — falls back to slot 1
-    rather than raising, since this is UI convenience, not something
-    that should ever crash the render loop.
+    the ambient-typing launch target while still typing, without
+    leaving typing mode. current_id may be None or non-numeric — falls
+    back to slot 1 rather than raising, since this is UI convenience,
+    not something that should ever crash the render loop.
     """
     if total_workspaces <= 0:
         return current_id
@@ -85,14 +78,13 @@ def draw(stdscr, box, ctx, module_name):
 
         draw_box_outline(stdscr, item_y, x + 1, item_h, w - 2, border_color)
 
-        # Found live, asked for directly: launching an app from
-        # ANYWHERE (ambient typing — see VISION.md's own "start typing
-        # from anywhere" identity commitment) always targets ctx.focus_id,
-        # regardless of which module you were actually browsing when you
-        # started typing — which workspace that actually IS wasn't
-        # visible anywhere while typing. Label the one slot it's
-        # actually going to land on, live, for as long as typing_mode
-        # stays true.
+        # Launching an app from anywhere (ambient typing — see
+        # CLAUDE/VISION.md's "start typing from anywhere" identity
+        # commitment) always targets ctx.focus_id, regardless of which
+        # module you were actually browsing when you started typing —
+        # without this, which workspace that actually is wasn't visible
+        # anywhere while typing. Label the one slot it's actually going
+        # to land on, live, for as long as typing_mode stays true.
         is_launch_target = ctx.typing_mode and ctx.focus_id == ws_id
         if is_launch_target:
             label = f" {ws_id} - launching here "

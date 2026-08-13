@@ -25,15 +25,12 @@ from pathlib import Path
 CONFIG_PATH = Path.home() / ".config" / "tuicc" / "cava.conf"
 
 # cava's own ascii_max_range (not left at its 1000 default) — a fixed
-# value independent of how many terminal rows actually display it.
-# Found live: the visualizer moved from 2 fixed rows below Output to a
-# variable-height strip beside it (1 row per audio sink currently
-# connected, however many that is), so the row count isn't known until
-# render time — modules/media.py's own _cava_row_level() scales this
-# fixed 0..ASCII_MAX_RANGE range down to whatever 0..(num_rows*8)
-# resolution is actually available that frame. 64 gives room for up to
-# 8 rows of 8-level resolution each — more sinks than any realistic
-# setup, so this is headroom, not a tight fit.
+# value independent of how many terminal rows actually display it,
+# since the visualizer's row count (1 per connected audio sink) isn't
+# known until render time. modules/media.py's _cava_row_level() scales
+# this fixed 0..ASCII_MAX_RANGE range down to whatever 0..(num_rows*8)
+# resolution is available that frame. 64 gives headroom for up to 8
+# rows of 8-level resolution each — more sinks than any realistic setup.
 ASCII_MAX_RANGE = 64
 
 # method = pipewire, not left to cava's own auto-detection order — every
@@ -63,11 +60,10 @@ mono_option = average
 
 def parse_cava_line(line: str) -> list[int]:
     """Pure logic half of reading a frame — cava's raw/ascii output is
-    one semicolon-delimited line of bar-height integers per frame
-    (confirmed live against a real cava run before this module was
-    written). Split out from _read_loop so it's testable without a real
-    subprocess, same split mpris.py's own filter_mpris_names/
-    parse_metadata make for the D-Bus side.
+    one semicolon-delimited line of bar-height integers per frame,
+    confirmed against a real cava run. Split out from _read_loop so
+    it's testable without a real subprocess, same split mpris.py's own
+    filter_mpris_names/parse_metadata make for the D-Bus side.
     """
     return [int(v) for v in line.strip().split(";") if v]
 

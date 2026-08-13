@@ -3,7 +3,7 @@ sections of one box. Enter connects to the selected item — actual
 connect/disconnect happens on the StatusWorker's background thread
 (ctx.status), never blocking the render loop.
 
-VISION.md's R4 added two more input claims this module owns the
+CLAUDE/VISION.md's R4 added two more input claims this module owns the
 display state for, same "module-level state, main.py notices and sets
 input_claim on its behalf" idiom sessions.py's naming field
 established: a wifi passphrase prompt (is_entering_passphrase()'s own
@@ -21,9 +21,8 @@ this all rests on.
 ---
 IMPORTANT: draw() and nav_items() must agree on exactly which row
 each item lands on. Rather than computing row positions twice (and
-risking the two computations drifting apart, the way sidebar.py's
-item_y had to stay carefully in sync this morning), _build_rows()
-is the single source of truth both functions iterate over.
+risking the two computations drifting apart), _build_rows() is the
+single source of truth both functions iterate over.
 """
 
 import curses
@@ -42,22 +41,11 @@ SIGNAL_SEGMENTS = 5
 
 
 def _signal_bars(signal):
-    """5 discrete filled/empty segments, ALWAYS all 5 shown — found
-    live, asked for directly: the old 4-asterisk scheme only ever drew
-    the FILLED asterisks ("*   " for a weak signal), so there was no
-    way to tell at a glance "is this 1 out of 4, or is the rest of the
-    scale just not there?" without comparing against a strong row
-    elsewhere. Plain Unicode Geometric Shapes (▮ U+25AE / ▯ U+25AF),
-    not a Nerd Font icon — a Nerd Font icon was considered and
-    explicitly rejected building this feature: tuicc's own
-    established convention is symbols any reasonable monospace font
-    already has (●○⚠↻•), and a signal indicator specifically is exactly
-    the kind of thing that must never render as a broken tofu box.
-
-    None (backend can't report a signal) renders as all-empty — a
-    plain reasonable "nothing to show" rather than a distinct glyph,
-    keeping the "always 5 segments" visual consistency intact even for
-    that case.
+    """5 discrete filled/empty segments, always all 5 shown, plain
+    Unicode Geometric Shapes (▮/▯). See
+    CLAUDE/NOTES/design-decisions.md#connectivity-module-design for why.
+    None (backend can't report a signal) renders as all-empty, keeping
+    the "always 5 segments" visual consistency intact.
     """
     if signal is None:
         return "▯" * SIGNAL_SEGMENTS
@@ -96,40 +84,13 @@ def _selected_bt_index(devices, selected_id):
 
 
 def _build_rows(ctx, box_h):
-    """One row per line the box will render, in order. Each row is
-    ("wifi_header"|"bt_header", header_text) | ("error", message) |
-    ("empty_slot", label) | ("wifi_item", WifiNetwork) | ("bt_item",
-    BluetoothDevice). draw() renders every kind; nav_items() only
-    emits a NavItem for four of them — but both walk this exact same
-    list, so their row indices can never drift apart.
-
-    WiFi/Bluetooth each get a fixed-slot-plus-scroll window (same
-    windowed_list.py mechanic media.py's Now Playing/Output and
-    sysmon.py's window list already use, ctx.config.
-    connectivity_visible_slots shared between the two sections here,
-    same as media.py's own single value shared between ITS two
-    sections) instead of the original hand-rolled "cap WiFi at a fixed
-    row count, show a static '+N more' line, don't cap Bluetooth at
-    all" — found live: with no cap at all, a long Bluetooth pairing
-    history could push WiFi off-screen entirely, and the "+N more"
-    line had no way to actually reach those extra networks. box_h is
-    accepted (kept for signature symmetry with media.py's own
-    _build_rows) but unused here — windowed_list.section_rows always
-    returns exactly `visible_slots` rows per section regardless of the
-    box's real height; draw()/nav_items()'s own `row >= y + h - 1`
-    check is what actually clips against a too-small box.
-
-    "wifi_header"/"bt_header" (VISION.md's R4, revised after the
-    windowed-list follow-up) fold the section's Scan/Discover trigger
-    onto the SAME row as its own header — draw() paints the header
-    text left-aligned and the trigger right-aligned on that one row —
-    rather than each being its own row below the header, to give the
-    scrollable list one more row of height back. The trigger is still
-    its own distinct NavItem/target_kind (a second action on the
-    section, matching sysmon.py's CLOSE vs KILL idiom), just sharing a
-    row with non-interactive header text instead of a full row to
-    itself — the header itself was never separately navigable, so this
-    needs no same_row_neighbor-style multi-item-per-row handling.
+    """One row per line the box will render, in order — the single
+    source of truth draw() and nav_items() both walk, so their row
+    indices can never drift apart. WiFi/Bluetooth each get a
+    fixed-slot-plus-scroll window (windowed_list.py, shared with
+    media.py/sysmon.py) — see CLAUDE/NOTES/design-decisions.md
+    #connectivity-module-design. box_h is accepted for signature
+    symmetry with media.py's _build_rows but unused here.
     """
     wifi_networks = ctx.wifi_networks
     bluetooth_devices = ctx.bluetooth_devices
@@ -159,15 +120,12 @@ def _build_rows(ctx, box_h):
 _entering_passphrase_ssid = None  # str | None — set for the whole flow: typing, waiting, AND showing an error
 _passphrase_input = ""
 # True from the moment the typed passphrase is actually sent to iwd
-# until the real connect result (success/failure) is known — found
-# live, reported directly ("tuicc to prostě zahodí... gaslightuje tě
-# že se ani nic nedělo"): the ORIGINAL version closed this overlay the
-# instant Enter was pressed, before iwd had even tried the password,
-# so a wrong passphrase produced total silence — the connect attempt
-# kept running in the background (StatusWorker.is_pending("wifi", ssid)
-# stays True for its whole duration, from the very first Enter on the
-# network row, through the whole agent round-trip, to the final
-# success/error) with nothing on screen reflecting it.
+# until the real connect result (success/failure) is known — see
+# CLAUDE/NOTES/design-decisions.md#connectivity-module-design for why
+# this must stay open rather than close the instant Enter is pressed.
+# StatusWorker.is_pending("wifi", ssid) stays True for the whole
+# duration, from the first Enter on the network row through the agent
+# round-trip to the final success/error.
 _passphrase_waiting = False
 _passphrase_error = None  # str | None — the most recent failed attempt's real error message
 
@@ -431,8 +389,8 @@ def draw(stdscr, box, ctx, module_name):
             # StatusWorker.is_pending(), which only reflects the brief
             # window the fire-and-forget scan()/start_discovery() CALL
             # itself takes, nowhere near the real scan/discovery
-            # duration. Found live, reported directly: the label used
-            # to only ever flicker.
+            # duration. See CLAUDE/NOTES/design-decisions.md
+            # #connectivity-module-design.
             scanning_domain = "wifi_scanning" if is_wifi else "bluetooth_discovering"
             scanning = ctx.status is not None and bool(ctx.status.get(scanning_domain))
             if scanning:
@@ -478,10 +436,8 @@ def draw(stdscr, box, ctx, module_name):
             network = payload
             is_selected = f"connectivity:wifi:{network.ssid}" == ctx.selected_id
             bars = _signal_bars(network.signal)
-            # "[new] " prefix, not a " (new)" suffix \u2014 found live, asked
-            # for: reads as a real label attached to the name ("this
-            # row is new"), not an afterthought trailing off the end
-            # where a long SSID could push it out of view entirely.
+            # "[new] " prefix, not a " (new)" suffix \u2014 see
+            # CLAUDE/NOTES/design-decisions.md#connectivity-module-design.
             display_name = ("[new] " if not network.known else "") + network.ssid
             name_width = max(inner_w - 3 - len(bars), 0)
             name = display_name[:name_width].ljust(name_width)
@@ -500,11 +456,8 @@ def draw(stdscr, box, ctx, module_name):
                     attr = curses.A_BOLD if is_selected else curses.A_DIM
 
             # The signal bars get their OWN color, independent of the
-            # name's selection/dim styling above — found live, asked
-            # for: accent for the currently-connected network, plain
-            # (never dimmed) text color for every other row, so signal
-            # strength stays legible to scan at a glance regardless of
-            # which row happens to be selected right now.
+            # name's selection/dim styling above — see
+            # CLAUDE/NOTES/design-decisions.md#connectivity-module-design.
             name_part = f" {name} "
             bars_color = theme.get("accent", 0) if network.connected else theme.get("text", 0)
             try:
@@ -547,11 +500,11 @@ def draw(stdscr, box, ctx, module_name):
 # Same mechanism sysmon.py's diagnostics breakdown uses (see its own
 # _diagnostics_preview_text) — a selected NavItem's preview_text
 # replaces preview.py's normal window-preview content while that item
-# is selected. Found live, asked for: the row itself only has room for
-# what's needed to scan the list at a glance (signal bars, connected
-# dot, [new] marker); this is everything else the backends now fetch
-# for free (see model.py's own field-by-field comments for which of
-# these cost an extra D-Bus round trip and which don't).
+# is selected. The row itself only has room for what's needed to scan
+# the list at a glance (signal bars, connected dot, [new] marker); this
+# is everything else the backends fetch for free (see model.py's own
+# field-by-field comments for which of these cost an extra D-Bus round
+# trip and which don't).
 
 _WIFI_SECURITY_LABELS = {
     "open": "Open (no security)",
@@ -597,17 +550,13 @@ def _yes_no(value):
 
 def _action_progress_line(status, domain_name, key, connected, theme):
     """One extra preview line reflecting a live connect/disconnect
-    attempt for THIS specific item — found live, asked for directly:
-    pressing Enter on a network/device gave no feedback beyond the
-    row's own blink, and critically no way to tell WHY it didn't work
-    if it failed. "Connecting…"/"Disconnecting…" while the action is
-    in flight, or the real failure message once it's done, via
-    get_action_error_for() rather than get_action_error() — see
-    status_worker.py's own docstring for why a plain per-domain error
-    isn't enough here: many networks/devices share one "wifi"/
-    "bluetooth" domain, so without the per-item key an old network's
-    stale error would bleed onto whatever's selected now. None when
-    there's nothing currently worth reporting.
+    attempt for THIS specific item — "Connecting…"/"Disconnecting…"
+    while in flight, or the real failure message once it's done, via
+    get_action_error_for() rather than get_action_error() (see
+    status_worker.py's own docstring for why: many networks/devices
+    share one "wifi"/"bluetooth" domain, so a plain per-domain error
+    would let an old network's stale error bleed onto whatever's
+    selected now). None when there's nothing currently worth reporting.
     """
     if status is None:
         return None
@@ -621,13 +570,12 @@ def _action_progress_line(status, domain_name, key, connected, theme):
 
 def _wifi_scan_preview_text(networks, error, theme):
     """The hover-preview for the "Scan" row itself — the FULL list of
-    currently available networks at a glance, not just the
-    connectivity_visible_slots window the box's own scrollable section
-    shows. Found live, asked for directly. Same None-vs-[] error
-    handling as _build_rows' own — `networks` is the raw
-    ctx.wifi_networks (may be None), not the "or []"-normalized local
-    nav_items() otherwise uses for iteration, so a real poll failure
-    still shows as an error here too, not a misleading "no networks".
+    currently available networks, not just the
+    connectivity_visible_slots window the box's scrollable section
+    shows. Same None-vs-[] error handling as _build_rows' own —
+    `networks` is the raw ctx.wifi_networks (may be None), not the
+    "or []"-normalized local nav_items() otherwise uses, so a real poll
+    failure still shows as an error here too, not "no networks".
     """
     if networks is None and error:
         return [(f"⚠ {error}", theme.get("urgent", 0))]

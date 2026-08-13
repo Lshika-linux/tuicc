@@ -11,7 +11,7 @@ committed and pushed, so a `git pull` on any other machine picks them
 up and can act on them.
 
 **If you are that i3-hardware session:** work through
-`CLAUDE.md`'s "Expected behavior — verification checklist" section
+`CLAUDE/GUIDE.md`'s "Expected behavior — verification checklist" section
 item by item. For each item, actually do the thing described (spawn
 apps, save/load sessions, trigger confirm dialogs, watch a live
 `get_tree` poll) — don't just read the code and reason about whether
@@ -33,7 +33,7 @@ doc; stale entries are still useful history, not clutter):
 **Machine/setup:** i3 version, distro, provider config relevant details
 (fullscreen_only value, self_app_id, terminal used, etc.)
 
-**Checklist items covered:** which subsections of CLAUDE.md's
+**Checklist items covered:** which subsections of CLAUDE/GUIDE.md's
 verification checklist you actually exercised this session — be
 specific, "session restore" isn't as useful as "session restore with
 5 windows: firefox, X, Y, Z, W".
@@ -41,7 +41,7 @@ specific, "session restore" isn't as useful as "session restore with
 **Findings:**
 - Item — PASS/FAIL/PARTIAL — concrete detail (what you did, what
   happened, timestamps/log excerpts if it's a timing-sensitive bug,
-  reproducibility — did you try it 3x like CLAUDE.md asks?).
+  reproducibility — did you try it 3x like CLAUDE/GUIDE.md asks?).
 
 **Fixed this session (commit refs):** — anything you diagnosed AND
 fixed AND tested, with the commit hash(es).
@@ -54,6 +54,6 @@ doesn't have to re-derive your reasoning from scratch.
 
 ---
 
-*(No entries yet — this file was created alongside CLAUDE.md's
+*(No entries yet — this file was created alongside CLAUDE/GUIDE.md's
 verification checklist. The first i3-hardware session to run through
 it should add the first entry above this line.)*

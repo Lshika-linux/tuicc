@@ -3,11 +3,10 @@ wifi passphrase entry and bluetooth pairing confirm. Module-level
 state, no I/O, same testability class as sessions.py's own naming
 quartet.
 
-Both flows are a small state machine now (typing -> waiting -> error-
-or-close), not a single-shot "answer then close" — found live, reported
-directly: the original version closed the overlay the instant an
-answer was submitted, before the real connect/pair result was even
-known, so a wrong wifi passphrase produced total silence. See
+Both flows are a small state machine (typing -> waiting -> error-or-
+close), not a single-shot "answer then close": closing the overlay the
+instant an answer was submitted, before the real connect/pair result
+was known, made a wrong wifi passphrase produce total silence. See
 mark_passphrase_submitted()/set_passphrase_error()'s own docstrings
 (and the equivalent pairing functions) for the full reasoning.
 """

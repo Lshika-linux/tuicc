@@ -1,49 +1,15 @@
 """Media module: now-playing (one row per detected MPRIS player) +
 transport controls + output switching (reuses audio/'s
-set_default_sink — "music plays, route it to headphones" is one flow,
-volume itself stays modules/control.py's concern, a system property,
-not a player one).
+set_default_sink — volume itself stays modules/control.py's concern,
+a system property, not a player one).
 
 Now-playing rows use the same two-level browsing/expanded model
-sessions.py established (see that module's own docstring for the full
-reasoning) — found live: three always-active transport
-NavItems per row, positioned near the box's right edge, interacted
-badly with `tab_order`'s default "columns_first" ordering (sorts by
-x first) — a row visually near the top of the box could still land
-navigationally near the bottom of the whole app's Tab sequence, since
-their x was large even though their y was small. Collapsing to ONE
-NavItem per row at level 1 (like every other row-based module) sidesteps
-that entirely; the three actions only become separate NavItems once
-that specific player is expanded (Enter), same trade sessions.py makes.
-
-The player list is genuinely dynamic (a player can quit, appear, or
-reorder between polls) — `_expanded_bus_name` tracks the expanded
-player by its stable D-Bus identity, not a list position, and self-
-corrects (_reconcile_expanded_state) if that player disappears while
-expanded, rather than leaving a dangling reference is_expanded() would
-keep reporting forever.
-
-**Fixed-slot display, added after a live design discussion with the
-user about box-size predictability**: both sections (Now Playing's
-players, Output's sinks) always render exactly `VISIBLE_SLOTS` (3) rows
-— never more, never fewer — regardless of how many players/sinks
-actually exist right now. Fewer than 3 real items: the remaining slots
-show a "[empty - player N]"/"[empty - output N]" placeholder (N is the
-SLOT's own position, not a count of what's missing). More than 3:
-`_window_start` computes a scroll window that keeps whatever's
-currently selected (or expanded) in view, recomputed fresh from
-`ctx.selected_id` every call rather than a persisted scroll offset —
-same "derive from what's true right now" idiom `_reconcile_expanded_
-state` already uses, so it can't drift stale. This is the first module
-to get this treatment; the underlying tension (box size is a static
-user-configured ratio, content amount is a live, uncontrolled runtime
-quantity) applies to other modules too, but the fix is landing here
-first, not as a shared/extracted mechanism yet — connectivity.py is the
-next likely candidate (wifi/bluetooth lists have the same "count is
-outside the user's control" shape), control.py/power_menu.py/
-sessions.py deliberately do NOT need this (their content count is a
-config.toml choice, not runtime-variable — see VISION.md/project
-history for that distinction if this gets generalized later).
+sessions.py established; both sections render a fixed VISIBLE_SLOTS
+window regardless of how much real content exists. See
+CLAUDE/NOTES/design-decisions.md#media-module-layout for why (tab_order
+interaction, stale-expansion handling, fixed-slot rationale) and
+#media-cava-and-source-label for the inline visualizer placement and
+_source_label()'s domain/desktop_entry/identity priority.
 
 ---
 IMPORTANT: Each module owns both how it draws itself and where its own
@@ -65,15 +31,10 @@ from tuicc.windowed_list import header_with_count as _header_with_count
 MARQUEE_STEP_SECONDS = 0.3
 
 # Redraw cadence while the cava visualizer is actively streaming —
-# matched to cava.conf's own `framerate = 30` (see cava.py), not just
-# "faster than the marquee tier": found live, redrawing slower than
-# cava actually PRODUCES new frames (the original 0.1s/10fps here vs.
-# cava's 30fps) meant only every 3rd frame ever got drawn, reading as
-# visibly choppy even though the reader thread itself was keeping up
-# fine — the bottleneck was the redraw cadence, not the data. Same
-# order of magnitude as the existing 50ms "urgent" tier already proven
-# fine in this exact loop (spawn/move resolution), so the extra redraw
-# frequency isn't a new category of risk.
+# matched to cava.conf's own `framerate = 30` (see cava.py). Redrawing
+# slower than cava produces frames reads as visibly choppy even when
+# the reader thread itself keeps up fine, since a still-fresh frame
+# just sits unread until the next redraw.
 CAVA_REDRAW_SECONDS = 1 / 30
 
 # Index 0 = blank (level 0), index 8 = full block (level 8) — 9 entries
@@ -83,35 +44,21 @@ CAVA_REDRAW_SECONDS = 1 / 30
 _CAVA_BLOCKS = " ▁▂▃▄▅▆▇█"
 
 # Drawn inline to the right of the Output section's own rows, not as
-# separate rows below it — found live, asked for after the first cut
-# (2 fixed full-width rows under everything) didn't read as
-# intentional: the goal was filling the same empty space to the right
-# of Output's sink names that "<< ▶ >>" already fills to the right of
-# Now Playing's rows, at Output's own height (however many sinks that
-# is), not a separate decorative block. CAVA_VIS_WIDTH matches
-# CavaReader's own default bar count 1:1 (see cava.py) — no
-# clip/pad mismatch by construction. 24, not the original 8 — found
-# live, asked to stretch it out further, closer to the sink name text
-# rather than staying a narrow strip.
+# separate rows below it — see CLAUDE/NOTES/design-decisions.md
+# #media-cava-and-source-label. Matches CavaReader's own default bar
+# count 1:1 (see cava.py) — no clip/pad mismatch by construction.
 CAVA_VIS_WIDTH = 24
 CAVA_RIGHT_GAP = 1  # same "don't render flush against the border" margin Now Playing's controls use
 
 
 def _cava_row_level(raw_height: int, row_idx: int, num_rows: int) -> int:
-    """One bar's height (0..ASCII_MAX_RANGE, cava's own fixed range) as
-    seen from just ONE physical output row's point of view. The
-    visualizer's total height is dynamic — one row per currently-
-    connected audio sink, not a fixed count — so this scales cava's
-    fixed range down to whatever 0..(num_rows*8) resolution is actually
-    available this frame, then returns just this row's own 0..8 slice.
-
-    Thin wrapper over render_utils.eighth_block_level, which now owns
-    the actual math — pulled out into a shared helper once modules/
-    bars.py needed the exact same row-slicing technique for its own
-    vertical VOL/BRI/BAT fills (see that function's own docstring).
-    Kept here (not inlined at the one call site below) so the existing
-    cava-specific tests keep reading `_cava_row_level` as this module's
-    own name, unchanged.
+    """One bar's height (0..ASCII_MAX_RANGE) as seen from just ONE
+    physical output row — the visualizer's total height is dynamic (one
+    row per connected sink), so this scales cava's fixed range down to
+    whatever 0..(num_rows*8) resolution is available this frame. Thin
+    wrapper over render_utils.eighth_block_level (shared with
+    modules/bars.py); kept here so existing cava-specific tests keep
+    reading this name unchanged.
     """
     return eighth_block_level(raw_height, ASCII_MAX_RANGE, row_idx, num_rows)
 
@@ -129,25 +76,11 @@ def _pending_blink_style(theme):
 
 
 def _source_label(player) -> str:
-    """The short "where is this playing from" tag — found live: a browser's current domain
-    (e.g. "youtube.com") when a real URL is available (MPRIS's own
-    xesam:url — already fetched for exactly this), otherwise the app's
-    own DesktopEntry (shorter/more uniform than Identity, e.g.
-    "firefox" not "Mozilla firefox"), or Identity itself as the last
-    resort if even DesktopEntry is missing.
-
-    One exception, found live testing with Spotify: native apps can
-    tag their own metadata with a URL pointing at their OWN web
-    player (Spotify's xesam:url is an open.spotify.com track link) —
-    that's not "you're browsing this site" the way a real browser
-    tab's URL is, so showing "[open.spotify.com]" for the desktop app
-    is misleading. Detected by the app's own desktop_entry showing up
-    inside the domain (desktop_entry="spotify" in "open.spotify.com");
-    when that matches, prefer Identity over the domain — and over
-    DesktopEntry too, since Identity is usually the nicer-cased name
-    ("Spotify" vs "spotify") in exactly this case, unlike Firefox's
-    "Mozilla firefox" which is why the no-URL fallback below still
-    prefers DesktopEntry first.
+    """The short "where is this playing from" tag: a browser's current
+    domain (e.g. "youtube.com") when a real URL is available, else the
+    app's DesktopEntry, else Identity as the last resort. See
+    CLAUDE/NOTES/design-decisions.md#media-cava-and-source-label for the
+    priority order's reasoning and the Spotify-own-web-player exception.
     """
     if player.url:
         netloc = urlparse(player.url).netloc
@@ -163,10 +96,9 @@ def _source_label(player) -> str:
 def _body_label(player) -> str:
     """The artist/title part alone, without the "[source]" prefix —
     split out from _player_label so draw() can keep the source prefix
-    fixed/always-visible and marquee-scroll ONLY this part (found live:
-    scrolling the whole "[domain] artist - title" string as one blob
-    meant the source tag itself would scroll out of view along with
-    everything else, exactly the opposite of "always visible").
+    fixed/always-visible and marquee-scroll only this part. Scrolling
+    the whole "[domain] artist - title" string as one blob would scroll
+    the source tag out of view too, defeating "always visible".
     """
     if player.artist and player.title:
         return f"{player.artist} - {player.title}"
@@ -212,17 +144,15 @@ def marquee_text(text: str, width: int, now: float) -> str:
 
 
 # A rough "this body text probably won't fit a typical box, so it's
-# probably marquee-scrolling somewhere" length threshold — main.py
-# uses this to decide whether to redraw at MARQUEE_STEP_SECONDS
-# cadence instead of the idle 1s default, found live: without it, the
-# marquee's own per-0.3s-step math was correct, but the render loop
-# only actually redrew once a second while idle, so what should have
-# been a smooth one-character slide visibly jumped ~3 characters at a
-# time instead. Deliberately NOT box-width-aware — main.py's timeout
-# decision happens before boxes are computed for this frame, so an
-# exact fit check isn't available yet; a conservative length guess
-# costs nothing worse than a few unnecessary 0.3s redraws for a body
-# that would have fit anyway.
+# probably marquee-scrolling somewhere" length threshold — main.py uses
+# this to decide whether to redraw at MARQUEE_STEP_SECONDS cadence
+# instead of the idle 1s default (without it, marquee_text()'s own
+# per-0.3s-step math is correct but never actually gets redrawn that
+# often). Deliberately not box-width-aware: main.py's timeout decision
+# happens before boxes are computed for this frame, so an exact fit
+# check isn't available yet; a conservative length guess costs nothing
+# worse than a few unnecessary 0.3s redraws for a body that would have
+# fit anyway.
 MARQUEE_LENGTH_THRESHOLD = 18
 
 
@@ -267,15 +197,11 @@ def _reconcile_expanded_state(players: list) -> None:
 
 
 # Each section (Now Playing's players, Output's sinks) always renders
-# exactly this many rows — never more (a scroll window kicks in, see
-# windowed_list.window_start), never fewer (unfilled slots show an
-# "[empty - ...]" placeholder, see windowed_list.section_rows). Found
-# live, asked for: the box's own content height should never silently
-# vary just because more or fewer players/sinks happen to exist right
-# now — same "no silent truncation, no surprise reflow" principle
-# this module settled on first, before generalizing into windowed_list.py (now shared
-# with modules/sysmon.py's own window list, see that module's own
-# docstring).
+# exactly VISIBLE_SLOTS rows — never more (a scroll window kicks in,
+# see windowed_list.window_start), never fewer (unfilled slots show an
+# "[empty - ...]" placeholder, see windowed_list.section_rows). See
+# CLAUDE/NOTES/design-decisions.md#media-module-layout; the mechanism
+# now lives in windowed_list.py, shared with modules/sysmon.py.
 
 
 def _selected_player_index(players: list, selected_id: str | None, expanded_bus_name: str | None) -> int | None:
@@ -354,27 +280,15 @@ def _build_rows(ctx, box_h):
 def _draw_cava_row(stdscr, row, x, w, theme, output_row_index, num_output_rows, cava_frame):
     """One row's worth of the cava visualizer, at the box's own right
     edge — shared by the "output_item" AND "empty_slot" (output side)
-    branches below, since the visualizer now always spans the full
-    VISIBLE_SLOTS window (see draw()'s own num_output_rows setup),
-    not just however many real sinks currently exist. Found live,
-    asked for: with fewer than VISIBLE_SLOTS real sinks, the idle
-    baseline used to sit on whatever the last REAL sink's row happened
-    to be (output1/2/3 depending on sink count) instead of always the
-    fixed bottom slot — inconsistent with the rest of this module's own
-    "fixed 3-slot footprint regardless of content" design.
+    branches below, since the visualizer always spans the full
+    VISIBLE_SLOTS window, not however many real sinks currently exist.
+    See CLAUDE/NOTES/design-decisions.md#media-cava-and-source-label.
     """
     vis_x = x + w - 1 - CAVA_RIGHT_GAP - CAVA_VIS_WIDTH
     if cava_frame is None:
-        # Idle (nothing playing, cava not started) or just-started (no
-        # frame parsed yet) — a flat baseline only on the BOTTOMMOST
-        # row of the fixed VISIBLE_SLOTS window, same "signals a
-        # visualizer lives here without a jarring pop" reasoning as the
-        # row_idx math below, applied to just the one row a single flat
-        # line reads best on. Plain "text" color, NOT also A_DIM —
-        # found live, asked for after the original dim+thinnest-glyph
-        # combination turned out too subtle to actually see against a
-        # real theme; the glyph's own short 1/8 height already reads as
-        # "quiet", it doesn't need the color dimmed on top too.
+        # Idle/just-started: a flat baseline only on the bottommost row
+        # of the fixed VISIBLE_SLOTS window. Plain "text" color, not
+        # also dimmed (see #media-cava-and-source-label).
         if output_row_index == num_output_rows - 1:
             try:
                 stdscr.addstr(row, vis_x, _CAVA_BLOCKS[1] * CAVA_VIS_WIDTH, theme.get("text", 0))
@@ -385,10 +299,6 @@ def _draw_cava_row(stdscr, row, x, w, theme, output_row_index, num_output_rows, 
             _CAVA_BLOCKS[_cava_row_level(raw_height, output_row_index, num_output_rows)]
             for raw_height in cava_frame[:CAVA_VIS_WIDTH]
         ]
-        # theme's "text" color (plain), not "accent" — found live, asked
-        # for after the accent color read as too visually loud for a
-        # passive decoration next to the Output list's own quieter
-        # dot/name styling.
         try:
             stdscr.addstr(row, vis_x, "".join(chars), theme.get("text", 0))
         except curses.error:
@@ -406,25 +316,16 @@ def draw(stdscr, box, ctx, module_name):
     inner_w = max(w - 4, 0)
     now = time.time()
 
-    # Cava state, computed once per draw() call (not per-row) — every
-    # output-section row below reads from these same values, and
-    # num_output_rows in particular has to be known BEFORE any of them
-    # draw, since row_idx=0 is the topmost row and _cava_row_level()
-    # needs the total row count to know which 0..8 slice of each bar
-    # this particular row is responsible for.
+    # Cava state, computed once per draw() call (not per-row): every
+    # output-section row reads these same values, and num_output_rows
+    # has to be known before any of them draw since _cava_row_level()
+    # needs the total row count to slice each bar correctly.
     #
-    # num_output_rows is ALWAYS VISIBLE_SLOTS (not however many real
-    # sinks exist) whenever there's at least one real sink to justify
-    # showing a visualizer at all — found live, asked for: with fewer
-    # real sinks than VISIBLE_SLOTS, the idle baseline used to sit on
-    # whatever the last REAL sink's own row happened to be (varying
-    # with sink count) instead of always the fixed bottom slot,
-    # inconsistent with the rest of this module's "fixed 3-slot
-    # footprint regardless of content" design (see VISIBLE_SLOTS' own
-    # docstring). has_cava (not just "ctx.cava is not None") also
-    # requires real sink data to exist — a visualizer for literally no
-    # audio output at all would be nonsensical, distinct from "fewer
-    # than 3 outputs, still show the full 3-slot visualizer".
+    # num_output_rows is always VISIBLE_SLOTS (not however many real
+    # sinks exist) whenever there's at least one real sink — see
+    # CLAUDE/NOTES/design-decisions.md#media-cava-and-source-label for
+    # why. has_cava also requires real sink data: a visualizer for no
+    # audio output at all would be nonsensical.
     sinks_for_cava = ctx.status.get("audio") if ctx.status is not None else None
     has_cava = ctx.cava is not None and bool(sinks_for_cava)
     num_output_rows = ctx.config.media_visible_slots if has_cava else 0
@@ -456,14 +357,11 @@ def draw(stdscr, box, ctx, module_name):
                 pass
 
         elif kind == "empty_slot":
-            # A specific unfilled SLOT within a fixed-VISIBLE_SLOTS
+            # A specific unfilled slot within a fixed-VISIBLE_SLOTS
             # section (see _section_rows) — same dim styling as "empty"
-            # above, just per-slot instead of one line for the whole
-            # section. An OUTPUT-side empty slot still gets its share of
-            # the cava visualizer (see has_cava's own docstring above) —
-            # reserve the same width for it the real "output_item" rows
-            # already do, so the placeholder text doesn't run into the
-            # bars.
+            # above, just per-slot. An output-side empty slot still
+            # gets its share of the cava visualizer, so it reserves the
+            # same width real "output_item" rows do.
             is_output_slot = "output" in payload
             reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if (is_output_slot and has_cava) else 0
             try:
@@ -477,16 +375,9 @@ def draw(stdscr, box, ctx, module_name):
         elif kind == "player":
             player = payload
             is_this_expanded = player.bus_name == _expanded_bus_name
-            # Once ANYTHING is expanded, every row's own info text (dot
-            # + label) goes passive/dimmed — including the expanded
-            # row's own, not just its siblings. Found live, corrected
-            # after an initial attempt highlighted the expanded row's
-            # text instead: "only what's actually controlled should
-            # light up" — once you're inside a row, its own name isn't
-            # what you're navigating anymore, its <</PAUSE/>> controls
-            # are (see their own selected-vs-dimmed treatment below,
-            # same idea one level down: only the ONE truly-focused
-            # control glyph stays bright, not all three).
+            # Once anything is expanded, every row's own info text (dot
+            # + label) goes dimmed, including the expanded row's own —
+            # see CLAUDE/NOTES/design-decisions.md#media-module-layout.
             something_expanded = _expanded_bus_name is not None
             pending = ctx.status is not None and ctx.status.is_pending("media", player.bus_name)
             dot = "●" if player.playback_status == "Playing" else "○"
@@ -502,28 +393,20 @@ def draw(stdscr, box, ctx, module_name):
                 text_color = theme.get("selected", 0) if is_row_selected else theme.get("text", 0)
                 attr = curses.A_BOLD if is_row_selected else 0
 
-            # "<< ▶ >>" — 7 columns for the cluster itself: "<<" (2) +
-            # gap (1) + play/pause (1) + gap (1) + ">>" (2). Both
-            # internal gaps are exactly 1 column — found live, asked
-            # for after the play/pause glyph shrank to a single
-            # character, which left an uneven 1-vs-2-column gap on
-            # either side of it. right_edge_gap is a SEPARATE 1-column
-            # margin between the whole cluster and the box's own right
-            # border — without it the cluster rendered flush against
-            # the border, found live to look glued-on rather than
-            # deliberately placed.
+            # "◀◀ ▶ ▶▶" — 7 columns for the cluster: "◀◀" (2) + gap (1) +
+            # play/pause (1) + gap (1) + "▶▶" (2), both internal gaps
+            # exactly 1 column so the single-character play/pause glyph
+            # doesn't read as uneven against the two-character arrows.
+            # right_edge_gap is a separate 1-column margin so the
+            # cluster doesn't render flush against the border.
             controls_w = 7
             right_edge_gap = 1
             glyph_x = x + w - 1 - right_edge_gap - controls_w
             # label_gap: same idea, 1 column between the label text and
-            # the start of the cluster — computed FROM glyph_x directly
-            # (not a separately-derived formula) so this can't drift out
-            # of sync with where the cluster actually gets drawn below.
+            # the cluster — computed from glyph_x directly so it can't
+            # drift out of sync with where the cluster is actually drawn.
             label_gap = 1
             label_start_x = x + 4
-            # -2: one column for the dot itself, one more for the gap
-            # between the dot and the label text — found live, the dot
-            # and "[" were rendering flush against each other.
             available_w = max(glyph_x - label_gap - label_start_x, 0)
             body = _body_label(player)
             if body == player.identity and not player.title:
@@ -540,26 +423,14 @@ def draw(stdscr, box, ctx, module_name):
             except curses.error:
                 pass
 
-            # Unicode, but from the SAME block as the ●/○ status dots
-            # already proven safe on the user's terminal (U+25A0-25FF,
-            # "Geometric Shapes") — not the "Miscellaneous Technical"
-            # block ("⏮"/"⏸"/"⏭") tried first, which rendered
-            # double-width via emoji-font fallback and broke the row's
-            # column alignment (curses' addstr always advances by
-            # exactly 1 column per Python character, regardless of the
-            # glyph's actual drawn width — a mismatch that specific
-            # block is prone to triggering, found live). Fonts
-            # typically ship a whole Unicode block's coverage at once
-            # rather than cherry-picking code points, so a font that
-            # already renders ●/○ narrow is a good bet for ▶/◀/▮ too —
-            # still a bet, not a guarantee, hence asking for live
-            # confirmation rather than assuming. Play/pause are both
-            # exactly ONE character each ("▶"/"■") — found live, no
-            # padding split (space-left vs space-right) ever looks
-            # truly centered when a 1-char glyph sits next to a 2-char
-            # one; the actual fix is making both states the SAME
-            # length, not finding a cleverer split. "<<"/">>" don't
-            # need this treatment since they never change state.
+            # Unicode from the same block as the ●/○ status dots
+            # (U+25A0-25FF, "Geometric Shapes"), not "Miscellaneous
+            # Technical" (⏮/⏸/⏭) — see
+            # CLAUDE/NOTES/design-decisions.md#media-module-layout for
+            # why. Play/pause are both exactly one character ("▶"/"■")
+            # so no padding split ever needs to look centered between a
+            # 1-char and 2-char glyph. "◀◀"/"▶▶" don't need this
+            # treatment since they never change state.
             play_glyph = "■" if player.playback_status == "Playing" else "▶"
             prev_selected = f"media:{player.bus_name}:prev" == ctx.selected_id
             play_selected = f"media:{player.bus_name}:playpause" == ctx.selected_id
@@ -574,11 +445,9 @@ def draw(stdscr, box, ctx, module_name):
                     # in this whole row allowed to actually stand out.
                     color, attr = theme.get("selected", 0), curses.A_BOLD
                 else:
-                    # Plain text color, not dimmed — found live, asked
-                    # for specifically for the glyph cluster: the two
-                    # non-focused controls on the expanded row should
-                    # still read clearly, unlike the row's own label
-                    # text (which does stay dimmed — see above).
+                    # Plain text color, not dimmed: the two non-focused
+                    # controls on the expanded row should still read
+                    # clearly, unlike the row's own label text above.
                     color, attr = theme.get("text", 0), 0
                 try:
                     stdscr.addstr(row, gx, glyph, color | attr)

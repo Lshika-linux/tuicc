@@ -232,19 +232,13 @@ def handle_color_input_key(key: int, text: str) -> tuple[str, bool]:
 
 
 def draw_color_mockup(stdscr, box, theme_pairs):
-    """A small static mockup of tuicc's own UI — one inactive module
-    box (border) next to one active module box (border_selected)
-    containing sample text/selected/warning/urgent lines, plus an
-    accent-colored floating-window rectangle inside it, and a
-    background-colored strip along the bottom — so editing a role on
-    the roles list is visible in context immediately, not just as an
-    abstract role name changing in isolation.
-
-    Every piece is drawn in its own try/except, not one shared around
-    the whole function — a narrow terminal clipping one element (e.g.
-    the inner "win" box) must not also blank out everything drawn
-    before it; a single early curses.error used to abort the rest of
-    the mockup silently, which is worse than a slightly cramped result.
+    """A small static mockup of tuicc's own UI — inactive + active
+    module boxes with sample text/selected/warning/urgent lines, an
+    accent floating-window rectangle, and a background strip — so
+    editing a role is visible in context immediately, not just as an
+    abstract name change. Every piece has its own try/except: a narrow
+    terminal clipping one element must not blank out everything drawn
+    before it.
     """
     x, y, w, h = box
 

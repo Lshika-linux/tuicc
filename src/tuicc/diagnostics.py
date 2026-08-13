@@ -46,17 +46,13 @@ def parse_failed_units_json(text: str) -> list[str]:
 
 def parse_journal_lines(text: str) -> list[dict]:
     """One {"message", "identifier", "priority", "timestamp"} dict per
-    journalctl -o json line (journalctl emits many more per-line
-    fields; only what this module actually uses is kept). A single
-    malformed line is skipped, not fatal — a truncated/interleaved
-    line at the tail of a live, still-growing journal is a normal
-    streaming race, unlike sensors.py's own single-JSON-document
-    output, which has no such race and so DOES raise on malformed
-    input. `identifier` falls back through SYSLOG_IDENTIFIER ->
-    _COMM -> _SYSTEMD_UNIT -> "unknown", whichever the specific log
-    source actually populated (not every subsystem sets all three,
-    confirmed against a real live journal — bluetoothd's
-    own lines set SYSLOG_IDENTIFIER, kernel lines don't).
+    journalctl -o json line. A single malformed line is skipped, not
+    fatal — a truncated/interleaved line at the tail of a live,
+    still-growing journal is a normal streaming race (unlike
+    sensors.py's single-JSON-document output, which has no such race
+    and does raise). `identifier` falls back through
+    SYSLOG_IDENTIFIER -> _COMM -> _SYSTEMD_UNIT -> "unknown", whichever
+    the log source actually populated.
     """
     entries = []
     for line in text.splitlines():
@@ -92,15 +88,14 @@ def is_oom_message(message: str) -> bool:
 
 def dedupe_general_errors(entries: list[dict]) -> list[dict]:
     """Collapses repeated (identifier, message) pairs into one entry
-    with a "count" plus first/last-seen timestamps — found live: a real
-    journal has had the identical "Bluetooth:
-    hci0: Reading supported features failed (-16)" kernel line appear
-    multiple times within the same short window (a driver retry loop),
-    and showing that as N separate diagnostic lines would bury
-    genuinely distinct issues under repetition of one root cause.
-    Order-preserving — first occurrence's position determines where
-    the collapsed entry lands in the result, so the breakdown reads in
-    a stable, chronological-ish order rather than being re-sorted.
+    with a "count" plus first/last-seen timestamps — a driver retry
+    loop can log the identical kernel line (e.g. "Bluetooth: hci0:
+    Reading supported features failed (-16)") many times within one
+    short window, and showing that as N separate diagnostic lines would
+    bury genuinely distinct issues under repetition of one root cause.
+    Order-preserving — first occurrence's position determines where the
+    collapsed entry lands in the result, so the breakdown reads in a
+    stable, chronological-ish order rather than being re-sorted.
     """
     seen_order = []
     grouped = {}
@@ -166,20 +161,12 @@ def poll_diagnostics(unit_runner=subprocess.run, journal_runner=subprocess.run,
                       since: str = "-1h") -> dict:
     """This Domain's own `poll` callable — {"failed_units",
     "oom_events", "general_errors", "summary"}. The first three are
-    None only when their OWN command genuinely couldn't run — otherwise
-    a real (possibly empty) list, same None-vs-[] discipline as
-    everywhere else in this codebase. `summary` is the bottom
-    diagnostics line's own text:
-    - "All clear" only when every category was BOTH checkable and
-      empty.
-    - "N issue(s)" when anything was found — N counts deduped GROUPS,
-      not raw repeat occurrences (see dedupe_general_errors' own
-      docstring for why the same flapping driver logging one message
-      50 times shouldn't inflate this to 50).
-    - "Diagnostics unavailable" only when nothing was found AND at
-      least one category couldn't be checked at all — deliberately NOT
-      "All clear" in that case, since "all clear" would be a claim
-      this function can't actually back up.
+    None only when their own command genuinely couldn't run, else a
+    real (possibly empty) list. `summary` is: "All clear" only when
+    every category was both checkable and empty; "N issue(s)" when N
+    deduped groups were found (see dedupe_general_errors); else
+    "Diagnostics unavailable" — never "All clear" when a category
+    couldn't be checked, since that would be an unbacked claim.
     """
     failed_units = get_failed_units(unit_runner)
     all_entries = get_journal_errors(journal_runner, since=since)

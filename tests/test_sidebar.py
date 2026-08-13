@@ -119,9 +119,8 @@ def test_nav_items_subsequent_slot_offset_accounts_for_preview_height():
 
 
 # ---------- shift_workspace_id ----------
-# Found live, asked for directly: Up/Down while typing in the launcher
-# (VISION.md's R4-follow-up connectivity work) move the ambient-
-# typing launch target — see main.py's own "launcher" input_claim tier.
+# Up/Down while typing in the launcher move the ambient-typing launch
+# target — see main.py's own "launcher" input_claim tier.
 
 def test_shift_workspace_id_moves_forward():
     assert shift_workspace_id("2", total_workspaces=5, delta=1) == "3"

@@ -44,12 +44,11 @@ _CPU_PACKAGE_CANDIDATES = (
     ("k10temp", ("Tctl", "Tdie")),
 )
 
-# Friendly display names for common sensors-exposed chip prefixes —
-# found live, asked for: "coretemp-isa-0000" / "nvme-pci-3d00" read as
-# noise to a non-technical user, "CPU" / "NVMe" don't. Deliberately
-# small and not exhaustive — describe_sensor() falls back to the raw
-# chip name (up to its first "-") for anything not listed here, still
-# readable, just less polished.
+# Friendly display names for common sensors-exposed chip prefixes:
+# "coretemp-isa-0000" / "nvme-pci-3d00" read as noise, "CPU" / "NVMe"
+# don't. Deliberately small and not exhaustive — describe_sensor()
+# falls back to the raw chip name (up to its first "-") for anything
+# not listed here, still readable, just less polished.
 _CHIP_FRIENDLY_NAMES = {
     "coretemp": "CPU",
     "k10temp": "CPU",
@@ -171,17 +170,12 @@ class SensorsSource:
 
     def poll(self) -> dict | None:
         """None once `sensors` is confirmed missing — an optional
-        feature simply not showing up, not an error StatusWorker's own
-        error-capture path should ever see (same tolerance as
-        CavaReader's own missing-binary case). A dict
-        {"cpu_temp": (value, chip, feature) | None,
-         "hottest": (value, chip, feature) | None}
-        once sensors genuinely ran, even if this particular machine
-        happens to expose neither a recognizable CPU package chip nor
-        any temp*_input reading at all — "checked, found nothing"
+        feature not showing up, not an error (same tolerance as
+        CavaReader's missing-binary case). Else a dict
+        {"cpu_temp": (value, chip, feature) | None, "hottest": (...) |
+        None} once sensors genuinely ran — "checked, found nothing"
         (both fields None) is a different state from "couldn't check
-        at all" (this whole method returning None), same None-vs-[]
-        discipline the rest of this codebase uses.
+        at all" (this method returning None).
         """
         if self._binary_missing:
             return None

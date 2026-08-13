@@ -58,8 +58,8 @@ def _is_binary(states: list[dict]) -> bool:
     information the dot already carries. An N-way cycle (3+ states,
     e.g. Performance Mode's power-saver/balanced/performance) can't:
     a single filled dot doesn't distinguish which of 3+ states it is
-    even with a per-state color (found live — the bracket text stays
-    for those, only dropped for plain toggles).
+    even with a per-state color — the bracket text stays for those,
+    only dropped for plain toggles.
     """
     return len(states) == 2
 
@@ -99,15 +99,9 @@ def _row_suffix(kind: str, is_binary: bool, current_name: str | None, error: str
 def _row_kind(current_name: str | None, error: str | None, action_error: str | None, pending: bool) -> str:
     """Which of the four mutually-exclusive ways a toggle's row can
     render, decided once so draw() doesn't repeat this priority logic
-    inline (and so it's testable without a real curses screen — see
-    connectivity.py's own _build_rows for the established pattern this
-    follows).
-
-    Priority: pending > action_error > poll_error > normal.
-    action_error outranks a plain poll error — found live building
-    this module: the last thing the user DID (pressed Enter, the
-    command failed) is more relevant than the last thing that was
-    merely observed (a status_command poll failing independently).
+    inline. Priority: pending > action_error > poll_error > normal —
+    action_error outranks a plain poll error since the last thing the
+    user DID is more relevant than the last thing merely observed.
     """
     if pending:
         return "pending"
@@ -166,10 +160,9 @@ def draw(stdscr, box, ctx, module_name):
             text_color, attr = _pending_blink_style(theme)
             dot, dot_color = "●", (text_color | attr)
         elif kind == "action_error":
-            # Found live: a toggle's command failing (e.g. gammastep
-            # exiting immediately for lack of GeoClue2) used to produce
-            # zero visible feedback — the row just silently kept
-            # showing its old (correct, but uninformative) state.
+            # See CLAUDE/VISION.md's R3 section (gammastep/Night Light
+            # example) — a failing command used to produce zero visible
+            # feedback, the row just silently kept its old state.
             dot, dot_color = "⚠", theme.get("urgent", 0)
             text_color, attr = theme.get("urgent", 0), curses.A_BOLD
         elif kind == "poll_error":
@@ -218,18 +211,14 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             preview_text.append(("!! SHELL=TRUE !!", theme.get("urgent", 0)))
         if action_error:
             # The failed command's own captured output (see
-            # control._run_detached_detecting_quick_failure) — found
-            # live, this used to be invisible entirely. One
-            # preview_text ENTRY per physical line, not one entry
-            # holding an embedded "\n" — draw_centered_lines
-            # (render_utils.py) positions each entry as exactly one
-            # row via its own x/y math; a raw "\n" inside a single
-            # entry's text just makes curses jump to column 0 of the
-            # next real terminal row, escaping the box entirely —
-            # found live, a multi-line command like gammastep's (3
-            # separate "Error: ..." lines) rendered the first line
-            # positioned correctly and the rest floating unpositioned
-            # elsewhere on screen.
+            # control._run_detached_detecting_quick_failure) — see
+            # CLAUDE/VISION.md's R3 section for the gammastep/Night
+            # Light example this surfaces. One preview_text entry per
+            # physical line, not one entry holding an embedded "\n":
+            # draw_centered_lines (render_utils.py) positions each
+            # entry as exactly one row via its own x/y math, so a raw
+            # "\n" inside a single entry just makes curses jump to
+            # column 0 of the next real terminal row, escaping the box.
             for line in action_error.splitlines():
                 preview_text.append((f"⚠ {line}", theme.get("urgent", 0)))
 

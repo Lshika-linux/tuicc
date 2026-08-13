@@ -52,19 +52,13 @@ def probe_state(status_command: str, shell_true: bool) -> bool:
 
 
 def find_current_state(states: list[dict], shell_true: bool) -> str:
-    """Probes each state's status_command in declaration order,
-    returns the name of the first one whose exit code is 0. A state
-    with no status_command (only ever valid on the last entry — see
-    config.py's _build_control_toggles validation) is the implicit
-    "whatever's left": only returned if every earlier state's probe
-    came back false, a sound conclusion from exhaustive checking, not
-    a guess.
-
-    Raises RuntimeError if every state HAS a status_command and none
-    of them matched — a real "this tool's actual output doesn't match
-    any configured state" mismatch, surfaced via
-    status_worker.StatusWorker's last_error like any other poll
-    failure, not silently assumed to be the first or last one.
+    """Probes each state's status_command in declaration order, returns
+    the name of the first one whose exit code is 0. A state with no
+    status_command (only valid on the last entry) is the implicit
+    "whatever's left" — returned only if every earlier probe came back
+    false. Raises RuntimeError if every state has a status_command and
+    none matched, surfaced via StatusWorker's last_error like any other
+    poll failure rather than assumed.
     """
     unprobed_name = None
     for state in states:
@@ -79,15 +73,12 @@ def find_current_state(states: list[dict], shell_true: bool) -> str:
 
 
 def next_state_name(states: list[dict], current_name: str | None) -> str:
-    """(current_index + 1) % len(states) — the toggle/cycle
-    unification found while designing this contract: a plain flip and
-    a multi-way cycle are the same advance rule, just a different
+    """(current_index + 1) % len(states) — a plain flip and a
+    multi-way cycle are the same advance rule, just a different
     len(states). Falls back to the first state if current_name is None
-    or doesn't match any configured state (StatusWorker hasn't
-    completed a poll yet, or its last poll errored) — a reasonable
-    default for a user pressing Enter before the first poll lands, not
-    a masking of a real error (modules/control.py's draw() shows that
-    error state separately, on its own).
+    or unrecognized (StatusWorker hasn't polled yet, or last errored)
+    — a reasonable default, not error-masking: modules/control.py's
+    draw() shows that error state separately.
     """
     names = [state["name"] for state in states]
     if current_name not in names:
@@ -99,33 +90,16 @@ def next_state_name(states: list[dict], current_name: str | None) -> str:
 def _run_detached_detecting_quick_failure(
     command: str, shell_true: bool, window_seconds: float = QUICK_FAILURE_WINDOW_SECONDS
 ) -> None:
-    """Spawns command detached (spawn_detached — same argv/shell
-    resolution every other spawn in this codebase uses), then briefly
-    waits up to window_seconds to see whether it's ALREADY exited.
-    Found live building this module: a toggle's command can fail
-    almost instantly (gammastep exiting right away for lack of a
-    configured GeoClue2 provider, on a real test machine)
-    with zero visible feedback — the toggle just silently stayed in
-    its old state, StatusWorker's own action-error swallowing (fixed
-    alongside this) meant even a real exception wouldn't have helped,
-    since a failed shell command isn't a Python exception at all.
-
-    A command still running past window_seconds is treated as a
-    legitimate long-runner (the packaged Idle Inhibit example holds a
-    systemd-inhibit lock via `sleep infinity`) or just a slow starter —
-    either way, left alone; this function does not wait for it to
-    actually finish, only checks whether it already has. Blocking here
-    indefinitely would hang StatusWorker's action-dispatch loop for
-    every future toggle press until that command exits.
-
-    Raises RuntimeError (with the command's captured combined stdout+
-    stderr, if any) when it exits nonzero within the window. Output is
-    captured to an unlinked temp file, not a subprocess.PIPE — a PIPE
-    nobody reads from risks blocking a legitimate long-runner the
-    moment its output fills the OS pipe buffer; a plain file has no
-    such limit, and unlinking it immediately is safe on Linux (the
-    inode survives until the writing process's own fd closes), so
-    nothing is left behind on disk even for a still-running process.
+    """Spawns command detached, then briefly waits up to window_seconds
+    to see whether it's already exited — catches a command that fails
+    almost instantly (see CLAUDE/VISION.md's R3 section for the
+    gammastep/Night Light example this exists for; a failed shell
+    command isn't a Python exception, so nothing else would catch it).
+    A command still running past window_seconds is left alone as a
+    legitimate long-runner or slow starter — never waited on further.
+    Raises RuntimeError (with captured stdout+stderr) on a nonzero exit
+    within the window. Output goes to an unlinked temp file, not
+    subprocess.PIPE, so a long-runner can't block on a full pipe.
     """
     with tempfile.NamedTemporaryFile(delete=False) as output_file:
         output_path = Path(output_file.name)
@@ -153,23 +127,14 @@ def run_state_command(
 ) -> None:
     """Spawns target_name's command detached, briefly checking for a
     fast failure (_run_detached_detecting_quick_failure), then polls
-    find_current_state() until it actually reports target_name (or
-    confirm_timeout elapses).
-
-    This function's return is what clears StatusWorker's `pending`
-    flag for this toggle (see status_worker.py's _run() — pending is
-    discarded right when the requested action() call returns) — found
-    live, mattering in practice: without this wait, pending cleared
-    the instant the command was merely SPAWNED, well before its real
-    effect was necessarily visible via status_command, leaving the
-    blink stop well ahead of the row actually showing the new state
-    (and, since main.py's redraw cadence is itself tied to
-    has_pending(), the whole module visibly stalling in between —
-    reported as "the module feels slow"). Bounded by confirm_timeout so
-    a toggle that genuinely never converges (a command that silently
-    no-ops, say) doesn't block every future toggle press behind it
-    forever — StatusWorker's action queue is processed sequentially,
-    one at a time.
+    find_current_state() until it reports target_name (or
+    confirm_timeout elapses). This function's return is what clears
+    StatusWorker's `pending` flag (see status_worker.py's _run()) —
+    without this wait, pending would clear the instant the command was
+    merely spawned, well before its real effect was visible, stalling
+    the whole module's redraw cadence in between (has_pending()-tied).
+    Bounded by confirm_timeout so a toggle that never converges doesn't
+    block the sequential action queue forever.
     """
     for state in states:
         if state["name"] != target_name:
