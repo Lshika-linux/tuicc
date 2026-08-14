@@ -31,6 +31,7 @@ from tuicc.config import (
     build_layout_from_preset,
 )
 from tuicc.context import RenderContext
+from tuicc.loop_state import LoopState
 from tuicc.actions import spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc import procmon
 from tuicc.layout import ModuleBox
@@ -85,6 +86,161 @@ def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, vi
     return resolved
 
 
+# Phase 0 of the LoopState migration (CLAUDE/NOTES/design-decisions.md
+# #loopstate-migration): these six touch none of main()'s loop-owned
+# state, so they flatten to plain module-level functions with no
+# LoopState dependency at all — everything they need is an explicit
+# param. Still not moved into sessions.py/sysmon.py/connectivity.py:
+# sessions_naming needs cfg.session_names/set_session_name, and no
+# module in this codebase imports config.py.
+
+def do_enter_resize(resize):
+    resize_mode.enter_edit_mode(resize)
+
+
+def handle_sessions_naming(key, cfg):
+    if key == cfg.keybinds["confirm"]:
+        result = sessions_mode.apply_naming()
+        if result is not None:
+            slot, new_name = result
+            cfg.session_names[slot] = new_name or f"Slot {slot}"
+            set_session_name(slot, new_name)
+            return False
+        return True
+    return sessions_mode.handle_naming_key(key)
+
+
+def handle_sysmon_nice(key, cfg):
+    if key == cfg.keybinds["confirm"]:
+        result = sysmon_mode.apply_nice_edit()
+        return result is None
+    return sysmon_mode.handle_nice_key(key)
+
+
+# Connectivity's two prompts: entry/resolution are driven by per-frame
+# daemon-mailbox polling (see main()'s loop body, near wifi_agent/
+# bluez_agent), not purely by keypress — only the actual per-keypress
+# handling is a MODE_HANDLERS entry.
+def handle_connectivity_passphrase(key, cfg, wifi_agent):
+    if connectivity_mode.is_passphrase_waiting():
+        return True  # resolved by the per-frame poll, not here — just swallow keys meanwhile
+    if connectivity_mode.passphrase_error() is not None:
+        connectivity_mode.cancel_passphrase_entry()
+        return False
+    # has_pending() going False here (not while waiting/erroring, both
+    # handled above) means the daemon cancelled it — not a bug.
+    if not wifi_agent.mailbox.has_pending():
+        connectivity_mode.cancel_passphrase_entry()
+        return False
+    elif key == cfg.keybinds["confirm"]:
+        text = connectivity_mode.apply_passphrase()
+        if text is not None:
+            wifi_agent.reply_passphrase(text)
+            connectivity_mode.mark_passphrase_submitted()
+        return True
+    elif key == 27:  # Escape
+        connectivity_mode.cancel_passphrase_entry()
+        wifi_agent.cancel_current()
+        return False
+    elif not connectivity_mode.handle_passphrase_key(key):
+        connectivity_mode.cancel_passphrase_entry()
+        return False
+    return True
+
+
+def handle_connectivity_pairing(key, cfg, bluez_agent):
+    # Plain yes/no, resolved directly here (same convention as
+    # handle_pending_confirm()) rather than a typed-text apply_*() pair.
+    if connectivity_mode.is_pairing_waiting():
+        return True
+    if connectivity_mode.pairing_error() is not None:
+        connectivity_mode.cancel_pairing_confirm()
+        return False
+    if bluez_agent is None or not bluez_agent.mailbox.has_pending():
+        connectivity_mode.cancel_pairing_confirm()
+        return False
+    # confirm_yes OR confirm (Enter) — see handle_pending_confirm()'s
+    # own docstring for why.
+    elif key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
+        bluez_agent.reply_pairing(True)
+        connectivity_mode.mark_pairing_submitted()
+        return True
+    elif key == cfg.keybinds["confirm_no"]:
+        bluez_agent.reply_pairing(False)
+        connectivity_mode.cancel_pairing_confirm()
+        return False
+    elif key == 27:  # Escape — same as an explicit reject
+        bluez_agent.cancel_current()
+        connectivity_mode.cancel_pairing_confirm()
+        return False
+    return True
+
+
+def any_two_level_module_expanded():
+    # sessions/media/sysmon each own a two-level browsing/expanded
+    # session — Tab/Shift+Tab/Left/Right's wrap behavior needs to know
+    # if ANY is expanded, not just one specifically. Needed no params
+    # even before flattening — every name it touches is a module object,
+    # never main()-local state.
+    return sessions_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
+
+
+# Phase 1 of the LoopState migration: these four's only loop-owned
+# dependency was mode_stack, which needed no nonlocal even as a closure
+# (see loop_state.py's own docstring) — flattening them now just makes
+# that already-true fact explicit in their signatures.
+
+def do_spawn_picker(loop_state, cfg, spawn_picker):
+    available = set(MODULES.keys()) - {b.name for b in cfg.layout.boxes}
+    resize_mode.open_picker(spawn_picker, available)
+    # open_picker() is a no-op when `available` is empty (no modules
+    # left to spawn) — only push the claim if it actually opened.
+    if spawn_picker.active:
+        loop_state.mode_stack.append("spawn_picker")
+
+
+def do_enter_box_editing(loop_state, resize, box, is_new=False):
+    # Centralizes the mode_stack push for entering editing — same
+    # single-append-site safety argument as do_enter_help's
+    # unconditional append. Both callers (browsing's own confirm
+    # branch, and handle_spawn_picker's handoff) stay in sync
+    # automatically.
+    resize_mode.enter_box_editing(resize, box, is_new=is_new)
+    loop_state.mode_stack.append("resize_editing")
+
+
+def do_enter_help(loop_state, help_state):
+    help_mode.enter(help_state)
+    loop_state.mode_stack.append("help")
+
+
+# "help" can push "help_colors" on top of itself; popping lands back on
+# the colors page, not fully closed. help_state.active is depth-agnostic
+# ("panel showing at all") — draw()'s call site and connectivity_wants_input
+# both read it directly; don't touch it here.
+def handle_help(key, loop_state, cfg, help_state):
+    if help_state.page is None:
+        help_mode.select_page(help_state, key)
+        if help_state.page is None and key == 27:  # Escape
+            help_state.active = False
+            return False
+        return True
+    if help_state.page == "colors":
+        if key == cfg.keybinds["up"]:
+            help_mode.move_color_index(help_state, -1)
+        elif key == cfg.keybinds["down"]:
+            help_mode.move_color_index(help_state, 1)
+        elif key == cfg.keybinds["confirm"]:
+            help_mode.start_color_edit(help_state, get_raw_theme_values())
+            loop_state.mode_stack.append("help_colors")
+        elif key == 27:  # Escape
+            help_state.page = None
+        return True
+    if key == 27:  # Escape
+        help_state.page = None
+    return True
+
+
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(False)
@@ -136,13 +292,14 @@ def main(stdscr):
     pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    # Which module owns raw keystrokes. "normal" (never popped, bottom
-    # of stack) = nothing has stolen input, unbound printable keys
-    # auto-claim for the launcher. resize's BROWSING level is the one
-    # permanent exception — never joins this stack (see
-    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for why and
-    # for every phase's own postmortem).
-    mode_stack: list[str] = ["normal"]
+    # loop_state.mode_stack: which module owns raw keystrokes. "normal"
+    # (never popped, bottom of stack) = nothing has stolen input, unbound
+    # printable keys auto-claim for the launcher. resize's BROWSING level
+    # is the one permanent exception — never joins this stack (see
+    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for why and for
+    # every phase's own postmortem; #loopstate-migration for why this is
+    # loop_state.mode_stack, not a bare local, as of Phase 1).
+    loop_state = LoopState()
 
     # True from dismiss_self() until the next real keypress — tells
     # pending_moves.process() not to focus_self() while hidden (that
@@ -179,26 +336,6 @@ def main(stdscr):
     resize_message = None
     resize_message_until = 0.0
 
-    def do_spawn_picker():
-        available = set(MODULES.keys()) - {b.name for b in cfg.layout.boxes}
-        resize_mode.open_picker(spawn_picker, available)
-        # open_picker() is a no-op when `available` is empty (no modules
-        # left to spawn) — only push the claim if it actually opened.
-        if spawn_picker.active:
-            mode_stack.append("spawn_picker")
-
-    def do_enter_box_editing(box, is_new=False):
-        # Centralizes the mode_stack push for entering editing — same
-        # single-append-site safety argument as do_enter_help's
-        # unconditional append (Phase 3). Both callers (browsing's own
-        # confirm branch, and handle_spawn_picker's handoff below) stay
-        # in sync automatically.
-        resize_mode.enter_box_editing(resize, box, is_new=is_new)
-        mode_stack.append("resize_editing")
-
-    def do_enter_resize():
-        resize_mode.enter_edit_mode(resize)
-
     def do_save_layout():
         nonlocal resize_message, resize_message_until
         save_layout_to_preset(cfg.layout, cfg.preset_number)
@@ -233,10 +370,6 @@ def main(stdscr):
         resize_message_until = time.monotonic() + 3.0
         resize_mode.exit_edit_mode(resize)
 
-    def do_enter_help():
-        help_mode.enter(help_state)
-        mode_stack.append("help")
-
     def do_apply_reselect():
         # See ActionContext.reselect_region_id/reselect_item_id's
         # docstrings — both consumed once, right after any dispatch/
@@ -264,110 +397,6 @@ def main(stdscr):
         if region_item is not None:
             selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
         action_ctx.reselect_region_id = None
-
-    # MODE_HANDLERS entries — see CLAUDE/NOTES/design-decisions.md
-    # #mode-stack-phase-1. Kept as closures, not moved into sessions.py/
-    # sysmon.py: sessions_naming needs cfg.session_names/set_session_name,
-    # and no module in this codebase imports config.py.
-    def handle_sessions_naming(key):
-        if key == cfg.keybinds["confirm"]:
-            result = sessions_mode.apply_naming()
-            if result is not None:
-                slot, new_name = result
-                cfg.session_names[slot] = new_name or f"Slot {slot}"
-                set_session_name(slot, new_name)
-                return False
-            return True
-        return sessions_mode.handle_naming_key(key)
-
-    def handle_sysmon_nice(key):
-        if key == cfg.keybinds["confirm"]:
-            result = sysmon_mode.apply_nice_edit()
-            return result is None
-        return sysmon_mode.handle_nice_key(key)
-
-    # Connectivity's two prompts: entry/resolution are driven by
-    # per-frame daemon-mailbox polling (see the loop body below, near
-    # wifi_agent/bluez_agent), not purely by keypress — only the actual
-    # per-keypress handling is a MODE_HANDLERS entry.
-    def handle_connectivity_passphrase(key):
-        if connectivity_mode.is_passphrase_waiting():
-            return True  # resolved by the per-frame poll below, not here — just swallow keys meanwhile
-        if connectivity_mode.passphrase_error() is not None:
-            connectivity_mode.cancel_passphrase_entry()
-            return False
-        # has_pending() going False here (not while waiting/erroring,
-        # both handled above) means the daemon cancelled it — not a bug.
-        if not wifi_agent.mailbox.has_pending():
-            connectivity_mode.cancel_passphrase_entry()
-            return False
-        elif key == cfg.keybinds["confirm"]:
-            text = connectivity_mode.apply_passphrase()
-            if text is not None:
-                wifi_agent.reply_passphrase(text)
-                connectivity_mode.mark_passphrase_submitted()
-            return True
-        elif key == 27:  # Escape
-            connectivity_mode.cancel_passphrase_entry()
-            wifi_agent.cancel_current()
-            return False
-        elif not connectivity_mode.handle_passphrase_key(key):
-            connectivity_mode.cancel_passphrase_entry()
-            return False
-        return True
-
-    def handle_connectivity_pairing(key):
-        # Plain yes/no, resolved directly here (same convention as
-        # handle_pending_confirm()) rather than a typed-text apply_*() pair.
-        if connectivity_mode.is_pairing_waiting():
-            return True
-        if connectivity_mode.pairing_error() is not None:
-            connectivity_mode.cancel_pairing_confirm()
-            return False
-        if bluez_agent is None or not bluez_agent.mailbox.has_pending():
-            connectivity_mode.cancel_pairing_confirm()
-            return False
-        # confirm_yes OR confirm (Enter) — see
-        # handle_pending_confirm()'s own docstring for why.
-        elif key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
-            bluez_agent.reply_pairing(True)
-            connectivity_mode.mark_pairing_submitted()
-            return True
-        elif key == cfg.keybinds["confirm_no"]:
-            bluez_agent.reply_pairing(False)
-            connectivity_mode.cancel_pairing_confirm()
-            return False
-        elif key == 27:  # Escape — same as an explicit reject
-            bluez_agent.cancel_current()
-            connectivity_mode.cancel_pairing_confirm()
-            return False
-        return True
-
-    # "help" can push "help_colors" on top of itself; popping lands back
-    # on the colors page, not fully closed. help_state.active is
-    # depth-agnostic ("panel showing at all") — draw()'s call site and
-    # connectivity_wants_input both read it directly; don't touch it here.
-    def handle_help(key):
-        if help_state.page is None:
-            help_mode.select_page(help_state, key)
-            if help_state.page is None and key == 27:  # Escape
-                help_state.active = False
-                return False
-            return True
-        if help_state.page == "colors":
-            if key == cfg.keybinds["up"]:
-                help_mode.move_color_index(help_state, -1)
-            elif key == cfg.keybinds["down"]:
-                help_mode.move_color_index(help_state, 1)
-            elif key == cfg.keybinds["confirm"]:
-                help_mode.start_color_edit(help_state, get_raw_theme_values())
-                mode_stack.append("help_colors")
-            elif key == 27:  # Escape
-                help_state.page = None
-            return True
-        if key == 27:  # Escape
-            help_state.page = None
-        return True
 
     def handle_help_colors(key):
         # nonlocal required: without it this rebinds a closure-local
@@ -443,8 +472,8 @@ def main(stdscr):
             # Handoff: pop "spawn_picker" before pushing "resize_editing" —
             # the generic dispatch's post-call pop would otherwise
             # remove whatever's on top AFTER we push, not our own frame.
-            mode_stack.pop()
-            do_enter_box_editing(new_box, is_new=True)
+            loop_state.mode_stack.pop()
+            do_enter_box_editing(loop_state, resize, new_box, is_new=True)
             return True  # stack already correctly arranged
         return False
 
@@ -453,12 +482,12 @@ def main(stdscr):
     # _handoff() call sites and this dict together; nothing else needs
     # to change in sync.
     HANDOFF_TARGETS = {
-        "spawn_box": do_spawn_picker,
-        "resize": do_enter_resize,
+        "spawn_box": lambda: do_spawn_picker(loop_state, cfg, spawn_picker),
+        "resize": lambda: do_enter_resize(resize),
         "save_layout": do_save_layout,
         "cycle_preset": do_cycle_preset,
         "new_preset": do_new_preset,
-        "help": do_enter_help,
+        "help": lambda: do_enter_help(loop_state, help_state),
     }
 
     def handle_resize_editing(key):
@@ -469,28 +498,22 @@ def main(stdscr):
         if result.deleted_name is not None and active_module == result.deleted_name:
             active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
         if result.handoff is not None:
-            mode_stack.pop()
+            loop_state.mode_stack.pop()
             HANDOFF_TARGETS[result.handoff]()
             return True  # stack already correctly arranged, don't pop again
         return result.still_claiming
 
     MODE_HANDLERS = {
-        "sessions_naming": handle_sessions_naming,
-        "sysmon_nice": handle_sysmon_nice,
-        "connectivity_passphrase": handle_connectivity_passphrase,
-        "connectivity_pairing": handle_connectivity_pairing,
-        "help": handle_help,
+        "sessions_naming": lambda key: handle_sessions_naming(key, cfg),
+        "sysmon_nice": lambda key: handle_sysmon_nice(key, cfg),
+        "connectivity_passphrase": lambda key: handle_connectivity_passphrase(key, cfg, wifi_agent),
+        "connectivity_pairing": lambda key: handle_connectivity_pairing(key, cfg, bluez_agent),
+        "help": lambda key: handle_help(key, loop_state, cfg, help_state),
         "help_colors": handle_help_colors,
         "launcher": handle_launcher,
         "spawn_picker": handle_spawn_picker,
         "resize_editing": handle_resize_editing,
     }
-
-    def any_two_level_module_expanded():
-        # sessions/media/sysmon each own a two-level browsing/expanded
-        # session — Tab/Shift+Tab/Left/Right's wrap behavior needs to
-        # know if ANY is expanded, not just one specifically.
-        return sessions_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
 
     # No `break` below this point — tuicc is a persistent process the
     # WM shows/hides (VISION.md section 2); the only way out is an
@@ -530,7 +553,7 @@ def main(stdscr):
                         connectivity_mode.set_passphrase_error(error)
                     else:
                         connectivity_mode.cancel_passphrase_entry()
-                        mode_stack.pop()
+                        loop_state.mode_stack.pop()
             if connectivity_mode.is_confirming_pairing() and connectivity_mode.is_pairing_waiting():
                 pairing_request = connectivity_mode.current_pairing_request()
                 if not status_worker.is_pending("bluetooth", pairing_request.device_id):
@@ -539,12 +562,12 @@ def main(stdscr):
                         connectivity_mode.set_pairing_error(error)
                     else:
                         connectivity_mode.cancel_pairing_confirm()
-                        mode_stack.pop()
+                        loop_state.mode_stack.pop()
 
             connectivity_wants_input = (
                 pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
-                and mode_stack[-1] == "normal"
+                and loop_state.mode_stack[-1] == "normal"
             )
             # Also fires mid-retry (iwd re-asking RequestPassphrase after
             # a wrong password) — gated to only when actually WAITING on
@@ -552,23 +575,23 @@ def main(stdscr):
             # would re-fire every frame and wipe out what's being typed.
             if wifi_agent.mailbox.has_pending() and (
                 connectivity_wants_input
-                or (mode_stack[-1] == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
+                or (loop_state.mode_stack[-1] == "connectivity_passphrase" and connectivity_mode.is_passphrase_waiting())
             ):
                 request = wifi_agent.mailbox.get_request()
                 connectivity_mode.start_passphrase_entry(request.ssid)
                 # Guarded: the retry case above reaches here with the
                 # frame already pushed — a bare append would duplicate
                 # it, and the eventual single pop() wouldn't fully undo that.
-                if mode_stack[-1] != "connectivity_passphrase":
-                    mode_stack.append("connectivity_passphrase")
+                if loop_state.mode_stack[-1] != "connectivity_passphrase":
+                    loop_state.mode_stack.append("connectivity_passphrase")
             elif bluez_agent is not None and bluez_agent.mailbox.has_pending() and (
                 connectivity_wants_input
-                or (mode_stack[-1] == "connectivity_pairing" and connectivity_mode.is_pairing_waiting())
+                or (loop_state.mode_stack[-1] == "connectivity_pairing" and connectivity_mode.is_pairing_waiting())
             ):
                 request = bluez_agent.mailbox.get_request()
                 connectivity_mode.start_pairing_confirm(request)
-                if mode_stack[-1] != "connectivity_pairing":  # see passphrase branch above
-                    mode_stack.append("connectivity_pairing")
+                if loop_state.mode_stack[-1] != "connectivity_pairing":  # see passphrase branch above
+                    loop_state.mode_stack.append("connectivity_pairing")
 
             agent_has_pending = (
                 wifi_agent.mailbox.has_pending()
@@ -760,10 +783,10 @@ def main(stdscr):
                     provider.dismiss_self()
                 continue
 
-            if mode_stack[-1] != "normal":
-                still_claiming = MODE_HANDLERS[mode_stack[-1]](key)
+            if loop_state.mode_stack[-1] != "normal":
+                still_claiming = MODE_HANDLERS[loop_state.mode_stack[-1]](key)
                 if not still_claiming:
-                    mode_stack.pop()
+                    loop_state.mode_stack.pop()
                 continue
 
             # Browsing: session open, no module being resized/moved —
@@ -784,7 +807,7 @@ def main(stdscr):
                 if key == cfg.keybinds["confirm"] and active_module is not None:
                     box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
                     if box is not None:
-                        do_enter_box_editing(box)
+                        do_enter_box_editing(loop_state, resize, box)
                     continue
                 elif key == cfg.keybinds["delete_box"] and active_module is not None:
                     box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
@@ -812,9 +835,9 @@ def main(stdscr):
                 # main.py notices right after dispatch and claims the
                 # stack on their behalf.
                 if sessions_mode.is_naming():
-                    mode_stack.append("sessions_naming")
+                    loop_state.mode_stack.append("sessions_naming")
                 if sysmon_mode.is_editing_nice():
-                    mode_stack.append("sysmon_nice")
+                    loop_state.mode_stack.append("sysmon_nice")
                 if should_dismiss:
                     dismissed = True
                     provider.dismiss_self()
@@ -885,9 +908,9 @@ def main(stdscr):
                             # See module_next_keys' matching branch above.
                             selected_id = None
             elif key == cfg.keybinds["spawn_box"]:
-                do_spawn_picker()
+                do_spawn_picker(loop_state, cfg, spawn_picker)
             elif key == cfg.keybinds["resize"] and active_module is not None:
-                do_enter_resize()
+                do_enter_resize(resize)
             elif key == cfg.keybinds["save_layout"]:
                 do_save_layout()
             elif key == cfg.keybinds["cycle_preset"]:
@@ -895,14 +918,14 @@ def main(stdscr):
             elif key == cfg.keybinds["new_preset"]:
                 do_new_preset()
             elif key == cfg.keybinds["help"]:
-                do_enter_help()
+                do_enter_help(loop_state, help_state)
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module)
-                mode_stack.append("launcher")
+                loop_state.mode_stack.append("launcher")
                 active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
-                mode_stack.append("launcher")
+                loop_state.mode_stack.append("launcher")
                 active_module = "launcher"
             elif key == 27:
                 # Escape collapses whichever two-level module is
