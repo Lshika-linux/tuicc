@@ -215,6 +215,7 @@ def do_save_layout(loop_state, cfg, resize):
     save_layout_to_preset(cfg.layout, cfg.preset_number)
     loop_state.resize_message = f"Saved preset {cfg.preset_number}"
     loop_state.resize_message_until = time.monotonic() + 3.0
+    loop_state.resize_message_urgent = False
     resize_mode.exit_edit_mode(resize)
 
 
@@ -246,6 +247,7 @@ def do_new_preset(loop_state, cfg, resize):
     cfg.preset_number = new_number
     loop_state.resize_message = f"Saved as new preset {new_number}"
     loop_state.resize_message_until = time.monotonic() + 3.0
+    loop_state.resize_message_urgent = False
     resize_mode.exit_edit_mode(resize)
 
 
@@ -263,6 +265,7 @@ def do_cycle_preset(loop_state, cfg, resize):
         loop_state.active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
         loop_state.resize_message = f"preset {next_number}"
         loop_state.resize_message_until = time.monotonic() + 3.0
+        loop_state.resize_message_urgent = False
     resize_mode.exit_edit_mode(resize)
 
 
@@ -316,7 +319,12 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
         if selected is not None:
             cmd, app_id_hint = selected
             known_ids = {w.id for r in state.regions for w in r.windows}
-            pid = spawn_detached(cmd, shell_true=False)  # .desktop Exec= is never shell-interpreted
+            # log_path captures stdout+stderr the same way
+            # promote_restore_queue() already does for restore spawns —
+            # gives a fast nonzero-exit failure toast (pending_moves.py's
+            # _quick_exit_failure_message) real output to point at.
+            log_path = pending_moves.SPAWN_LOG_DIR / f"launcher_{app_id_hint or 'unknown'}_{int(time.time())}.log"
+            pid = spawn_detached(cmd, shell_true=False, log_path=log_path)  # .desktop Exec= is never shell-interpreted
             # Called before the spawned window can map and steal
             # focus/fullscreen — see no_focus_next_window()'s docstring.
             provider.no_focus_next_window(pid)
@@ -326,7 +334,7 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
             pending_moves.queue_launcher_spawn(
                 moves,
                 loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id,
-                known_ids, pid, app_id_hint, time.monotonic(),
+                known_ids, pid, app_id_hint, time.monotonic(), log_path,
             )
             launcher_mode.exit_typing_mode(launcher)
             loop_state.selected_id = launcher.saved_selected_id
@@ -492,9 +500,11 @@ def main(stdscr):
                     draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, loop_state.active_module), loop_state.theme_pairs.get("urgent", 0))
                 elif loop_state.resize_message is not None:
                     if time.monotonic() < loop_state.resize_message_until:
-                        draw_status_line(stdscr, term_width, loop_state.resize_message, loop_state.theme_pairs.get("accent", 0))
+                        color_role = "urgent" if loop_state.resize_message_urgent else "accent"
+                        draw_status_line(stdscr, term_width, loop_state.resize_message, loop_state.theme_pairs.get(color_role, 0))
                     else:
                         loop_state.resize_message = None
+                        loop_state.resize_message_urgent = False
 
             stdscr.refresh()
 

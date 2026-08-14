@@ -30,6 +30,13 @@ class LoopState:
     # by resize, genuinely main-loop-level, not owned by either module.
     resize_message: str | None = None
     resize_message_until: float = 0.0
+    # True when resize_message is a failure/error toast (a launcher/
+    # restore spawn that exited nonzero, or timed out with no window
+    # ever appearing — see pending_moves.PendingMovesResult) — drawn
+    # with the "urgent" theme role instead of "accent". Naming mirrors
+    # NavItem.preview_urgent's existing convention. Reset to False
+    # whenever resize_message itself is cleared or reassigned.
+    resize_message_urgent: bool = False
 
     # The compiled curses color-pair mapping currently in effect —
     # rebound in place after a live theme edit so rendering picks it up

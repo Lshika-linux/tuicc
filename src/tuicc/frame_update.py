@@ -210,13 +210,13 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
 
     if moves.entries:
         current_windows = [w for r in state.regions for w in r.windows]
-        reclaimed_focus, resolved_target_regions = pending_moves.process(
+        result = pending_moves.process(
             moves, provider, current_windows, loop_state.dismissed, time.monotonic(), cfg.fullscreen_only,
             own_region_id=loop_state.last_focused_region_id,
         )
-        if reclaimed_focus:
+        if result.reclaimed_focus:
             loop_state.expect_focus_reclaim = True
-        if resolved_target_regions and (loop_state.focus_id is None or loop_state.focus_id == loop_state.last_focused_region_id):
+        if result.resolved_target_regions and (loop_state.focus_id is None or loop_state.focus_id == loop_state.last_focused_region_id):
             # expect_focus_reclaim suppresses the real-transition reset
             # while a restore/spawn is resolving, so focus_id
             # (preview.py's own target) never otherwise gets to follow
@@ -224,7 +224,18 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
             # deliberately selected elsewhere — LOAD-BEARING: without
             # this the preview stayed permanently blank after a session
             # restore.
-            loop_state.focus_id = resolved_target_regions[-1]
+            loop_state.focus_id = result.resolved_target_regions[-1]
+        if result.failure_messages:
+            # Single-line toast, one at a time — a rare same-frame
+            # multi-failure round silently keeps only the last, matching
+            # this mechanism's existing one-thing-at-a-time nature (the
+            # resize/spawn-picker hints already only ever show one
+            # thing too). Longer than the routine 3.0s save/preset
+            # toasts (loop_state.py's own doc comment) since a failure
+            # is more important to actually notice.
+            loop_state.resize_message = result.failure_messages[-1]
+            loop_state.resize_message_until = time.monotonic() + 5.0
+            loop_state.resize_message_urgent = True
 
     # A two-level module's expanded state may only be left via Escape
     # or picking an action, never silently by navigating elsewhere —

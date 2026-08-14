@@ -22,6 +22,7 @@ LauncherState: a dataclass is just the state, every function here takes
 one and mutates it, main.py still owns *when* to call them.
 """
 
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,8 +64,17 @@ def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: se
 
     expected_app_id = entry.get("app_id")
     if expected_app_id is not None:
+        # Case-insensitive: a .desktop's StartupWMClass= and a window's
+        # real runtime app_id commonly differ only in case — confirmed
+        # live with VS Code (StartupWMClass=Code, real app_id=code).
+        # Not the separate, still-open fork/exec pid-mismatch class
+        # (CLAUDE/NOTES/known-limitations.md#fork-exec-pid-mismatch,
+        # where the two strings are genuinely unrelated) — just a
+        # casing convention gap between how a .desktop file and a
+        # window's own runtime identity happen to spell the same name.
+        expected_app_id_lower = expected_app_id.lower()
         for w in new_windows:
-            if w.app_id == expected_app_id:
+            if w.app_id.lower() == expected_app_id_lower:
                 return w
         return None
 
@@ -85,11 +95,19 @@ class PendingMovesQueue:
     last_restore_launch: float = 0.0
 
 
-def queue_restore_entry(queue: PendingMovesQueue, session_entry: dict, known_ids: set, pid, now: float) -> None:
+def queue_restore_entry(
+    queue: PendingMovesQueue, session_entry: dict, known_ids: set, pid, now: float,
+    log_path: Path | None = None,
+) -> None:
     """Appends one entry for a session-restore spawn. Carries
     floating+rect when the saved window was floating (session.py's
     saved shape) — queue_launcher_spawn below never does, since the
-    launcher has no saved geometry to restore.
+    launcher has no saved geometry to restore. log_path mirrors
+    queue_launcher_spawn's own param, same reason — promote_restore_queue
+    below already captures spawn_detached()'s output for a different
+    reason (CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash);
+    threading the same path through here means a fast nonzero-exit
+    failure toast can reference it too, not just launcher spawns.
     """
     entry = {
         "target_region": session_entry["target_region"],
@@ -98,6 +116,7 @@ def queue_restore_entry(queue: PendingMovesQueue, session_entry: dict, known_ids
         "app_id": session_entry["app_id"],
         "started_at": now,
         "floating": session_entry.get("floating", False),
+        "log_path": log_path,
     }
     if entry["floating"]:
         entry["rect"] = (
@@ -107,9 +126,16 @@ def queue_restore_entry(queue: PendingMovesQueue, session_entry: dict, known_ids
     queue.entries.append(entry)
 
 
-def queue_launcher_spawn(queue: PendingMovesQueue, target_region, known_ids: set, pid, app_id_hint, now: float) -> None:
+def queue_launcher_spawn(
+    queue: PendingMovesQueue, target_region, known_ids: set, pid, app_id_hint, now: float,
+    log_path: Path | None = None,
+) -> None:
     """Appends one entry for a launcher-confirmed spawn — never carries
-    floating/rect, unlike queue_restore_entry's entries.
+    floating/rect, unlike queue_restore_entry's entries. log_path (when
+    the caller captured spawn_detached()'s output) is read back by
+    _quick_exit_failure_message() on a fast nonzero-exit give-up, so the
+    user's failure toast can point at real captured stderr instead of
+    just an exit code.
     """
     queue.entries.append({
         "target_region": target_region,
@@ -117,6 +143,7 @@ def queue_launcher_spawn(queue: PendingMovesQueue, target_region, known_ids: set
         "pid": pid,
         "app_id": app_id_hint,
         "started_at": now,
+        "log_path": log_path,
     })
 
 
@@ -143,7 +170,7 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     # after the pid is known, well before the restored window has had a
     # chance to map and steal focus/fullscreen from tuicc.
     provider.no_focus_next_window(pid)
-    queue_restore_entry(queue, session_entry, known_ids, pid, now)
+    queue_restore_entry(queue, session_entry, known_ids, pid, now, log_path)
     queue.last_restore_launch = now
 
 
@@ -167,27 +194,110 @@ def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Windo
             w.pid = provider.resolve_pid(w.id)
 
 
+@dataclass
+class PendingMovesResult:
+    """process()'s return value — see
+    CLAUDE/NOTES/design-decisions.md#pending-moves-process-contract for
+    the full contract. Promoted from a (reclaimed_focus,
+    resolved_target_regions) 2-tuple once failure_messages was added —
+    same "value outgrew 2 fields, make it a dataclass" convention as
+    frame_update.FrameResult/resize_mode.EditKeyResult. failure_messages
+    is populated on a quick nonzero-exit give-up or a MOVE_TIMEOUT_SECONDS
+    give-up; never on a real match or while an entry is still pending.
+    """
+    reclaimed_focus: bool
+    resolved_target_regions: list
+    failure_messages: list = field(default_factory=list)
+
+
+def _check_quick_exit(entry: dict) -> int | None:
+    """Non-blocking check of whether entry's spawned pid has already
+    exited, via os.waitpid(pid, os.WNOHANG) — the same primitive
+    control.py's _run_detached_detecting_quick_failure() uses, but
+    called once per frame here instead of in a bounded spin-loop, since
+    process() itself already runs every frame. Returns the cached exit
+    code once known (including 0 — a valid, real result, not "unknown"),
+    None while still running or when entry has no pid to check. Caches
+    onto entry["exit_code"] so a reaped pid's status is never asked for
+    twice (os.waitpid raises ChildProcessError the second time).
+    """
+    if entry.get("pid") is None:
+        return None
+    if "exit_code" in entry:
+        return entry["exit_code"]
+    try:
+        finished_pid, status = os.waitpid(entry["pid"], os.WNOHANG)
+    except ChildProcessError:
+        # Already reaped elsewhere, or not actually our child — can't
+        # tell what happened; stop asking, fall back to the
+        # PID_GRACE_SECONDS timer like before this check existed.
+        entry["exit_code"] = None
+        return None
+    if finished_pid == 0:
+        return None  # still running
+    entry["exit_code"] = os.waitstatus_to_exitcode(status)
+    return entry["exit_code"]
+
+
+def _quick_exit_failure_message(entry: dict, exit_code: int) -> str:
+    """One line, safe for draw_status_line's single-line/term_width-
+    clipped toast — full captured output (if any) stays in the on-disk
+    log file, referenced by name only, never embedded here.
+    """
+    label = entry.get("app_id") or "Command"
+    log_path = entry.get("log_path")
+    if log_path is not None:
+        return f"{label} exited (code {exit_code}) — see {log_path.name}"
+    return f"{label} exited (code {exit_code})"
+
+
+def _timeout_failure_message(entry: dict) -> str:
+    """Distinct wording from _quick_exit_failure_message: no exit code
+    to report here — the process may still be running (e.g. the
+    fork/exec pid-mismatch class in
+    CLAUDE/NOTES/known-limitations.md#fork-exec-pid-mismatch, which this
+    module's quick-exit check can't see since that pid never exits).
+    """
+    label = entry.get("app_id") or "Command"
+    return f"{label} never opened a window (timed out)"
+
+
 def process(
     queue: PendingMovesQueue, provider, current_windows: list[Window],
     dismissed: bool, now: float, fullscreen_only: bool = False,
     own_region_id: str | None = None,
-) -> tuple[bool, list[str]]:
+) -> PendingMovesResult:
     """Resolves every entry in queue against current_windows: enriches
-    pids, downgrades pid- to app_id-matching after PID_GRACE_SECONDS,
+    pids, downgrades pid- to app_id-matching either immediately (on a
+    confirmed quick clean exit — see _check_quick_exit) or after
+    PID_GRACE_SECONDS as a fallback for pids that never exit at all,
     moves+floats a matched window, then reclaims focus unless dismissed
-    (must not un-hide a deliberately-dismissed tuicc). Entries past
-    MOVE_TIMEOUT_SECONDS are dropped but still reclaim focus first.
+    (must not un-hide a deliberately-dismissed tuicc). Entries whose
+    spawned process exits nonzero are dropped immediately; entries past
+    MOVE_TIMEOUT_SECONDS are dropped too — both still reclaim focus
+    first and both add a message to the returned failure_messages list.
     own_region_id decides whether to request force_relayout (see
-    CLAUDE/NOTES/wm-quirks.md#fullscreen-suppresses-layout). Returns
-    (reclaimed_focus, resolved_target_regions) — see
+    CLAUDE/NOTES/wm-quirks.md#fullscreen-suppresses-layout). See
     CLAUDE/NOTES/design-decisions.md#pending-moves-process-contract for
-    the full contract and the bugs it fixes.
+    the full PendingMovesResult contract and the bugs it fixes.
     """
     _enrich_pids(queue, provider, current_windows)
     reclaimed_focus = False
     resolved_target_regions = []
+    failures = []
     still_pending = []
     for entry in queue.entries:
+        if entry.get("pid") is not None:
+            exit_code = _check_quick_exit(entry)
+            if exit_code == 0:
+                entry["pid"] = None  # clean exit — hand off to app_id-tier now
+            elif exit_code is not None:
+                failures.append(_quick_exit_failure_message(entry, exit_code))
+                if not dismissed:
+                    provider.focus_self(fullscreen=fullscreen_only)
+                    reclaimed_focus = True
+                continue  # dropped — never added to still_pending
+
         if (entry.get("pid") is not None and entry.get("app_id") is not None
                 and now - entry["started_at"] > PID_GRACE_SECONDS):
             entry["pid"] = None
@@ -209,9 +319,10 @@ def process(
             # Giving up on this entry's match — see the docstring above
             # for why tuicc's own focus/fullscreen recovery must not
             # wait on that outcome.
+            failures.append(_timeout_failure_message(entry))
             provider.focus_self(fullscreen=fullscreen_only)
             reclaimed_focus = True
     queue.entries = still_pending
     if not queue.entries:
         queue.claimed_ids.clear()
-    return reclaimed_focus, resolved_target_regions
+    return PendingMovesResult(reclaimed_focus, resolved_target_regions, failures)

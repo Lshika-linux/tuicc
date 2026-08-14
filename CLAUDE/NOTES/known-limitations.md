@@ -22,6 +22,8 @@ Proposed fix, not yet implemented: a last-resort escalation to the "any remainin
 
 The same pid-mismatch gap silently no-ops `no_focus_next_window()` too (see `CLAUDE/NOTES/wm-quirks.md#no-focus-pid-criteria`) — not a new gap, the same underlying mismatch.
 
+**Not fixed by `pending_moves.py`'s quick-exit detection** (`CLAUDE/NOTES/design-decisions.md#pending-moves-quick-exit-detection`), which resolves a related but different mechanism: an app (VS Code's NixOS wrapper, live-confirmed) whose captured process itself exits cleanly after handing a new-window request off to an already-running instance via its own IPC. That fix works because the captured pid actually *exits* — `_check_quick_exit()` can observe that and react immediately. The wrapper-backgrounds-its-child case documented above is different: the captured pid never exits at all (it keeps running as a supervisor/wrapper), so `_check_quick_exit()`'s `os.waitpid(pid, os.WNOHANG)` just keeps returning "still running," forever — the unchanged `PID_GRACE_SECONDS` timer remains the only downgrade path for this class, exactly as before.
+
 ## `for_window` rules accumulate for the WM session {#for-window-accumulation}
 
 sway/i3 have no IPC command to remove a `for_window` rule once added — only a full WM restart clears them. `no_focus_next_window()` adds one such rule per spawn, for the lifetime of the WM session. See `CLAUDE/NOTES/wm-quirks.md#no-focus-pid-criteria` for the collision-probability math and why this is an accepted tradeoff rather than a bug to fix.

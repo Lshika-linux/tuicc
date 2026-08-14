@@ -7,6 +7,11 @@ connection) and a monkeypatched spawn_detached (no real process
 spawned).
 """
 
+import os
+import subprocess
+import time
+from pathlib import Path
+
 import tuicc.pending_moves as pending_moves
 from tuicc.model import Window
 from tuicc.pending_moves import (
@@ -160,6 +165,28 @@ def test_app_id_mismatch_waits_instead_of_guessing():
     assert result is None
 
 
+def test_app_id_match_is_case_insensitive():
+    # Live-confirmed real case: VS Code's .desktop declares
+    # StartupWMClass=Code, but the real window's runtime app_id is
+    # "code" — an exact-case match would wait forever for a window
+    # that will never satisfy it.
+    entry = {"known_ids": set(), "app_id": "Code"}
+    current = [_window("1", "kitty"), _window("2", "code")]
+
+    result = resolve_pending_move(entry, current, claimed=set())
+
+    assert result.id == "2"
+
+
+def test_app_id_match_case_insensitive_the_other_direction_too():
+    entry = {"known_ids": set(), "app_id": "firefox"}
+    current = [_window("1", "kitty"), _window("2", "Firefox")]
+
+    result = resolve_pending_move(entry, current, claimed=set())
+
+    assert result.id == "2"
+
+
 def test_pid_tier_never_falls_back_to_app_id_tier():
     # An entry with BOTH a pid and app_id expectation must still only
     # ever match on pid — app_id is not a secondary chance for the same
@@ -230,8 +257,31 @@ def test_queue_launcher_spawn_never_carries_floating_or_rect():
     entry = queue.entries[0]
     assert entry == {
         "target_region": "2", "known_ids": {"1"}, "pid": 99,
-        "app_id": "firefox", "started_at": 1.0,
+        "app_id": "firefox", "started_at": 1.0, "log_path": None,
     }
+
+
+def test_queue_launcher_spawn_carries_log_path_when_given():
+    queue = PendingMovesQueue()
+
+    queue_launcher_spawn(
+        queue, target_region="2", known_ids={"1"}, pid=99, app_id_hint="firefox", now=1.0,
+        log_path=Path("/tmp/launcher_firefox_1.log"),
+    )
+
+    assert queue.entries[0]["log_path"] == Path("/tmp/launcher_firefox_1.log")
+
+
+def test_queue_restore_entry_carries_log_path_when_given():
+    queue = PendingMovesQueue()
+    session_entry = {"target_region": "3", "app_id": "kitty"}
+
+    queue_restore_entry(
+        queue, session_entry, known_ids={"1"}, pid=123, now=10.0,
+        log_path=Path("/tmp/restore_kitty_1.log"),
+    )
+
+    assert queue.entries[0]["log_path"] == Path("/tmp/restore_kitty_1.log")
 
 
 # ---------- promote_restore_queue ----------
@@ -334,11 +384,11 @@ def test_process_focus_self_called_when_not_dismissed():
     queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty")]
 
-    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
+    result = process(queue, provider, current, dismissed=False, now=1.0)
 
     assert provider.focus_self_calls == 1
-    assert reclaimed_focus is True
-    assert resolved_target_regions == ["3"]
+    assert result.reclaimed_focus is True
+    assert result.resolved_target_regions == ["3"]
 
 
 def test_process_defaults_to_not_fullscreen():
@@ -383,12 +433,12 @@ def test_process_focus_self_not_called_when_dismissed():
     queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
     current = [_window("1", "kitty")]
 
-    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=True, now=1.0)
+    result = process(queue, provider, current, dismissed=True, now=1.0)
 
     assert provider.moved == [("1", "3")]
     assert provider.focus_self_calls == 0
-    assert reclaimed_focus is False
-    assert resolved_target_regions == ["3"]  # matched+moved regardless of dismissed; only focus_self() is gated
+    assert result.reclaimed_focus is False
+    assert result.resolved_target_regions == ["3"]  # matched+moved regardless of dismissed; only focus_self() is gated
 
 
 def test_process_returns_false_when_nothing_resolves():
@@ -400,10 +450,10 @@ def test_process_returns_false_when_nothing_resolves():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]  # no new window
 
-    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
+    result = process(queue, provider, current, dismissed=False, now=1.0)
 
-    assert reclaimed_focus is False
-    assert resolved_target_regions == []
+    assert result.reclaimed_focus is False
+    assert result.resolved_target_regions == []
 
 
 def test_process_floating_entry_calls_set_floating_geometry():
@@ -456,7 +506,7 @@ def test_process_reclaims_focus_when_entry_times_out_unmatched():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]  # no matching window ever shows up
 
-    reclaimed_focus, resolved_target_regions = process(
+    result = process(
         queue, provider, current, dismissed=False,
         now=MOVE_TIMEOUT_SECONDS + 1, fullscreen_only=True,
     )
@@ -465,8 +515,9 @@ def test_process_reclaims_focus_when_entry_times_out_unmatched():
     assert provider.moved == []
     assert provider.focus_self_calls == 1
     assert provider.focus_self_fullscreen_args == [True]
-    assert reclaimed_focus is True
-    assert resolved_target_regions == []  # gave up unmatched — no real destination to report
+    assert result.reclaimed_focus is True
+    assert result.resolved_target_regions == []  # gave up unmatched — no real destination to report
+    assert result.failure_messages == ["obsidian never opened a window (timed out)"]
 
 
 def test_process_does_not_reclaim_focus_on_timeout_while_dismissed():
@@ -475,11 +526,12 @@ def test_process_does_not_reclaim_focus_on_timeout_while_dismissed():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]
 
-    reclaimed_focus, resolved_target_regions = process(queue, provider, current, dismissed=True, now=MOVE_TIMEOUT_SECONDS + 1)
+    result = process(queue, provider, current, dismissed=True, now=MOVE_TIMEOUT_SECONDS + 1)
 
     assert provider.focus_self_calls == 0
-    assert reclaimed_focus is False
-    assert resolved_target_regions == []
+    assert result.reclaimed_focus is False
+    assert result.resolved_target_regions == []
+    assert result.failure_messages == []  # give-up path is skipped entirely while dismissed
 
 
 def test_process_pid_downgrades_to_app_id_after_grace_period():
@@ -535,9 +587,9 @@ def test_process_resolved_target_regions_lists_every_match_this_round():
     queue = PendingMovesQueue(entries=[entry_a, entry_b])
     current = [_window("1", "kitty"), _window("2", "firefox")]
 
-    _, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
+    result = process(queue, provider, current, dismissed=False, now=1.0)
 
-    assert resolved_target_regions == ["1", "2"]
+    assert result.resolved_target_regions == ["1", "2"]
 
 
 def test_process_resolved_target_regions_omits_still_pending_entries():
@@ -546,9 +598,9 @@ def test_process_resolved_target_regions_omits_still_pending_entries():
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]  # no new window yet — still within timeout
 
-    _, resolved_target_regions = process(queue, provider, current, dismissed=False, now=1.0)
+    result = process(queue, provider, current, dismissed=False, now=1.0)
 
-    assert resolved_target_regions == []
+    assert result.resolved_target_regions == []
     assert queue.entries == [entry]
 
 
@@ -562,9 +614,9 @@ def test_process_resolved_target_regions_includes_a_match_even_while_dismissed()
     queue = PendingMovesQueue(entries=[entry])
     current = [_window("1", "kitty")]
 
-    _, resolved_target_regions = process(queue, provider, current, dismissed=True, now=1.0)
+    result = process(queue, provider, current, dismissed=True, now=1.0)
 
-    assert resolved_target_regions == ["7"]
+    assert result.resolved_target_regions == ["7"]
 
 
 # ---------- process: force_relayout ----------
@@ -700,3 +752,146 @@ def test_process_matches_via_enriched_pid_on_a_provider_with_no_native_pid():
 
     assert provider.moved == [("2", "3")]
     assert queue.entries == []
+
+
+# ---------- process: quick-exit detection ----------
+# See CLAUDE/NOTES/design-decisions.md#pending-moves-quick-exit-detection.
+# Real, short-lived subprocesses here (not a mocked os.waitpid) for the
+# actual exit-code tests — process lifecycle timing is exactly what's
+# under test, same philosophy test_control.py's own
+# _run_detached_detecting_quick_failure tests already use.
+
+def _let_subprocess_exit(seconds=0.3):
+    """A fixed wait for a trivial fast-exiting subprocess (`sh -c
+    'exit N'`) to have actually exited at the OS level. Deliberately
+    never calls proc.poll()/proc.wait() — either would reap the child
+    itself via Python's own os.waitpid(WNOHANG) call, consuming the one
+    reap _check_quick_exit's own os.waitpid() needs to see (a pid can
+    only be waitpid()'d successfully once). Mirrors control.py's own
+    QUICK_FAILURE_WINDOW_SECONDS=0.3 assumption that a trivial local
+    process exits well within this window.
+    """
+    time.sleep(seconds)
+
+
+def test_process_exit_0_downgrades_pid_immediately_well_before_grace_period():
+    proc = subprocess.Popen(["sh", "-c", "exit 0"])
+    _let_subprocess_exit()
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": proc.pid, "app_id": "kitty",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+    # A window matching app_id but NOT the (already-dead) expected pid —
+    # only reachable via app_id-tier, which the old fixed-timer downgrade
+    # would not have unlocked yet at this `now` (well under
+    # PID_GRACE_SECONDS = 6.0).
+    current = [_window("1", "kitty", pid=111)]
+
+    result = process(queue, provider, current, dismissed=False, now=0.5)
+
+    assert provider.moved == [("1", "3")]
+    assert queue.entries == []
+    assert result.failure_messages == []
+
+
+def test_process_nonzero_exit_drops_entry_immediately_with_failure_message():
+    proc = subprocess.Popen(["sh", "-c", "exit 7"])
+    _let_subprocess_exit()
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": proc.pid, "app_id": "firefox",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+
+    result = process(queue, provider, current_windows=[], dismissed=False, now=0.1)
+
+    assert queue.entries == []  # dropped now, not left still_pending until MOVE_TIMEOUT_SECONDS
+    assert provider.moved == []
+    assert provider.focus_self_calls == 1
+    assert result.reclaimed_focus is True
+    assert result.resolved_target_regions == []
+    assert result.failure_messages == ["firefox exited (code 7)"]
+
+
+def test_process_nonzero_exit_reports_failure_but_skips_focus_self_while_dismissed():
+    proc = subprocess.Popen(["sh", "-c", "exit 3"])
+    _let_subprocess_exit()
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": proc.pid, "app_id": "firefox",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+
+    result = process(queue, provider, current_windows=[], dismissed=True, now=0.1)
+
+    assert provider.focus_self_calls == 0
+    assert result.reclaimed_focus is False
+    assert result.failure_messages == ["firefox exited (code 3)"]
+
+
+def test_process_nonzero_exit_message_references_log_path_name_when_captured():
+    proc = subprocess.Popen(["sh", "-c", "exit 1"])
+    _let_subprocess_exit()
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": proc.pid, "app_id": "obsidian",
+        "log_path": Path("/home/user/.config/tuicc/logs/launcher_obsidian_123.log"),
+    }
+    queue = PendingMovesQueue(entries=[entry])
+
+    result = process(queue, provider, current_windows=[], dismissed=False, now=0.1)
+
+    assert result.failure_messages == ["obsidian exited (code 1) — see launcher_obsidian_123.log"]
+
+
+def test_process_still_running_pid_is_left_completely_untouched():
+    proc = subprocess.Popen(["sleep", "2"])
+    try:
+        provider = _FakeProvider()
+        entry = {
+            "known_ids": {"1"}, "target_region": "3", "started_at": 0.0,
+            "pid": proc.pid, "app_id": "kitty",
+        }
+        queue = PendingMovesQueue(entries=[entry])
+        current = [_window("1", "kitty")]  # no new window — nothing to match anyway
+
+        result = process(queue, provider, current, dismissed=False, now=0.1)
+
+        assert entry["pid"] == proc.pid  # untouched — not downgraded
+        assert "exit_code" not in entry
+        assert queue.entries == [entry]
+        assert result.failure_messages == []
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_check_quick_exit_returns_none_and_caches_when_pid_is_not_our_child():
+    # os.waitpid on a pid that isn't our own direct child (here: our own
+    # pid) always raises ChildProcessError — the defensive fallback path.
+    entry = {"pid": os.getpid()}
+
+    result = pending_moves._check_quick_exit(entry)
+
+    assert result is None
+    assert entry["exit_code"] is None  # cached — a second call won't retry the syscall
+
+
+def test_check_quick_exit_does_not_call_waitpid_again_once_cached(monkeypatch):
+    entry = {"pid": 4242, "exit_code": 7}  # already cached from a prior call
+
+    def _boom(pid, options):
+        raise AssertionError("waitpid called again on an already-cached entry")
+    monkeypatch.setattr(pending_moves.os, "waitpid", _boom)
+
+    assert pending_moves._check_quick_exit(entry) == 7
+
+
+def test_check_quick_exit_returns_none_for_an_entry_with_no_pid():
+    assert pending_moves._check_quick_exit({"pid": None}) is None
+    assert pending_moves._check_quick_exit({}) is None
