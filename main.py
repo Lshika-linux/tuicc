@@ -86,13 +86,11 @@ def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, vi
     return resolved
 
 
-# Phase 0 of the LoopState migration (CLAUDE/NOTES/design-decisions.md
-# #loopstate-migration): these six touch none of main()'s loop-owned
-# state, so they flatten to plain module-level functions with no
-# LoopState dependency at all — everything they need is an explicit
-# param. Still not moved into sessions.py/sysmon.py/connectivity.py:
-# sessions_naming needs cfg.session_names/set_session_name, and no
-# module in this codebase imports config.py.
+# Module-level, not closures: touch none of main()'s LoopState fields
+# (CLAUDE/NOTES/design-decisions.md#loopstate-migration). Still not
+# moved into sessions.py/sysmon.py/connectivity.py — sessions_naming
+# needs cfg.session_names/set_session_name, and no module here imports
+# config.py.
 
 def do_enter_resize(resize):
     resize_mode.enter_edit_mode(resize)
@@ -185,10 +183,9 @@ def any_two_level_module_expanded():
     return sessions_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
 
 
-# Phase 1 of the LoopState migration: these four's only loop-owned
-# dependency was mode_stack, which needed no nonlocal even as a closure
-# (see loop_state.py's own docstring) — flattening them now just makes
-# that already-true fact explicit in their signatures.
+# mode_stack was these four's only shared dependency, and never needed
+# nonlocal even as a closure (see loop_state.py's own docstring) —
+# module-level just makes that explicit in the signature.
 
 def do_spawn_picker(loop_state, cfg, spawn_picker):
     available = set(MODULES.keys()) - {b.name for b in cfg.layout.boxes}
@@ -241,11 +238,8 @@ def handle_help(key, loop_state, cfg, help_state):
     return True
 
 
-# Phase 2: resize_message/resize_message_until (always touched as a
-# pair — see loop_state.py). do_save_layout/do_new_preset touched
-# nothing else loop-owned, so they flatten fully; do_cycle_preset
-# (still a closure in main(), still needs active_module) converts just
-# its own resize_message/_until writes.
+# resize_message/resize_message_until always move together — see
+# loop_state.py.
 
 def do_save_layout(loop_state, cfg, resize):
     save_layout_to_preset(cfg.layout, cfg.preset_number)
@@ -255,9 +249,9 @@ def do_save_layout(loop_state, cfg, resize):
 
 
 def handle_help_colors(key, loop_state, cfg, help_state):
-    # loop_state.theme_pairs reassigned in place (Phase 3), not a
-    # closure-local rebind — the color saves to cfg.theme/config.toml
-    # correctly but never renders until restart if this line is skipped.
+    # loop_state.theme_pairs reassigned in place, not just cfg.theme —
+    # skip this and the color saves to config.toml but never renders
+    # until restart.
     if key == cfg.keybinds["confirm"]:
         result = help_mode.apply_color_edit(help_state)
         if result is not None:
@@ -283,6 +277,129 @@ def do_new_preset(loop_state, cfg, resize):
     loop_state.resize_message = f"Saved as new preset {new_number}"
     loop_state.resize_message_until = time.monotonic() + 3.0
     resize_mode.exit_edit_mode(resize)
+
+
+# active_module/selected_id/focus_id always move together —
+# resolve_selection() returns all three as one unit at 8+ call sites.
+
+def do_cycle_preset(loop_state, cfg, resize):
+    numbers = available_preset_numbers()
+    if numbers:
+        idx = numbers.index(cfg.preset_number) if cfg.preset_number in numbers else -1
+        next_number = numbers[(idx + 1) % len(numbers)]
+        cfg.layout = build_layout_from_preset(next_number)
+        set_active_preset(next_number)
+        cfg.preset_number = next_number
+        loop_state.active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
+        loop_state.resize_message = f"preset {next_number}"
+        loop_state.resize_message_until = time.monotonic() + 3.0
+    resize_mode.exit_edit_mode(resize)
+
+
+def do_apply_reselect(loop_state, action_ctx, ordered):
+    # See ActionContext.reselect_region_id/reselect_item_id's docstrings
+    # — both consumed once, right after any dispatch/confirm site that
+    # might have set either. ordered is a per-frame value (this frame's
+    # tab_order() result), passed explicitly rather than closure-read,
+    # same as boxes/term_width/term_height elsewhere in this file.
+    if action_ctx.reselect_item_id is not None:
+        # No lookup against `ordered` — it still reflects last frame's
+        # nav_items(), so this id typically isn't in it yet.
+        # module_of_item's "modulename:id" convention derives
+        # active_module without needing a real NavItem.
+        loop_state.selected_id = action_ctx.reselect_item_id
+        loop_state.active_module = loop_state.selected_id.split(":")[0]
+        action_ctx.reselect_item_id = None
+        return
+    # Looks up a real region NavItem instead of hardcoding an id-prefix
+    # convention here, since which module actually owns "region" items
+    # (sidebar vs sidebar_compact) is a preset/config choice, not
+    # something main.py should assume.
+    if action_ctx.reselect_region_id is None:
+        return
+    region_item = next(
+        (it for it in ordered if it.target_kind == "region" and it.focus_target == action_ctx.reselect_region_id),
+        None,
+    )
+    if region_item is not None:
+        loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(
+            region_item, loop_state.focus_id
+        )
+    action_ctx.reselect_region_id = None
+
+
+def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
+    # Up/Down shift the ambient launch target without leaving typing
+    # mode. Left/Right stay with handle_typing_key (they move the
+    # selected search result) — arrow keys never collide with typed
+    # chars, including vim's own j/k (a separate keybind).
+    if key == cfg.keybinds["up"]:
+        current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
+        loop_state.focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
+        return True
+    if key == cfg.keybinds["down"]:
+        current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
+        loop_state.focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, 1)
+        return True
+    if key == cfg.keybinds["confirm"]:
+        selected = launcher_mode.resolve_selected(launcher)
+        if selected is not None:
+            cmd, app_id_hint = selected
+            known_ids = {w.id for r in state.regions for w in r.windows}
+            pid = spawn_detached(cmd, shell_true=False)  # .desktop Exec= is never shell-interpreted
+            # Called before the spawned window can map and steal
+            # focus/fullscreen — see no_focus_next_window()'s docstring.
+            provider.no_focus_next_window(pid)
+            # Falls back to whatever's actually focused when no sidebar
+            # region is explicitly selected. app_id_hint is only a
+            # fallback — the pid tier is tried first.
+            pending_moves.queue_launcher_spawn(
+                moves,
+                loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id,
+                known_ids, pid, app_id_hint, time.monotonic(),
+            )
+            launcher_mode.exit_typing_mode(launcher)
+            loop_state.selected_id = launcher.saved_selected_id
+            loop_state.active_module = launcher.saved_active_module
+            return False
+        # selected is None (no search results): nothing happens,
+        # typing_mode stays True — not an implicit cancel.
+        return True
+    if not launcher_mode.handle_typing_key(launcher, key, cfg):
+        # Escape, or Backspace on an empty query — same restore as the
+        # confirm branch above.
+        loop_state.selected_id = launcher.saved_selected_id
+        loop_state.active_module = launcher.saved_active_module
+        return False
+    return True
+
+
+def handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize):
+    choice = resize_mode.choose(spawn_picker, key)
+    if choice is not None:
+        new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
+        cfg.layout.boxes.append(new_box)
+        loop_state.active_module = choice
+        # Handoff: pop "spawn_picker" before pushing "resize_editing" —
+        # the generic dispatch's post-call pop would otherwise remove
+        # whatever's on top AFTER we push, not our own frame.
+        loop_state.mode_stack.pop()
+        do_enter_box_editing(loop_state, resize, new_box, is_new=True)
+        return True  # stack already correctly arranged
+    return False
+
+
+def handle_resize_editing(key, loop_state, resize, cfg, direction_keys, boxes, term_width, term_height, handoff_targets):
+    result = resize_mode.handle_editing_key(
+        resize, key, cfg, loop_state.active_module, direction_keys, boxes, term_width, term_height
+    )
+    if result.deleted_name is not None and loop_state.active_module == result.deleted_name:
+        loop_state.active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
+    if result.handoff is not None:
+        loop_state.mode_stack.pop()
+        handoff_targets[result.handoff]()
+        return True  # stack already correctly arranged, don't pop again
+    return result.still_claiming
 
 
 def main(stdscr):
@@ -330,134 +447,22 @@ def main(stdscr):
         module_next_keys.add(cfg.keybinds["vim_right"])
         module_prev_keys.add(cfg.keybinds["vim_left"])
 
-    selected_id = None
-    focus_id = None
-    active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
-
-    # loop_state: every name main()'s loop rebinds/mutates across frames
-    # (mode_stack, resize_message/_until, theme_pairs, pending_confirm,
-    # dismissed, last_focused_region_id, origin_region_id,
-    # expect_focus_reclaim, resolved_pid_cache — see loop_state.py's own
-    # docstring for the full field list and why each one lives there
-    # instead of a bare local; CLAUDE/NOTES/design-decisions.md
-    # #loopstate-migration for the phased migration this landed through).
-    # Can't read state.focused_region_id for origin_region_id at dismiss
-    # time: it's already tuicc's own region whenever tuicc has WM focus
+    # Every name main()'s loop rebinds/mutates across frames — see
+    # loop_state.py for the full field list and rationale. Can't read
+    # state.focused_region_id for origin_region_id at dismiss time: it's
+    # already tuicc's own region whenever tuicc has WM focus
     # (parse_tree() doesn't filter self out of that field) — tracks the
     # value being *replaced* on each real transition instead.
-    loop_state = LoopState(theme_pairs=app.theme_pairs)
+    loop_state = LoopState(
+        theme_pairs=app.theme_pairs,
+        active_module=cfg.layout.boxes[0].name if cfg.layout.boxes else None,
+    )
 
     resize = resize_mode.ResizeState()
     spawn_picker = resize_mode.SpawnPickerState()
     help_state = help_mode.HelpState()
     launcher = launcher_mode.LauncherState()
     moves = pending_moves.PendingMovesQueue()
-
-    def do_cycle_preset():
-        # resize_message/_until moved to loop_state (Phase 2 of the
-        # LoopState migration) — active_module hasn't yet (Phase 5),
-        # so this one closure still needs nonlocal for it alone.
-        nonlocal active_module
-        numbers = available_preset_numbers()
-        if numbers:
-            idx = numbers.index(cfg.preset_number) if cfg.preset_number in numbers else -1
-            next_number = numbers[(idx + 1) % len(numbers)]
-            cfg.layout = build_layout_from_preset(next_number)
-            set_active_preset(next_number)
-            cfg.preset_number = next_number
-            active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
-            loop_state.resize_message = f"preset {next_number}"
-            loop_state.resize_message_until = time.monotonic() + 3.0
-        resize_mode.exit_edit_mode(resize)
-
-    def do_apply_reselect():
-        # See ActionContext.reselect_region_id/reselect_item_id's
-        # docstrings — both consumed once, right after any dispatch/
-        # confirm site that might have set either.
-        nonlocal selected_id, active_module, focus_id
-        if action_ctx.reselect_item_id is not None:
-            # No lookup against `ordered` — it still reflects last
-            # frame's nav_items(), so this id typically isn't in it yet.
-            # module_of_item's "modulename:id" convention derives
-            # active_module without needing a real NavItem.
-            selected_id = action_ctx.reselect_item_id
-            active_module = selected_id.split(":")[0]
-            action_ctx.reselect_item_id = None
-            return
-        # Looks up a real region NavItem instead of hardcoding an
-        # id-prefix convention here, since which module actually owns
-        # "region" items (sidebar vs sidebar_compact) is a preset/
-        # config choice, not something main.py should assume.
-        if action_ctx.reselect_region_id is None:
-            return
-        region_item = next(
-            (it for it in ordered if it.target_kind == "region" and it.focus_target == action_ctx.reselect_region_id),
-            None,
-        )
-        if region_item is not None:
-            selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
-        action_ctx.reselect_region_id = None
-
-    def handle_launcher(key):
-        nonlocal focus_id, selected_id, active_module
-        # Up/Down shift the ambient launch target without leaving
-        # typing mode. Left/Right stay with handle_typing_key (they move
-        # the selected search result) — arrow keys never collide with
-        # typed chars, including vim's own j/k (a separate keybind).
-        if key == cfg.keybinds["up"]:
-            current = focus_id if focus_id is not None else state.focused_region_id
-            focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
-            return True
-        if key == cfg.keybinds["down"]:
-            current = focus_id if focus_id is not None else state.focused_region_id
-            focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, 1)
-            return True
-        if key == cfg.keybinds["confirm"]:
-            selected = launcher_mode.resolve_selected(launcher)
-            if selected is not None:
-                cmd, app_id_hint = selected
-                known_ids = {w.id for r in state.regions for w in r.windows}
-                pid = spawn_detached(cmd, shell_true=False)  # .desktop Exec= is never shell-interpreted
-                # Called before the spawned window can map and steal
-                # focus/fullscreen — see no_focus_next_window()'s docstring.
-                provider.no_focus_next_window(pid)
-                # Falls back to whatever's actually focused when no
-                # sidebar region is explicitly selected. app_id_hint is
-                # only a fallback — the pid tier is tried first.
-                pending_moves.queue_launcher_spawn(
-                    moves,
-                    focus_id if focus_id is not None else state.focused_region_id,
-                    known_ids, pid, app_id_hint, time.monotonic(),
-                )
-                launcher_mode.exit_typing_mode(launcher)
-                selected_id = launcher.saved_selected_id
-                active_module = launcher.saved_active_module
-                return False
-            # selected is None (no search results): nothing happens,
-            # typing_mode stays True — not an implicit cancel.
-            return True
-        if not launcher_mode.handle_typing_key(launcher, key, cfg):
-            # Escape, or Backspace on an empty query — same restore as
-            # the confirm branch above.
-            selected_id = launcher.saved_selected_id
-            active_module = launcher.saved_active_module
-            return False
-        return True
-
-    def handle_spawn_picker(key):
-        nonlocal active_module
-        choice = resize_mode.choose(spawn_picker, key)
-        if choice is not None:
-            new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
-            cfg.layout.boxes.append(new_box)
-            active_module = choice
-            # Handoff: pop "spawn_picker" before pushing "resize_editing" —
-            # the generic dispatch's post-call pop would otherwise
-            # remove whatever's on top AFTER we push, not our own frame.
-            loop_state.mode_stack.pop()
-            do_enter_box_editing(loop_state, resize, new_box, is_new=True)
-            return True  # stack already correctly arranged
-        return False
 
     # Keyed by the same names as cfg.keybinds/resize_mode.EditKeyResult's
     # own handoff strings — one vocabulary, not two. Change resize_mode's
@@ -467,23 +472,10 @@ def main(stdscr):
         "spawn_box": lambda: do_spawn_picker(loop_state, cfg, spawn_picker),
         "resize": lambda: do_enter_resize(resize),
         "save_layout": lambda: do_save_layout(loop_state, cfg, resize),
-        "cycle_preset": do_cycle_preset,
+        "cycle_preset": lambda: do_cycle_preset(loop_state, cfg, resize),
         "new_preset": lambda: do_new_preset(loop_state, cfg, resize),
         "help": lambda: do_enter_help(loop_state, help_state),
     }
-
-    def handle_resize_editing(key):
-        nonlocal active_module
-        result = resize_mode.handle_editing_key(
-            resize, key, cfg, active_module, direction_keys, boxes, term_width, term_height
-        )
-        if result.deleted_name is not None and active_module == result.deleted_name:
-            active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
-        if result.handoff is not None:
-            loop_state.mode_stack.pop()
-            HANDOFF_TARGETS[result.handoff]()
-            return True  # stack already correctly arranged, don't pop again
-        return result.still_claiming
 
     MODE_HANDLERS = {
         "sessions_naming": lambda key: handle_sessions_naming(key, cfg),
@@ -492,9 +484,11 @@ def main(stdscr):
         "connectivity_pairing": lambda key: handle_connectivity_pairing(key, cfg, bluez_agent),
         "help": lambda key: handle_help(key, loop_state, cfg, help_state),
         "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state),
-        "launcher": handle_launcher,
-        "spawn_picker": handle_spawn_picker,
-        "resize_editing": handle_resize_editing,
+        "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves),
+        "spawn_picker": lambda key: handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize),
+        "resize_editing": lambda key: handle_resize_editing(
+            key, loop_state, resize, cfg, direction_keys, boxes, term_width, term_height, HANDOFF_TARGETS
+        ),
     }
 
     # No `break` below this point — tuicc is a persistent process the
@@ -606,7 +600,7 @@ def main(stdscr):
                 procmon.flatten_windows(state), known_stats=status_worker.get("windows") or [],
             )
             pid_feed.set(_resolve_visible_pids(
-                windows_this_frame, selected_id, loop_state.resolved_pid_cache, provider, cfg.sysmon_visible_slots,
+                windows_this_frame, loop_state.selected_id, loop_state.resolved_pid_cache, provider, cfg.sysmon_visible_slots,
             ))
 
             if state.focused_region_id is not None and state.focused_region_id != loop_state.last_focused_region_id:
@@ -623,7 +617,7 @@ def main(stdscr):
                     # via the still_valid recovery block below, or
                     # focus_id/selected_id stay pinned to a stale context
                     # and every launcher spawn keeps targeting it.
-                    selected_id = None
+                    loop_state.selected_id = None
 
             if action_ctx.restore_queue:
                 known_ids = {w.id for r in state.regions for w in r.windows}
@@ -637,7 +631,7 @@ def main(stdscr):
                 )
                 if reclaimed_focus:
                     loop_state.expect_focus_reclaim = True
-                if resolved_target_regions and (focus_id is None or focus_id == loop_state.last_focused_region_id):
+                if resolved_target_regions and (loop_state.focus_id is None or loop_state.focus_id == loop_state.last_focused_region_id):
                     # expect_focus_reclaim suppresses the real-transition
                     # reset while a restore/spawn is resolving, so
                     # focus_id (preview.py's own target) never otherwise
@@ -645,27 +639,27 @@ def main(stdscr):
                     # when nothing was deliberately selected elsewhere —
                     # LOAD-BEARING: without this the preview stayed
                     # permanently blank after a session restore.
-                    focus_id = resolved_target_regions[-1]
+                    loop_state.focus_id = resolved_target_regions[-1]
 
             # A two-level module's expanded state may only be left via
             # Escape or picking an action, never silently by navigating
             # elsewhere — one check per frame catches every way
             # active_module can change, instead of patching each site.
-            if active_module != "sessions" and sessions_mode.is_expanded():
+            if loop_state.active_module != "sessions" and sessions_mode.is_expanded():
                 sessions_mode.collapse()
-            if active_module != "media" and media_mode.is_expanded():
+            if loop_state.active_module != "media" and media_mode.is_expanded():
                 media_mode.collapse()
-            if active_module != "sysmon" and sysmon_mode.is_expanded():
+            if loop_state.active_module != "sysmon" and sysmon_mode.is_expanded():
                 sysmon_mode.collapse()
 
             ctx = RenderContext(
                 state=state,
-                selected_id=selected_id,
-                focus_id=focus_id,
+                selected_id=loop_state.selected_id,
+                focus_id=loop_state.focus_id,
                 theme=loop_state.theme_pairs,
                 config=cfg,
                 pending_confirm=loop_state.pending_confirm,
-                active_module=active_module,
+                active_module=loop_state.active_module,
                 typing_mode=launcher.typing_mode,
                 search_query=launcher.search_query,
                 search_selected_index=launcher.search_selected_index,
@@ -684,13 +678,13 @@ def main(stdscr):
             items = collect_nav_items(cfg.layout, boxes, ctx)
             ordered = tab_order(items, mode=cfg.tab_order)
 
-            still_valid = any(item.id == selected_id for item in ordered)
+            still_valid = any(item.id == loop_state.selected_id for item in ordered)
             # LOAD-BEARING: a Left/Right jump onto an empty module sets
             # selected_id=None on purpose. Without this check, still_valid
             # is False for that same reason and the recovery below
             # immediately undoes the jump on the very same frame.
-            intentionally_unselected = selected_id is None and not any(
-                module_of_item(item) == active_module for item in ordered
+            intentionally_unselected = loop_state.selected_id is None and not any(
+                module_of_item(item) == loop_state.active_module for item in ordered
             )
             if not still_valid and not intentionally_unselected:
                 match = None
@@ -705,16 +699,16 @@ def main(stdscr):
                     # selected_id-only update — otherwise focus_id/
                     # active_module can drift out of sync with it (found
                     # live: preview kept showing a stale workspace).
-                    selected_id, active_module, focus_id = resolve_selection(match, focus_id)
+                    loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(match, loop_state.focus_id)
                 else:
-                    selected_id = None
-                ctx.selected_id = selected_id
-                ctx.focus_id = focus_id
-                ctx.active_module = active_module
+                    loop_state.selected_id = None
+                ctx.selected_id = loop_state.selected_id
+                ctx.focus_id = loop_state.focus_id
+                ctx.active_module = loop_state.active_module
 
             selected_item = None
             for item in ordered:
-                if item.id == selected_id:
+                if item.id == loop_state.selected_id:
                     selected_item = item
                     break
             ctx.selected_item = selected_item
@@ -727,13 +721,13 @@ def main(stdscr):
             else:
                 draw_all(stdscr, cfg.layout, boxes, ctx)
 
-                if resize.editing and active_module in boxes:
-                    resize_mode.draw_editing_highlight(stdscr, boxes[active_module], loop_state.theme_pairs)
+                if resize.editing and loop_state.active_module in boxes:
+                    resize_mode.draw_editing_highlight(stdscr, boxes[loop_state.active_module], loop_state.theme_pairs)
 
                 if spawn_picker.active:
                     draw_status_line(stdscr, term_width, resize_mode.spawn_hint_text(spawn_picker), loop_state.theme_pairs.get("urgent", 0))
                 elif resize.active:
-                    draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, active_module), loop_state.theme_pairs.get("urgent", 0))
+                    draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, loop_state.active_module), loop_state.theme_pairs.get("urgent", 0))
                 elif loop_state.resize_message is not None:
                     if time.monotonic() < loop_state.resize_message_until:
                         draw_status_line(stdscr, term_width, loop_state.resize_message, loop_state.theme_pairs.get("accent", 0))
@@ -750,7 +744,7 @@ def main(stdscr):
 
             if loop_state.pending_confirm is not None:
                 should_dismiss, loop_state.pending_confirm = handle_pending_confirm(action_ctx, loop_state.pending_confirm, key, cfg)
-                do_apply_reselect()
+                do_apply_reselect(loop_state, action_ctx, ordered)
                 if should_dismiss:
                     loop_state.dismissed = True
                     provider.dismiss_self()
@@ -759,7 +753,7 @@ def main(stdscr):
             global_item = global_shortcut_item(cfg.global_shortcuts, key)
             if global_item is not None:
                 should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
-                do_apply_reselect()
+                do_apply_reselect(loop_state, action_ctx, ordered)
                 if should_dismiss:
                     loop_state.dismissed = True
                     provider.dismiss_self()
@@ -781,18 +775,18 @@ def main(stdscr):
                     if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
                         deleted_name = resize.box.name
                         resize_mode.confirm_delete_yes(resize, cfg.layout.boxes)
-                        if active_module == deleted_name:
-                            active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
+                        if loop_state.active_module == deleted_name:
+                            loop_state.active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
                     elif key == cfg.keybinds["confirm_no"]:
                         resize_mode.confirm_delete_no(resize)
                     continue
-                if key == cfg.keybinds["confirm"] and active_module is not None:
-                    box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
+                if key == cfg.keybinds["confirm"] and loop_state.active_module is not None:
+                    box = next((b for b in cfg.layout.boxes if b.name == loop_state.active_module), None)
                     if box is not None:
                         do_enter_box_editing(loop_state, resize, box)
                     continue
-                elif key == cfg.keybinds["delete_box"] and active_module is not None:
-                    box = next((b for b in cfg.layout.boxes if b.name == active_module), None)
+                elif key == cfg.keybinds["delete_box"] and loop_state.active_module is not None:
+                    box = next((b for b in cfg.layout.boxes if b.name == loop_state.active_module), None)
                     if box is not None:
                         resize_mode.request_delete(resize, box)
                     continue
@@ -811,7 +805,7 @@ def main(stdscr):
 
             if key == cfg.keybinds["confirm"] and selected_item is not None:
                 should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
-                do_apply_reselect()
+                do_apply_reselect(loop_state, action_ctx, ordered)
                 # sessions.py's/sysmon.py's own "name"/NICE actions call
                 # start_naming()/start_nice_edit() on themselves —
                 # main.py notices right after dispatch and claims the
@@ -829,22 +823,22 @@ def main(stdscr):
                     # Level 2 exception to "Tab never wraps, it rolls
                     # into the next module" — Escape/picking an action
                     # are the only ways out (see same_row_neighbor).
-                    next_item = same_row_neighbor(ordered, selected_id, direction=1, wrap=True)
+                    next_item = same_row_neighbor(ordered, loop_state.selected_id, direction=1, wrap=True)
                 else:
                     # Walks forward past module boundaries until an
                     # actual item is found — zero-item modules (launcher,
                     # preview, clock) are common, one lookup isn't enough.
-                    next_item = next_item_across_modules(ordered, module_names, active_module, selected_id)
+                    next_item = next_item_across_modules(ordered, module_names, loop_state.active_module, loop_state.selected_id)
                 if next_item is not None:
-                    selected_id, active_module, focus_id = resolve_selection(next_item, focus_id)
+                    loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(next_item, loop_state.focus_id)
             elif key in prev_item_keys and ordered:
                 if any_two_level_module_expanded():
-                    prev_item = same_row_neighbor(ordered, selected_id, direction=-1, wrap=True)
+                    prev_item = same_row_neighbor(ordered, loop_state.selected_id, direction=-1, wrap=True)
                 else:
-                    prev_item = prev_item_across_modules(ordered, module_names, active_module, selected_id)
+                    prev_item = prev_item_across_modules(ordered, module_names, loop_state.active_module, loop_state.selected_id)
                     if (
                         prev_item is not None
-                        and active_module != "sessions"
+                        and loop_state.active_module != "sessions"
                         and module_of_item(prev_item) == "sessions"
                     ):
                         # Sessions exception: always slot 1, not the
@@ -852,63 +846,63 @@ def main(stdscr):
                         # lands on slot 3, one Tab from rolling back out.
                         prev_item = first_item_in_module(ordered, "sessions")
                 if prev_item is not None:
-                    selected_id, active_module, focus_id = resolve_selection(prev_item, focus_id)
+                    loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(prev_item, loop_state.focus_id)
             elif key in module_next_keys:
                 # same_row_neighbor first: a row with multiple items
                 # (e.g. sessions.py's expanded LOAD/SAVE/DEL/NAME) steps
                 # across them before Right jumps to the next module.
                 # None for the common single-column case — a no-op there.
-                neighbor = same_row_neighbor(ordered, selected_id, direction=1, wrap=any_two_level_module_expanded())
+                neighbor = same_row_neighbor(ordered, loop_state.selected_id, direction=1, wrap=any_two_level_module_expanded())
                 if neighbor is not None:
-                    selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
+                    loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(neighbor, loop_state.focus_id)
                 else:
-                    next_name = next_module_name(module_names, active_module)
+                    next_name = next_module_name(module_names, loop_state.active_module)
                     if next_name is not None:
-                        active_module = next_name
-                        first_item = first_item_in_module(ordered, active_module)
+                        loop_state.active_module = next_name
+                        first_item = first_item_in_module(ordered, loop_state.active_module)
                         if first_item is not None:
-                            selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
+                            loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(first_item, loop_state.focus_id)
                         else:
                             # Landed on an empty module (bars, clock,
                             # launcher...) — clear selected_id too, or
                             # the old item stays highlighted in the
                             # module we just left while this one's
                             # border also claims active.
-                            selected_id = None
+                            loop_state.selected_id = None
             elif key in module_prev_keys:
-                neighbor = same_row_neighbor(ordered, selected_id, direction=-1, wrap=any_two_level_module_expanded())
+                neighbor = same_row_neighbor(ordered, loop_state.selected_id, direction=-1, wrap=any_two_level_module_expanded())
                 if neighbor is not None:
-                    selected_id, active_module, focus_id = resolve_selection(neighbor, focus_id)
+                    loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(neighbor, loop_state.focus_id)
                 else:
-                    prev_name = prev_module_name(module_names, active_module)
+                    prev_name = prev_module_name(module_names, loop_state.active_module)
                     if prev_name is not None:
-                        active_module = prev_name
-                        first_item = first_item_in_module(ordered, active_module)
+                        loop_state.active_module = prev_name
+                        first_item = first_item_in_module(ordered, loop_state.active_module)
                         if first_item is not None:
-                            selected_id, active_module, focus_id = resolve_selection(first_item, focus_id)
+                            loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(first_item, loop_state.focus_id)
                         else:
                             # See module_next_keys' matching branch above.
-                            selected_id = None
+                            loop_state.selected_id = None
             elif key == cfg.keybinds["spawn_box"]:
                 do_spawn_picker(loop_state, cfg, spawn_picker)
-            elif key == cfg.keybinds["resize"] and active_module is not None:
+            elif key == cfg.keybinds["resize"] and loop_state.active_module is not None:
                 do_enter_resize(resize)
             elif key == cfg.keybinds["save_layout"]:
                 do_save_layout(loop_state, cfg, resize)
             elif key == cfg.keybinds["cycle_preset"]:
-                do_cycle_preset()
+                do_cycle_preset(loop_state, cfg, resize)
             elif key == cfg.keybinds["new_preset"]:
                 do_new_preset(loop_state, cfg, resize)
             elif key == cfg.keybinds["help"]:
                 do_enter_help(loop_state, help_state)
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
-                launcher_mode.enter_typing_mode(launcher, selected_id, active_module)
+                launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module)
                 loop_state.mode_stack.append("launcher")
-                active_module = "launcher"
+                loop_state.active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
-                launcher_mode.enter_typing_mode(launcher, selected_id, active_module, chr(key))
+                launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, chr(key))
                 loop_state.mode_stack.append("launcher")
-                active_module = "launcher"
+                loop_state.active_module = "launcher"
             elif key == 27:
                 # Escape collapses whichever two-level module is
                 # expanded, back to browsing. collapse() is safe to call
@@ -923,8 +917,8 @@ def main(stdscr):
                 ):
                     collapsed = collapse_fn()
                     if collapsed is not None:
-                        selected_id = f"{mod_name}:{collapsed}:row"
-                        active_module = mod_name
+                        loop_state.selected_id = f"{mod_name}:{collapsed}:row"
+                        loop_state.active_module = mod_name
                         break
                 else:
                     # Nothing was expanded — no active input claim:

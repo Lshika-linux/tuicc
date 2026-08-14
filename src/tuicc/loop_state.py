@@ -56,3 +56,15 @@ class LoopState:
     expect_focus_reclaim: bool = False
     # window_id -> pid (i3 only — sway's Window.pid is already populated).
     resolved_pid_cache: dict = field(default_factory=dict)
+
+    # Which nav item is highlighted, which region focus/launcher-spawn
+    # targeting follows (independent of selected_id), and which module
+    # owns Tab/Left-Right navigation. Always kept in sync with each
+    # other via navigation.resolve_selection() — never assign one alone
+    # outside a spot that's deliberately desyncing them (e.g. Left/Right
+    # onto an empty module intentionally clears selected_id but not
+    # active_module). No static default for active_module: real initial
+    # value depends on cfg.layout.boxes, computation-dependent.
+    active_module: str | None = None
+    selected_id: str | None = None
+    focus_id: str | None = None
