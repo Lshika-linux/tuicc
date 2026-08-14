@@ -25,3 +25,8 @@ class LoopState:
     # permanent exception — never joins this stack (see
     # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for why).
     mode_stack: list[str] = field(default_factory=lambda: ["normal"])
+
+    # A generic transient toast — used by save/cycle-preset as much as
+    # by resize, genuinely main-loop-level, not owned by either module.
+    resize_message: str | None = None
+    resize_message_until: float = 0.0

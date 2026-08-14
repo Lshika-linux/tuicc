@@ -241,6 +241,32 @@ def handle_help(key, loop_state, cfg, help_state):
     return True
 
 
+# Phase 2: resize_message/resize_message_until (always touched as a
+# pair — see loop_state.py). do_save_layout/do_new_preset touched
+# nothing else loop-owned, so they flatten fully; do_cycle_preset
+# (still a closure in main(), still needs active_module) converts just
+# its own resize_message/_until writes.
+
+def do_save_layout(loop_state, cfg, resize):
+    save_layout_to_preset(cfg.layout, cfg.preset_number)
+    loop_state.resize_message = f"Saved preset {cfg.preset_number}"
+    loop_state.resize_message_until = time.monotonic() + 3.0
+    resize_mode.exit_edit_mode(resize)
+
+
+def do_new_preset(loop_state, cfg, resize):
+    # Forks the current layout into a new preset slot rather than
+    # overwriting the active one (that's do_save_layout). Unlike
+    # do_cycle_preset(), cfg.layout itself doesn't change here, so
+    # active_module stays valid — no reset needed.
+    new_number = save_new_preset(cfg.layout)
+    set_active_preset(new_number)
+    cfg.preset_number = new_number
+    loop_state.resize_message = f"Saved as new preset {new_number}"
+    loop_state.resize_message_until = time.monotonic() + 3.0
+    resize_mode.exit_edit_mode(resize)
+
+
 def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(False)
@@ -331,20 +357,11 @@ def main(stdscr):
     # window_id -> pid (i3 only — sway's Window.pid is already populated).
     resolved_pid_cache = {}
 
-    # A generic transient toast — used by save/cycle-preset as much as
-    # by resize, genuinely main-loop-level, not owned by either module.
-    resize_message = None
-    resize_message_until = 0.0
-
-    def do_save_layout():
-        nonlocal resize_message, resize_message_until
-        save_layout_to_preset(cfg.layout, cfg.preset_number)
-        resize_message = f"Saved preset {cfg.preset_number}"
-        resize_message_until = time.monotonic() + 3.0
-        resize_mode.exit_edit_mode(resize)
-
     def do_cycle_preset():
-        nonlocal active_module, resize_message, resize_message_until
+        # resize_message/_until moved to loop_state (Phase 2 of the
+        # LoopState migration) — active_module hasn't yet (Phase 5),
+        # so this one closure still needs nonlocal for it alone.
+        nonlocal active_module
         numbers = available_preset_numbers()
         if numbers:
             idx = numbers.index(cfg.preset_number) if cfg.preset_number in numbers else -1
@@ -353,21 +370,8 @@ def main(stdscr):
             set_active_preset(next_number)
             cfg.preset_number = next_number
             active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
-            resize_message = f"preset {next_number}"
-            resize_message_until = time.monotonic() + 3.0
-        resize_mode.exit_edit_mode(resize)
-
-    def do_new_preset():
-        # Forks the current layout into a new preset slot rather than
-        # overwriting the active one (that's do_save_layout). Unlike
-        # do_cycle_preset(), cfg.layout itself doesn't change here, so
-        # active_module stays valid — no reset needed.
-        nonlocal resize_message, resize_message_until
-        new_number = save_new_preset(cfg.layout)
-        set_active_preset(new_number)
-        cfg.preset_number = new_number
-        resize_message = f"Saved as new preset {new_number}"
-        resize_message_until = time.monotonic() + 3.0
+            loop_state.resize_message = f"preset {next_number}"
+            loop_state.resize_message_until = time.monotonic() + 3.0
         resize_mode.exit_edit_mode(resize)
 
     def do_apply_reselect():
@@ -484,9 +488,9 @@ def main(stdscr):
     HANDOFF_TARGETS = {
         "spawn_box": lambda: do_spawn_picker(loop_state, cfg, spawn_picker),
         "resize": lambda: do_enter_resize(resize),
-        "save_layout": do_save_layout,
+        "save_layout": lambda: do_save_layout(loop_state, cfg, resize),
         "cycle_preset": do_cycle_preset,
-        "new_preset": do_new_preset,
+        "new_preset": lambda: do_new_preset(loop_state, cfg, resize),
         "help": lambda: do_enter_help(loop_state, help_state),
     }
 
@@ -599,7 +603,7 @@ def main(stdscr):
             )
             stdscr.timeout(
                 50 if (moves.entries or action_ctx.restore_queue or status_worker.has_pending()
-                       or resize_message is not None or agent_has_pending)
+                       or loop_state.resize_message is not None or agent_has_pending)
                 else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
                 else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
                 # 300, not 1000: draw() reruns unconditionally every
@@ -752,11 +756,11 @@ def main(stdscr):
                     draw_status_line(stdscr, term_width, resize_mode.spawn_hint_text(spawn_picker), theme_pairs.get("urgent", 0))
                 elif resize.active:
                     draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, active_module), theme_pairs.get("urgent", 0))
-                elif resize_message is not None:
-                    if time.monotonic() < resize_message_until:
-                        draw_status_line(stdscr, term_width, resize_message, theme_pairs.get("accent", 0))
+                elif loop_state.resize_message is not None:
+                    if time.monotonic() < loop_state.resize_message_until:
+                        draw_status_line(stdscr, term_width, loop_state.resize_message, theme_pairs.get("accent", 0))
                     else:
-                        resize_message = None
+                        loop_state.resize_message = None
 
             stdscr.refresh()
 
@@ -912,11 +916,11 @@ def main(stdscr):
             elif key == cfg.keybinds["resize"] and active_module is not None:
                 do_enter_resize(resize)
             elif key == cfg.keybinds["save_layout"]:
-                do_save_layout()
+                do_save_layout(loop_state, cfg, resize)
             elif key == cfg.keybinds["cycle_preset"]:
                 do_cycle_preset()
             elif key == cfg.keybinds["new_preset"]:
-                do_new_preset()
+                do_new_preset(loop_state, cfg, resize)
             elif key == cfg.keybinds["help"]:
                 do_enter_help(loop_state, help_state)
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
