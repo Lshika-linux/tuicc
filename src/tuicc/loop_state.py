@@ -30,3 +30,9 @@ class LoopState:
     # by resize, genuinely main-loop-level, not owned by either module.
     resize_message: str | None = None
     resize_message_until: float = 0.0
+
+    # The compiled curses color-pair mapping currently in effect —
+    # rebound in place after a live theme edit so rendering picks it up
+    # without restart. No static default: real initial value comes from
+    # app_setup.build_app(), computation-dependent.
+    theme_pairs: dict = field(default_factory=dict)

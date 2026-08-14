@@ -254,6 +254,24 @@ def do_save_layout(loop_state, cfg, resize):
     resize_mode.exit_edit_mode(resize)
 
 
+def handle_help_colors(key, loop_state, cfg, help_state):
+    # loop_state.theme_pairs reassigned in place (Phase 3), not a
+    # closure-local rebind — the color saves to cfg.theme/config.toml
+    # correctly but never renders until restart if this line is skipped.
+    if key == cfg.keybinds["confirm"]:
+        result = help_mode.apply_color_edit(help_state)
+        if result is not None:
+            role, color, typed_value = result
+            cfg.theme[role] = color
+            loop_state.theme_pairs = reassign_theme_pairs(cfg.theme)
+            set_theme_color(role, typed_value)
+            return False
+        return True
+    if not help_mode.type_color_key(help_state, key):
+        return False
+    return True
+
+
 def do_new_preset(loop_state, cfg, resize):
     # Forks the current layout into a new preset slot rather than
     # overwriting the active one (that's do_save_layout). Unlike
@@ -277,7 +295,6 @@ def main(stdscr):
     # before it can start. See app_setup.py for why this is split out.
     app = app_setup.build_app()
     cfg = app.cfg
-    theme_pairs = app.theme_pairs
     control_colors = app.control_colors
     provider = app.provider
     wifi_agent = app.wifi_agent
@@ -325,7 +342,7 @@ def main(stdscr):
     # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for why and for
     # every phase's own postmortem; #loopstate-migration for why this is
     # loop_state.mode_stack, not a bare local, as of Phase 1).
-    loop_state = LoopState()
+    loop_state = LoopState(theme_pairs=app.theme_pairs)
 
     # True from dismiss_self() until the next real keypress — tells
     # pending_moves.process() not to focus_self() while hidden (that
@@ -401,24 +418,6 @@ def main(stdscr):
         if region_item is not None:
             selected_id, active_module, focus_id = resolve_selection(region_item, focus_id)
         action_ctx.reselect_region_id = None
-
-    def handle_help_colors(key):
-        # nonlocal required: without it this rebinds a closure-local
-        # theme_pairs instead of the real one — the color saves to
-        # cfg.theme/config.toml correctly but never renders until restart.
-        nonlocal theme_pairs
-        if key == cfg.keybinds["confirm"]:
-            result = help_mode.apply_color_edit(help_state)
-            if result is not None:
-                role, color, typed_value = result
-                cfg.theme[role] = color
-                theme_pairs = reassign_theme_pairs(cfg.theme)
-                set_theme_color(role, typed_value)
-                return False
-            return True
-        if not help_mode.type_color_key(help_state, key):
-            return False
-        return True
 
     def handle_launcher(key):
         nonlocal focus_id, selected_id, active_module
@@ -513,7 +512,7 @@ def main(stdscr):
         "connectivity_passphrase": lambda key: handle_connectivity_passphrase(key, cfg, wifi_agent),
         "connectivity_pairing": lambda key: handle_connectivity_pairing(key, cfg, bluez_agent),
         "help": lambda key: handle_help(key, loop_state, cfg, help_state),
-        "help_colors": handle_help_colors,
+        "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state),
         "launcher": handle_launcher,
         "spawn_picker": handle_spawn_picker,
         "resize_editing": handle_resize_editing,
@@ -684,7 +683,7 @@ def main(stdscr):
                 state=state,
                 selected_id=selected_id,
                 focus_id=focus_id,
-                theme=theme_pairs,
+                theme=loop_state.theme_pairs,
                 config=cfg,
                 pending_confirm=pending_confirm,
                 active_module=active_module,
@@ -743,22 +742,22 @@ def main(stdscr):
 
             if help_state.active:
                 help_mode.draw(
-                    stdscr, term_width, term_height, theme_pairs, help_state,
+                    stdscr, term_width, term_height, loop_state.theme_pairs, help_state,
                     get_raw_navigation_keys(), get_raw_power_menu_actions(), get_raw_theme_values(),
                 )
             else:
                 draw_all(stdscr, cfg.layout, boxes, ctx)
 
                 if resize.editing and active_module in boxes:
-                    resize_mode.draw_editing_highlight(stdscr, boxes[active_module], theme_pairs)
+                    resize_mode.draw_editing_highlight(stdscr, boxes[active_module], loop_state.theme_pairs)
 
                 if spawn_picker.active:
-                    draw_status_line(stdscr, term_width, resize_mode.spawn_hint_text(spawn_picker), theme_pairs.get("urgent", 0))
+                    draw_status_line(stdscr, term_width, resize_mode.spawn_hint_text(spawn_picker), loop_state.theme_pairs.get("urgent", 0))
                 elif resize.active:
-                    draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, active_module), theme_pairs.get("urgent", 0))
+                    draw_status_line(stdscr, term_width, resize_mode.hint_text(resize, active_module), loop_state.theme_pairs.get("urgent", 0))
                 elif loop_state.resize_message is not None:
                     if time.monotonic() < loop_state.resize_message_until:
-                        draw_status_line(stdscr, term_width, loop_state.resize_message, theme_pairs.get("accent", 0))
+                        draw_status_line(stdscr, term_width, loop_state.resize_message, loop_state.theme_pairs.get("accent", 0))
                     else:
                         loop_state.resize_message = None
 
