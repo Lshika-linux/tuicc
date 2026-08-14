@@ -36,3 +36,23 @@ class LoopState:
     # without restart. No static default: real initial value comes from
     # app_setup.build_app(), computation-dependent.
     theme_pairs: dict = field(default_factory=dict)
+
+    # A dict-shaped Y/N or typed-input prompt awaiting confirm_yes/
+    # confirm_no/confirm — see actions.py's handle_pending_confirm().
+    pending_confirm: dict | None = None
+    # True from dismiss_self() until the next real keypress — see
+    # CLAUDE/NOTES/known-limitations.md#dismissed-reset-timing.
+    dismissed: bool = False
+    # The region focused right before tuicc's own — for return_to_origin's
+    # Escape. Tracks the value being *replaced* on each real focus
+    # transition (see main.py's own comment at the transition-detector
+    # site for the full reasoning).
+    last_focused_region_id: str | None = None
+    origin_region_id: str | None = None
+    # True for one frame after pending_moves.process() calls
+    # provider.focus_self() — a self-inflicted transition, not the user
+    # going elsewhere; suppresses the selection reset that would
+    # otherwise follow.
+    expect_focus_reclaim: bool = False
+    # window_id -> pid (i3 only — sway's Window.pid is already populated).
+    resolved_pid_cache: dict = field(default_factory=dict)

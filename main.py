@@ -332,47 +332,26 @@ def main(stdscr):
 
     selected_id = None
     focus_id = None
-    pending_confirm = None
     active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
 
-    # loop_state.mode_stack: which module owns raw keystrokes. "normal"
-    # (never popped, bottom of stack) = nothing has stolen input, unbound
-    # printable keys auto-claim for the launcher. resize's BROWSING level
-    # is the one permanent exception — never joins this stack (see
-    # CLAUDE/NOTES/design-decisions.md#mode-stack-phase-1 for why and for
-    # every phase's own postmortem; #loopstate-migration for why this is
-    # loop_state.mode_stack, not a bare local, as of Phase 1).
+    # loop_state: every name main()'s loop rebinds/mutates across frames
+    # (mode_stack, resize_message/_until, theme_pairs, pending_confirm,
+    # dismissed, last_focused_region_id, origin_region_id,
+    # expect_focus_reclaim, resolved_pid_cache — see loop_state.py's own
+    # docstring for the full field list and why each one lives there
+    # instead of a bare local; CLAUDE/NOTES/design-decisions.md
+    # #loopstate-migration for the phased migration this landed through).
+    # Can't read state.focused_region_id for origin_region_id at dismiss
+    # time: it's already tuicc's own region whenever tuicc has WM focus
+    # (parse_tree() doesn't filter self out of that field) — tracks the
+    # value being *replaced* on each real transition instead.
     loop_state = LoopState(theme_pairs=app.theme_pairs)
-
-    # True from dismiss_self() until the next real keypress — tells
-    # pending_moves.process() not to focus_self() while hidden (that
-    # would un-hide a scratchpadded window on sway/i3). See
-    # CLAUDE/NOTES/known-limitations.md#dismissed-reset-timing.
-    dismissed = False
-
-    # The region focused right before tuicc's own — for return_to_origin's
-    # Escape. Can't read state.focused_region_id at dismiss time: it's
-    # already tuicc's own region whenever tuicc has WM focus (parse_tree()
-    # doesn't filter self out of that field). Tracks the value being
-    # *replaced* on each real transition instead, so it stays frozen at
-    # "wherever you were before" for as long as you're only navigating
-    # inside tuicc.
-    last_focused_region_id = None
-    origin_region_id = None
-    # True for one frame after pending_moves.process() calls
-    # provider.focus_self() — a real but self-inflicted transition
-    # (tuicc reclaiming its own focus), not the user going elsewhere.
-    # Without this, a focus_self() landing between a sidebar selection
-    # and confirming a launcher spawn silently resets that selection.
-    expect_focus_reclaim = False
 
     resize = resize_mode.ResizeState()
     spawn_picker = resize_mode.SpawnPickerState()
     help_state = help_mode.HelpState()
     launcher = launcher_mode.LauncherState()
     moves = pending_moves.PendingMovesQueue()
-    # window_id -> pid (i3 only — sway's Window.pid is already populated).
-    resolved_pid_cache = {}
 
     def do_cycle_preset():
         # resize_message/_until moved to loop_state (Phase 2 of the
@@ -568,7 +547,7 @@ def main(stdscr):
                         loop_state.mode_stack.pop()
 
             connectivity_wants_input = (
-                pending_confirm is None
+                loop_state.pending_confirm is None
                 and not resize.active and not spawn_picker.active and not help_state.active
                 and loop_state.mode_stack[-1] == "normal"
             )
@@ -627,17 +606,17 @@ def main(stdscr):
                 procmon.flatten_windows(state), known_stats=status_worker.get("windows") or [],
             )
             pid_feed.set(_resolve_visible_pids(
-                windows_this_frame, selected_id, resolved_pid_cache, provider, cfg.sysmon_visible_slots,
+                windows_this_frame, selected_id, loop_state.resolved_pid_cache, provider, cfg.sysmon_visible_slots,
             ))
 
-            if state.focused_region_id is not None and state.focused_region_id != last_focused_region_id:
-                origin_region_id = last_focused_region_id
-                last_focused_region_id = state.focused_region_id
-                if expect_focus_reclaim:
+            if state.focused_region_id is not None and state.focused_region_id != loop_state.last_focused_region_id:
+                loop_state.origin_region_id = loop_state.last_focused_region_id
+                loop_state.last_focused_region_id = state.focused_region_id
+                if loop_state.expect_focus_reclaim:
                     # Self-inflicted (tuicc reclaiming its own focus after
                     # a spawn/restore) — skip the reset below, but still
                     # update origin/last_focused_region_id above.
-                    expect_focus_reclaim = False
+                    loop_state.expect_focus_reclaim = False
                 else:
                     # A real WM-focus transition (dismissed, workspace
                     # switched, resummoned elsewhere) — force a re-sync
@@ -653,12 +632,12 @@ def main(stdscr):
             if moves.entries:
                 current_windows = [w for r in state.regions for w in r.windows]
                 reclaimed_focus, resolved_target_regions = pending_moves.process(
-                    moves, provider, current_windows, dismissed, time.monotonic(), cfg.fullscreen_only,
-                    own_region_id=last_focused_region_id,
+                    moves, provider, current_windows, loop_state.dismissed, time.monotonic(), cfg.fullscreen_only,
+                    own_region_id=loop_state.last_focused_region_id,
                 )
                 if reclaimed_focus:
-                    expect_focus_reclaim = True
-                if resolved_target_regions and (focus_id is None or focus_id == last_focused_region_id):
+                    loop_state.expect_focus_reclaim = True
+                if resolved_target_regions and (focus_id is None or focus_id == loop_state.last_focused_region_id):
                     # expect_focus_reclaim suppresses the real-transition
                     # reset while a restore/spawn is resolving, so
                     # focus_id (preview.py's own target) never otherwise
@@ -685,7 +664,7 @@ def main(stdscr):
                 focus_id=focus_id,
                 theme=loop_state.theme_pairs,
                 config=cfg,
-                pending_confirm=pending_confirm,
+                pending_confirm=loop_state.pending_confirm,
                 active_module=active_module,
                 typing_mode=launcher.typing_mode,
                 search_query=launcher.search_query,
@@ -767,22 +746,22 @@ def main(stdscr):
 
             if key == -1:
                 continue
-            dismissed = False
+            loop_state.dismissed = False
 
-            if pending_confirm is not None:
-                should_dismiss, pending_confirm = handle_pending_confirm(action_ctx, pending_confirm, key, cfg)
+            if loop_state.pending_confirm is not None:
+                should_dismiss, loop_state.pending_confirm = handle_pending_confirm(action_ctx, loop_state.pending_confirm, key, cfg)
                 do_apply_reselect()
                 if should_dismiss:
-                    dismissed = True
+                    loop_state.dismissed = True
                     provider.dismiss_self()
                 continue
 
             global_item = global_shortcut_item(cfg.global_shortcuts, key)
             if global_item is not None:
-                should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
+                should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
                 do_apply_reselect()
                 if should_dismiss:
-                    dismissed = True
+                    loop_state.dismissed = True
                     provider.dismiss_self()
                 continue
 
@@ -831,7 +810,7 @@ def main(stdscr):
             module_names = [box.name for box in sorted(cfg.layout.boxes, key=module_position_key)]
 
             if key == cfg.keybinds["confirm"] and selected_item is not None:
-                should_dismiss, pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
+                should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
                 do_apply_reselect()
                 # sessions.py's/sysmon.py's own "name"/NICE actions call
                 # start_naming()/start_nice_edit() on themselves —
@@ -842,7 +821,7 @@ def main(stdscr):
                 if sysmon_mode.is_editing_nice():
                     loop_state.mode_stack.append("sysmon_nice")
                 if should_dismiss:
-                    dismissed = True
+                    loop_state.dismissed = True
                     provider.dismiss_self()
 
             elif key in next_item_keys and ordered:
@@ -950,9 +929,9 @@ def main(stdscr):
                 else:
                     # Nothing was expanded — no active input claim:
                     # dismiss at top level.
-                    if cfg.return_to_origin and origin_region_id is not None:
-                        provider.focus_region(origin_region_id)
-                    dismissed = True
+                    if cfg.return_to_origin and loop_state.origin_region_id is not None:
+                        provider.focus_region(loop_state.origin_region_id)
+                    loop_state.dismissed = True
                     provider.dismiss_self()
     finally:
         status_worker.stop()
