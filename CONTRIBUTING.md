@@ -2,6 +2,8 @@
 
 Thank you for considering it!! This is an early, personal project, and I want to be upfront about how I review things, so contributing goes smoothly for both of us.
 
+**First time touching tuicc's code?** This page assumes you already know your way around — read [Your First Contribution](https://github.com/Lshika-linux/tuicc/wiki/Your-First-Contribution) on the wiki first. It walks through one small real change end to end before any of the rules below need to make sense.
+
 ## How I review PRs
 
 To responsibly evaluate and merge a change, I need to actually understand what it does and why — not just trust that it works. So:
