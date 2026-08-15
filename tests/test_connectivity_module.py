@@ -24,6 +24,9 @@ from tuicc.modules.connectivity import (
     _signal_bars,
     _wifi_preview_text,
     _wifi_scan_preview_text,
+    next_browsing_selection,
+    toggle_wifi,
+    toggle_bluetooth,
 )
 
 
@@ -233,7 +236,7 @@ def test_selected_wifi_index_none_when_not_a_wifi_selection():
 
     assert _selected_wifi_index(networks, None) is None
     assert _selected_wifi_index(networks, "connectivity:bt:AA:BB") is None
-    assert _selected_wifi_index(networks, "connectivity:wifi:scan") is None
+    assert _selected_wifi_index(networks, "connectivity:wifi:header") is None
 
 
 def test_selected_bt_index_finds_matching_id():
@@ -247,7 +250,88 @@ def test_selected_bt_index_none_when_not_a_bluetooth_selection():
 
     assert _selected_bt_index(devices, None) is None
     assert _selected_bt_index(devices, "connectivity:wifi:Home") is None
-    assert _selected_bt_index(devices, "connectivity:bt:discover") is None
+    assert _selected_bt_index(devices, "connectivity:bt:header") is None
+
+
+# ---------- next_browsing_selection ----------
+# Level-2 browsing's own Up/Down math — see connectivity.py's "level-2
+# browsing" section docstring for why this exists instead of a
+# separate index: loop_state.selected_id stays the single source of
+# truth, this just derives the next one from it.
+
+def test_next_browsing_selection_moves_forward_within_wifi():
+    networks = [WifiNetwork(ssid="Home", connected=False), WifiNetwork(ssid="Office", connected=False)]
+
+    result = next_browsing_selection("wifi", networks, "connectivity:wifi:Home", direction=1)
+
+    assert result == "connectivity:wifi:Office"
+
+
+def test_next_browsing_selection_moves_backward_within_bluetooth():
+    devices = [BluetoothDevice(id="AA", name="A", connected=False), BluetoothDevice(id="BB", name="B", connected=False)]
+
+    result = next_browsing_selection("bluetooth", devices, "connectivity:bt:BB", direction=-1)
+
+    # id prefix is "bt", not "bluetooth" — must match _bt_row_nav_item's
+    # own id convention, not the StatusWorker domain name.
+    assert result == "connectivity:bt:AA"
+
+
+def test_next_browsing_selection_wraps_past_the_last_item():
+    networks = [WifiNetwork(ssid="Home", connected=False), WifiNetwork(ssid="Office", connected=False)]
+
+    result = next_browsing_selection("wifi", networks, "connectivity:wifi:Office", direction=1)
+
+    assert result == "connectivity:wifi:Home"
+
+
+def test_next_browsing_selection_wraps_before_the_first_item():
+    networks = [WifiNetwork(ssid="Home", connected=False), WifiNetwork(ssid="Office", connected=False)]
+
+    result = next_browsing_selection("wifi", networks, "connectivity:wifi:Home", direction=-1)
+
+    assert result == "connectivity:wifi:Office"
+
+
+def test_next_browsing_selection_defaults_to_first_item_when_nothing_matches():
+    networks = [WifiNetwork(ssid="Home", connected=False), WifiNetwork(ssid="Office", connected=False)]
+
+    assert next_browsing_selection("wifi", networks, None, direction=1) == "connectivity:wifi:Home"
+    assert next_browsing_selection("wifi", networks, "connectivity:wifi:Gone", direction=1) == "connectivity:wifi:Home"
+
+
+# ---------- toggle_wifi / toggle_bluetooth ----------
+
+def test_toggle_wifi_connects_when_not_connected():
+    status = _FakeStatus(domains={"wifi": [WifiNetwork(ssid="Home", connected=False)]})
+
+    toggle_wifi(status, "Home")
+
+    assert status.requested_actions == [("wifi", "connect", "Home")]
+
+
+def test_toggle_wifi_disconnects_when_already_connected():
+    status = _FakeStatus(domains={"wifi": [WifiNetwork(ssid="Home", connected=True)]})
+
+    toggle_wifi(status, "Home")
+
+    assert status.requested_actions == [("wifi", "disconnect", "Home")]
+
+
+def test_toggle_bluetooth_connects_when_not_connected():
+    status = _FakeStatus(domains={"bluetooth": [BluetoothDevice(id="AA", name="A", connected=False)]})
+
+    toggle_bluetooth(status, "AA")
+
+    assert status.requested_actions == [("bluetooth", "connect", "AA")]
+
+
+def test_toggle_bluetooth_disconnects_when_already_connected():
+    status = _FakeStatus(domains={"bluetooth": [BluetoothDevice(id="AA", name="A", connected=True)]})
+
+    toggle_bluetooth(status, "AA")
+
+    assert status.requested_actions == [("bluetooth", "disconnect", "AA")]
 
 
 # ---------- _signal_bars ----------
@@ -338,6 +422,10 @@ def _theme():
     return {"accent": 1, "text": 2, "urgent": 3}
 
 
+def _cfg():
+    return SimpleNamespace(keybinds={"scan": ord("s")})
+
+
 def _text_of(lines):
     return [text for text, _color in lines]
 
@@ -345,7 +433,7 @@ def _text_of(lines):
 def test_wifi_preview_text_includes_core_fields():
     network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
 
     assert "Home" in lines
     assert "Signal: 80%" in lines
@@ -357,7 +445,7 @@ def test_wifi_preview_text_includes_core_fields():
 def test_wifi_preview_text_omits_known_network_fields_when_unknown():
     network = WifiNetwork(ssid="Stranger", connected=False, signal=40, known=False, security="open")
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
 
     assert not any(line.startswith("Auto-connect:") for line in lines)
     assert not any(line.startswith("Hidden:") for line in lines)
@@ -370,7 +458,7 @@ def test_wifi_preview_text_includes_known_network_fields_when_known():
         auto_connect=True, hidden=False, last_connected="2026-08-10T05:35:00Z",
     )
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
 
     assert "Auto-connect: yes" in lines
     assert "Hidden: no" in lines
@@ -380,7 +468,7 @@ def test_wifi_preview_text_includes_known_network_fields_when_known():
 def test_wifi_preview_text_signal_unknown_when_none():
     network = WifiNetwork(ssid="Home", connected=False, signal=None, known=True)
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
 
     assert "Signal: unknown" in lines
 
@@ -391,7 +479,7 @@ def test_bt_preview_text_includes_core_fields():
         trusted=True, blocked=False, icon="audio-headphones", address_type="public",
     )
 
-    lines = _text_of(_bt_preview_text(device, _theme(), None))
+    lines = _text_of(_bt_preview_text(device, _theme(), None, _cfg()))
 
     assert "Speaker" in lines
     assert "Address: AA:BB:CC:DD:EE:FF" in lines
@@ -407,7 +495,7 @@ def test_bt_preview_text_includes_core_fields():
 def test_bt_preview_text_omits_optional_fields_when_absent():
     device = BluetoothDevice(id="AA", name="Unknown Device", connected=False, paired=False)
 
-    lines = _text_of(_bt_preview_text(device, _theme(), None))
+    lines = _text_of(_bt_preview_text(device, _theme(), None, _cfg()))
 
     assert not any(line.startswith("Icon:") for line in lines)
     assert not any(line.startswith("Address type:") for line in lines)
@@ -419,7 +507,7 @@ def test_bt_preview_text_blocked_uses_urgent_color():
     device = BluetoothDevice(id="AA", name="Blocked One", connected=False, blocked=True)
     theme = _theme()
 
-    lines = _bt_preview_text(device, theme, None)
+    lines = _bt_preview_text(device, theme, None, _cfg())
     blocked_line = next(line for line in lines if line[0] == "Blocked: yes")
 
     assert blocked_line[1] == theme["urgent"]
@@ -431,15 +519,23 @@ def test_bt_preview_text_blocked_uses_urgent_color():
 # no way to tell why a connect failed.
 
 class _FakeStatus:
-    def __init__(self, pending_keys=(), errors_for=None):
+    def __init__(self, pending_keys=(), errors_for=None, domains=None):
         self._pending_keys = set(pending_keys)
         self._errors_for = errors_for or {}
+        self._domains = domains or {}
+        self.requested_actions = []  # [(domain_name, action, arg), ...] — toggle_wifi/toggle_bluetooth tests
 
     def is_pending(self, domain_name, key):
         return (domain_name, key) in self._pending_keys
 
     def get_action_error_for(self, domain_name, key):
         return self._errors_for.get((domain_name, key))
+
+    def get(self, domain_name):
+        return self._domains.get(domain_name)
+
+    def request_action(self, domain_name, action, arg):
+        self.requested_actions.append((domain_name, action, arg))
 
 
 def test_action_progress_line_none_when_nothing_happening():
@@ -492,7 +588,7 @@ def test_wifi_preview_text_includes_progress_line_when_pending():
     network = WifiNetwork(ssid="Home", connected=False, signal=50, known=True, security="psk")
     status = _FakeStatus(pending_keys={("wifi", "Home")})
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), status))
+    lines = _text_of(_wifi_preview_text(network, _theme(), status, _cfg()))
 
     assert "Connecting…" in lines
 
@@ -501,7 +597,7 @@ def test_bt_preview_text_includes_error_when_settled_and_failed():
     device = BluetoothDevice(id="AA:BB", name="Speaker", connected=False)
     status = _FakeStatus(errors_for={("bluetooth", "AA:BB"): "org.bluez.Error.Failed"})
 
-    lines = _text_of(_bt_preview_text(device, _theme(), status))
+    lines = _text_of(_bt_preview_text(device, _theme(), status, _cfg()))
 
     assert "⚠ org.bluez.Error.Failed" in lines
 
@@ -512,7 +608,7 @@ def test_preview_text_progress_scoped_to_the_right_key_only():
     network = WifiNetwork(ssid="Home", connected=False, signal=50, known=True, security="psk")
     status = _FakeStatus(errors_for={("wifi", "Office"): "some other network's error"})
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), status))
+    lines = _text_of(_wifi_preview_text(network, _theme(), status, _cfg()))
 
     assert not any(line.startswith("⚠") for line in lines)
 

@@ -43,6 +43,12 @@ confirm = "Enter"
 confirm_yes = "y"
 confirm_no = "n"
 
+# Only live while browsing the WiFi or Bluetooth section of
+# Connectivity (Enter on the "WiFi"/"Bluetooth" header enters
+# browsing) — triggers a rescan/rediscover. Shown as a hint in the
+# preview panel while browsing, reflecting whatever you bind here.
+scan = "s"
+
 # Only used when vim_mode = true below (ambient typing is disabled in
 # that mode specifically so h/j/k/l etc. don't collide with it) —
 # press this to start typing into the launcher instead.

@@ -52,11 +52,13 @@ def test_base_handlers_still_present():
 
 
 def test_connectivity_handlers_registered():
+    # wifi_network/bluetooth_device/wifi_scan/bluetooth_discover retired
+    # along with individual rows' old level-1 reachability — see
+    # connectivity.py's own "level-2 browsing" section docstring.
+    # Headers now enter browsing instead of scanning directly.
     from tuicc.modules import connectivity
-    assert ACTION_HANDLERS["wifi_network"] is connectivity.handle_wifi
-    assert ACTION_HANDLERS["bluetooth_device"] is connectivity.handle_bluetooth
-    assert ACTION_HANDLERS["wifi_scan"] is connectivity.handle_wifi_scan
-    assert ACTION_HANDLERS["bluetooth_discover"] is connectivity.handle_bluetooth_discover
+    assert ACTION_HANDLERS["wifi_browse"] is connectivity.handle_wifi_header
+    assert ACTION_HANDLERS["bluetooth_browse"] is connectivity.handle_bt_header
 
 
 def test_sysmon_handlers_registered():

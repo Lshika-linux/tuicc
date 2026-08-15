@@ -628,6 +628,11 @@ def load_config(preset_override: int | None = None) -> Config:
     # unconfigurable-but-working fallback shape as [wm]'s self_app_id/
     # return_to_origin/fullscreen_only above.
     keybinds.setdefault("new_preset", resolve_key("F5"))
+    # Same reasoning as new_preset's own setdefault above, for the same
+    # ensure_user_config_exists()-only-copies-once reason — "scan" was
+    # added after [navigation.keys] for connectivity.py's level-2 wifi/
+    # bluetooth browsing.
+    keybinds.setdefault("scan", resolve_key("s"))
 
     quick_actions = []
     for action_data in user_data["quick_actions"]["action"]:

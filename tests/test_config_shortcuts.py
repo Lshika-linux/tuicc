@@ -181,6 +181,36 @@ def test_new_preset_keybind_respects_explicit_config_value(tmp_path, monkeypatch
     assert cfg.keybinds["new_preset"] == resolve_key("F9")
 
 
+def test_scan_keybind_defaults_to_s_when_absent(tmp_path, monkeypatch):
+    # Same reasoning as test_new_preset_keybind_defaults_to_f5_when_absent
+    # above — BASE_TOML's [navigation.keys] predates "scan" too (added
+    # for connectivity.py's level-2 wifi/bluetooth browsing).
+    actions_toml = _action_toml("Lock", shortcut=None)
+    _write_config(tmp_path, monkeypatch, actions_toml)
+
+    cfg = load_config()
+
+    assert cfg.keybinds["scan"] == resolve_key("s")
+
+
+def test_scan_keybind_respects_explicit_config_value(tmp_path, monkeypatch):
+    user_config = tmp_path / "config.toml"
+    user_config.write_text(
+        BASE_TOML.replace('confirm = "Enter"', 'confirm = "Enter"\nscan = "r"').format(
+            power_menu_block=_action_toml("Lock", shortcut=None)
+        )
+    )
+    presets_dir = tmp_path / "presets"
+    presets_dir.mkdir()
+    (presets_dir / "1.toml").write_text(PRESET_TOML)
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", user_config)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", presets_dir)
+
+    cfg = load_config()
+
+    assert cfg.keybinds["scan"] == resolve_key("r")
+
+
 def test_action_without_shortcut_is_not_in_global_shortcuts(tmp_path, monkeypatch):
     actions_toml = _action_toml("Lock", shortcut=None)
     _write_config(tmp_path, monkeypatch, actions_toml)

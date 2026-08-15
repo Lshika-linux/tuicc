@@ -88,6 +88,55 @@ def handle_sysmon_nice(key, cfg):
     return sysmon_mode.handle_nice_key(key)
 
 
+# Level-2 connectivity browsing (see connectivity.py's own "level-2
+# browsing" section docstring for why this is a real mode_stack claim,
+# not the orthogonal two-level-expand mechanism sessions/media/sysmon
+# use) — hand-rolls every key itself, same "no dispatch_action inside
+# a claimed modal" shape as handle_connectivity_pairing below and
+# resize_mode.handle_editing_key. next_item_keys/prev_item_keys are
+# main()'s own already-built sets (Tab/Down and Shift+Tab/Up, plus vim
+# hjkl duplicates under vim_mode) — reused as-is so vim keys keep
+# working here for free, not re-derived.
+def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_keys, prev_item_keys):
+    section = connectivity_mode.browsing_section()
+    if section is None:
+        return False  # safety net — shouldn't happen, see frame_update.py's own auto-exit
+    if key == 27:  # Escape
+        connectivity_mode.stop_browsing()
+        loop_state.selected_id = f"connectivity:{'wifi' if section == 'wifi' else 'bt'}:header"
+        return False
+    if key == cfg.keybinds["scan"]:
+        if section == "wifi":
+            status_worker.request_action("wifi", "scan", None)
+        else:
+            status_worker.request_action("bluetooth", "discover", None)
+        return True
+    items = status_worker.get(section) or []
+    if key == cfg.keybinds["confirm"] and items and loop_state.selected_id:
+        current_key = loop_state.selected_id.split(":", 2)[2]
+        # Guards the one genuinely-possible stale-selection edge case:
+        # browsing entered while the section was empty (selected_id is
+        # still the header id, not a real item) and an item then showed
+        # up on a later poll before any Up/Down/Enter re-anchored
+        # selection to a real row — without this, current_key would be
+        # "header" itself and toggle_* would fire a bogus connect
+        # attempt against a network/device that doesn't exist.
+        valid_keys = {n.ssid for n in items} if section == "wifi" else {d.id for d in items}
+        if current_key in valid_keys:
+            if section == "wifi":
+                connectivity_mode.toggle_wifi(status_worker, current_key)
+            else:
+                connectivity_mode.toggle_bluetooth(status_worker, current_key)
+        return True
+    if key in next_item_keys and items:
+        loop_state.selected_id = connectivity_mode.next_browsing_selection(section, items, loop_state.selected_id, 1)
+        return True
+    if key in prev_item_keys and items:
+        loop_state.selected_id = connectivity_mode.next_browsing_selection(section, items, loop_state.selected_id, -1)
+        return True
+    return True
+
+
 # Connectivity's two prompts: entry/resolution are driven by per-frame
 # daemon-mailbox polling (see main()'s loop body, near wifi_agent/
 # bluez_agent), not purely by keypress — only the actual per-keypress
@@ -488,6 +537,9 @@ def main(stdscr):
         "sysmon_nice": lambda key: handle_sysmon_nice(key, cfg),
         "connectivity_passphrase": lambda key: handle_connectivity_passphrase(key, cfg, wifi_agent),
         "connectivity_pairing": lambda key: handle_connectivity_pairing(key, cfg, bluez_agent),
+        "connectivity_browsing": lambda key: handle_connectivity_browsing(
+            key, loop_state, cfg, status_worker, next_item_keys, prev_item_keys
+        ),
         "help": lambda key: handle_help(key, loop_state, cfg, help_state),
         "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state),
         "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves),
@@ -674,6 +726,8 @@ def main(stdscr):
                     loop_state.mode_stack.append("sessions_naming")
                 if sysmon_mode.is_editing_nice():
                     loop_state.mode_stack.append("sysmon_nice")
+                if connectivity_mode.is_browsing():
+                    loop_state.mode_stack.append("connectivity_browsing")
                 if should_dismiss:
                     loop_state.dismissed = True
                     provider.dismiss_self()

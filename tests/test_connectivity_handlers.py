@@ -1,110 +1,109 @@
-"""Tests for modules/connectivity.py's ACTION_HANDLERS — handle_wifi and
-handle_bluetooth — with a fake StatusWorker so no real D-Bus/
-bluetoothctl I/O is needed.
+"""Tests for modules/connectivity.py's ACTION_HANDLERS — handle_wifi_header
+and handle_bt_header, the level-1 header handlers that enter level-2
+browsing (see connectivity.py's own "level-2 browsing" section
+docstring) — with a fake StatusWorker so no real D-Bus/bluetoothctl I/O
+is needed. toggle_wifi/toggle_bluetooth (the connect/disconnect logic
+these used to inline before being extracted for level-2's own direct-
+call use) are tested in test_connectivity_module.py instead, alongside
+next_browsing_selection — this file stays scoped to the dispatch_action
+ACTION_HANDLERS contract specifically.
+
+Module-level browsing state (_browsing_section) is reset by hand at
+the top of each test that touches it, same "no autouse fixture"
+convention test_media_module.py's own docstring documents for
+_expanded_bus_name.
 """
 
 from types import SimpleNamespace
 
 from tuicc.actions import ActionContext
 from tuicc.connectivity.model import WifiNetwork, BluetoothDevice
-from tuicc.modules.connectivity import handle_wifi, handle_bluetooth, handle_wifi_scan, handle_bluetooth_discover
+from tuicc.modules.connectivity import handle_wifi_header, handle_bt_header, stop_browsing, is_browsing, browsing_section
 
 
 class _FakeConnectivity:
     def __init__(self, wifi_networks=None, bluetooth_devices=None):
         self._snapshots = {"wifi": wifi_networks or [], "bluetooth": bluetooth_devices or []}
-        self.wifi_connect_calls = []
-        self.wifi_disconnect_calls = []
-        self.bluetooth_connect_calls = []
-        self.bluetooth_disconnect_calls = []
-        self.wifi_scan_calls = []
-        self.bluetooth_discover_calls = []
 
     def get(self, domain_name):
         return self._snapshots[domain_name]
 
-    def request_action(self, domain_name, action_name, arg):
-        calls = {
-            ("wifi", "connect"): self.wifi_connect_calls,
-            ("wifi", "disconnect"): self.wifi_disconnect_calls,
-            ("wifi", "scan"): self.wifi_scan_calls,
-            ("bluetooth", "connect"): self.bluetooth_connect_calls,
-            ("bluetooth", "disconnect"): self.bluetooth_disconnect_calls,
-            ("bluetooth", "discover"): self.bluetooth_discover_calls,
-        }[(domain_name, action_name)]
-        calls.append(arg)
 
+# ---------- handle_wifi_header ----------
 
-# ---------- handle_wifi ----------
-
-def test_handle_wifi_connects_when_not_connected():
+def test_handle_wifi_header_enters_browsing():
+    stop_browsing()
     connectivity = _FakeConnectivity(wifi_networks=[WifiNetwork(ssid="Home", connected=False)])
     ctx = ActionContext(provider=None, status=connectivity)
-    item = SimpleNamespace(focus_target="Home")
+    item = SimpleNamespace(focus_target=None)
 
-    handle_wifi(ctx, item, cfg=None)
+    should_dismiss, pending = handle_wifi_header(ctx, item, cfg=None)
 
-    assert connectivity.wifi_connect_calls == ["Home"]
-    assert connectivity.wifi_disconnect_calls == []
+    assert is_browsing() is True
+    assert browsing_section() == "wifi"
+    assert (should_dismiss, pending) == (False, None)
 
 
-def test_handle_wifi_disconnects_when_already_connected():
-    # Mirrors handle_bluetooth's toggle behavior below — selecting an
-    # already-connected network and pressing confirm should disconnect
-    # it, not silently re-issue a connect.
-    connectivity = _FakeConnectivity(wifi_networks=[WifiNetwork(ssid="Home", connected=True)])
+def test_handle_wifi_header_reselects_the_first_network():
+    stop_browsing()
+    connectivity = _FakeConnectivity(wifi_networks=[
+        WifiNetwork(ssid="Home", connected=False), WifiNetwork(ssid="Office", connected=False),
+    ])
     ctx = ActionContext(provider=None, status=connectivity)
-    item = SimpleNamespace(focus_target="Home")
+    item = SimpleNamespace(focus_target=None)
 
-    handle_wifi(ctx, item, cfg=None)
+    handle_wifi_header(ctx, item, cfg=None)
 
-    assert connectivity.wifi_disconnect_calls == ["Home"]
-    assert connectivity.wifi_connect_calls == []
+    assert ctx.reselect_item_id == "connectivity:wifi:Home"
 
 
-# ---------- handle_bluetooth ----------
+def test_handle_wifi_header_leaves_reselect_unset_when_no_networks():
+    stop_browsing()
+    connectivity = _FakeConnectivity(wifi_networks=[])
+    ctx = ActionContext(provider=None, status=connectivity)
+    item = SimpleNamespace(focus_target=None)
 
-def test_handle_bluetooth_connects_when_not_connected():
+    handle_wifi_header(ctx, item, cfg=None)
+
+    assert is_browsing() is True  # still enters browsing — e.g. to press the scan key
+    assert ctx.reselect_item_id is None
+
+
+# ---------- handle_bt_header ----------
+
+def test_handle_bt_header_enters_browsing():
+    stop_browsing()
     connectivity = _FakeConnectivity(bluetooth_devices=[BluetoothDevice(id="AA", name="Speaker", connected=False)])
     ctx = ActionContext(provider=None, status=connectivity)
-    item = SimpleNamespace(focus_target="AA")
-
-    handle_bluetooth(ctx, item, cfg=None)
-
-    assert connectivity.bluetooth_connect_calls == ["AA"]
-    assert connectivity.bluetooth_disconnect_calls == []
-
-
-def test_handle_bluetooth_disconnects_when_already_connected():
-    connectivity = _FakeConnectivity(bluetooth_devices=[BluetoothDevice(id="AA", name="Speaker", connected=True)])
-    ctx = ActionContext(provider=None, status=connectivity)
-    item = SimpleNamespace(focus_target="AA")
-
-    handle_bluetooth(ctx, item, cfg=None)
-
-    assert connectivity.bluetooth_disconnect_calls == ["AA"]
-    assert connectivity.bluetooth_connect_calls == []
-
-
-# ---------- handle_wifi_scan / handle_bluetooth_discover ----------
-
-def test_handle_wifi_scan_requests_scan_action():
-    connectivity = _FakeConnectivity()
-    ctx = ActionContext(provider=None, status=connectivity)
     item = SimpleNamespace(focus_target=None)
 
-    should_dismiss, pending = handle_wifi_scan(ctx, item, cfg=None)
+    should_dismiss, pending = handle_bt_header(ctx, item, cfg=None)
 
-    assert connectivity.wifi_scan_calls == [None]
+    assert is_browsing() is True
+    assert browsing_section() == "bluetooth"
     assert (should_dismiss, pending) == (False, None)
 
 
-def test_handle_bluetooth_discover_requests_discover_action():
-    connectivity = _FakeConnectivity()
+def test_handle_bt_header_reselects_the_first_device():
+    stop_browsing()
+    connectivity = _FakeConnectivity(bluetooth_devices=[
+        BluetoothDevice(id="AA", name="A", connected=False), BluetoothDevice(id="BB", name="B", connected=False),
+    ])
     ctx = ActionContext(provider=None, status=connectivity)
     item = SimpleNamespace(focus_target=None)
 
-    should_dismiss, pending = handle_bluetooth_discover(ctx, item, cfg=None)
+    handle_bt_header(ctx, item, cfg=None)
 
-    assert connectivity.bluetooth_discover_calls == [None]
-    assert (should_dismiss, pending) == (False, None)
+    assert ctx.reselect_item_id == "connectivity:bt:AA"
+
+
+def test_handle_bt_header_leaves_reselect_unset_when_no_devices():
+    stop_browsing()
+    connectivity = _FakeConnectivity(bluetooth_devices=[])
+    ctx = ActionContext(provider=None, status=connectivity)
+    item = SimpleNamespace(focus_target=None)
+
+    handle_bt_header(ctx, item, cfg=None)
+
+    assert is_browsing() is True
+    assert ctx.reselect_item_id is None

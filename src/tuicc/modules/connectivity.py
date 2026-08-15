@@ -1,7 +1,13 @@
 """Connectivity module: wifi networks and bluetooth devices, in two
-sections of one box. Enter connects to the selected item — actual
-connect/disconnect happens on the StatusWorker's background thread
-(ctx.status), never blocking the render loop.
+sections of one box. WiFi/Bluetooth headers are the only level-1
+(cross-module Tab-reachable) items — Enter on one claims mode_stack
+("connectivity_browsing") and browses that section's own networks/
+devices exclusively; see this module's own "level-2 browsing" section
+docstring for the full design (a genuine input claim, not the
+orthogonal two-level-expand mechanism sessions.py/media.py/sysmon.py
+use). Within browsing, Enter connects/disconnects the selected item —
+actual connect/disconnect happens on the StatusWorker's background
+thread (ctx.status), never blocking the render loop.
 
 CLAUDE/VISION.md's R4 added two more input claims this module owns the
 display state for, same "module-level state, main.py notices and pushes
@@ -63,7 +69,7 @@ def _selected_wifi_index(networks, selected_id):
     Same pattern media.py's own _selected_output_index uses.
     """
     if not selected_id or not selected_id.startswith("connectivity:wifi:") \
-            or selected_id == "connectivity:wifi:scan":
+            or selected_id == "connectivity:wifi:header":
         return None
     ssid = selected_id.split(":", 2)[2]
     for i, network in enumerate(networks):
@@ -74,7 +80,7 @@ def _selected_wifi_index(networks, selected_id):
 
 def _selected_bt_index(devices, selected_id):
     if not selected_id or not selected_id.startswith("connectivity:bt:") \
-            or selected_id == "connectivity:bt:discover":
+            or selected_id == "connectivity:bt:header":
         return None
     device_id = selected_id.split(":", 2)[2]
     for i, device in enumerate(devices):
@@ -295,6 +301,89 @@ def pairing_error() -> str | None:
     return _pairing_error
 
 
+# ---------- level-2 browsing: a real input claim over one section ----------
+# WiFi/Bluetooth headers are the only level-1 (cross-module Tab-
+# reachable) items — Enter on one claims mode_stack ("connectivity_
+# browsing", pushed by main.py right after dispatch_action(), same
+# "module sets its own state, main.py notices and pushes" idiom as
+# sessions.py's is_naming()) and browses that section's own items
+# exclusively, via main.py's handle_connectivity_browsing hand-rolling
+# every key itself — NOT the same mechanism as sessions.py/media.py/
+# sysmon.py's own two-level expand (that one stays orthogonal to
+# mode_stack; this one is a genuine modal claim, same shape as
+# resize_mode.py's editing level, chosen specifically so a dedicated
+# "scan" key becomes safe to bind without colliding with ambient
+# typing or global shortcuts).
+_browsing_section = None  # "wifi" | "bluetooth" | None
+
+
+def is_browsing() -> bool:
+    return _browsing_section is not None
+
+
+def browsing_section() -> str | None:
+    return _browsing_section
+
+
+def start_browsing(section: str) -> None:
+    global _browsing_section
+    _browsing_section = section
+
+
+def stop_browsing() -> None:
+    global _browsing_section
+    _browsing_section = None
+
+
+def next_browsing_selection(section: str, items: list, current_selected_id: str | None, direction: int) -> str:
+    """The next/previous item's own "connectivity:<section>:<key>" id,
+    wrapping at both ends (same convention same_row_neighbor(wrap=True)
+    already uses for the OTHER two-level modules — a claimed list with
+    nowhere else to Tab into shouldn't have a dead end at either edge).
+    Built on the existing _selected_wifi_index/_selected_bt_index
+    (rather than tracking a separate index) so loop_state.selected_id
+    stays the single source of truth for "what's selected" everywhere,
+    same as every other module in this codebase. current_selected_id
+    not matching anything in `items` (nothing selected yet, or the
+    previously-selected item just disappeared) defaults to the first
+    item, not a crash or a no-op.
+    """
+    index_fn = _selected_wifi_index if section == "wifi" else _selected_bt_index
+    key_fn = (lambda it: it.ssid) if section == "wifi" else (lambda it: it.id)
+    # id prefix is "bt", not "bluetooth" — matches _bt_row_nav_item's
+    # own f"connectivity:bt:{device.id}" convention, distinct from the
+    # StatusWorker domain name ("bluetooth") `section` itself holds.
+    id_prefix = "wifi" if section == "wifi" else "bt"
+    current_index = index_fn(items, current_selected_id)
+    new_index = 0 if current_index is None else (current_index + direction) % len(items)
+    return f"connectivity:{id_prefix}:{key_fn(items[new_index])}"
+
+
+def toggle_wifi(status, ssid: str) -> None:
+    """Enter toggles: connect if not connected, disconnect if it is.
+    Extracted from what used to be handle_wifi's own body — individual
+    wifi rows are only ever reachable while browsing (see this
+    section's own docstring), so this is called directly from main.py's
+    handle_connectivity_browsing rather than through dispatch_action.
+    """
+    networks = status.get("wifi") or []
+    network = next((n for n in networks if n.ssid == ssid), None)
+    if network is not None and network.connected:
+        status.request_action("wifi", "disconnect", ssid)
+    else:
+        status.request_action("wifi", "connect", ssid)
+
+
+def toggle_bluetooth(status, device_id: str) -> None:
+    """Same reasoning as toggle_wifi above, for bluetooth devices."""
+    devices = status.get("bluetooth") or []
+    device = next((d for d in devices if d.id == device_id), None)
+    if device is not None and device.connected:
+        status.request_action("bluetooth", "disconnect", device_id)
+    else:
+        status.request_action("bluetooth", "connect", device_id)
+
+
 def _pending_blink_style(theme):
     """Blinks between selected and dim twice a second — no per-frame
     state needed, since time.time() is already a shared clock every
@@ -381,34 +470,39 @@ def draw(stdscr, box, ctx, module_name):
         if kind in ("wifi_header", "bt_header"):
             header_text = payload
             is_wifi = kind == "wifi_header"
-            item_id = "connectivity:wifi:scan" if is_wifi else "connectivity:bt:discover"
+            item_id = "connectivity:wifi:header" if is_wifi else "connectivity:bt:header"
             is_selected = item_id == ctx.selected_id
-            # The REAL scanning/discovering state (main.py's dedicated
-            # "wifi_scanning"/"bluetooth_discovering" Domains, polling
-            # the daemon's own Scanning/Discovering property) — not
-            # StatusWorker.is_pending(), which only reflects the brief
-            # window the fire-and-forget scan()/start_discovery() CALL
-            # itself takes, nowhere near the real scan/discovery
-            # duration. See CLAUDE/NOTES/design-decisions.md
-            # #connectivity-module-design.
+            # Selection now shows on the header TEXT's own color (same
+            # convention every other row in this module already uses)
+            # rather than a separate right-aligned "↻ Scan"/"↻ Discover"
+            # label — Enter here enters browsing, it doesn't scan
+            # anymore (see this module's own "level-2 browsing" section
+            # docstring), so a static action-looking label would be
+            # misleading. The real scanning/discovering state (main.py's
+            # dedicated "wifi_scanning"/"bluetooth_discovering" Domains,
+            # polling the daemon's own Scanning/Discovering property —
+            # not StatusWorker.is_pending(), which only reflects the
+            # brief fire-and-forget scan()/start_discovery() CALL, not
+            # the real scan/discovery duration; see CLAUDE/NOTES/
+            # design-decisions.md#connectivity-module-design) still
+            # blinks on the right, independent of selection — a scan
+            # triggered from inside browsing (the new `scan` key) stays
+            # visible from level 1 too.
+            header_color = theme.get("selected", 0) if is_selected else theme.get("accent", 0)
             scanning_domain = "wifi_scanning" if is_wifi else "bluetooth_discovering"
             scanning = ctx.status is not None and bool(ctx.status.get(scanning_domain))
-            if scanning:
-                trigger_color, trigger_attr = _pending_blink_style(theme)
-                trigger_label = "Scanning…" if is_wifi else "Discovering…"
-            else:
-                trigger_color = theme.get("selected", 0) if is_selected else theme.get("text", 0)
-                trigger_attr = curses.A_BOLD if is_selected else curses.A_DIM
-                trigger_label = "↻ Scan" if is_wifi else "↻ Discover"
             try:
-                stdscr.addstr(row, x + 2, wc_truncate(header_text, max(inner_w, 0)), theme.get("accent", 0) | curses.A_BOLD)
-                # Right-aligned within the box's own inner width — only
-                # drawn if there's room left after the header text, so
-                # a long SSID-count header ("WiFi [143]") on a narrow
-                # box can't make the two overlap.
-                trigger_x = x + w - 2 - len(trigger_label)
-                if trigger_x > x + 2 + len(header_text):
-                    stdscr.addstr(row, trigger_x, trigger_label, trigger_color | trigger_attr)
+                stdscr.addstr(row, x + 2, wc_truncate(header_text, max(inner_w, 0)), header_color | curses.A_BOLD)
+                if scanning:
+                    trigger_color, trigger_attr = _pending_blink_style(theme)
+                    trigger_label = "Scanning…" if is_wifi else "Discovering…"
+                    # Right-aligned within the box's own inner width —
+                    # only drawn if there's room left after the header
+                    # text, so a long SSID-count header ("WiFi [143]")
+                    # on a narrow box can't make the two overlap.
+                    trigger_x = x + w - 2 - len(trigger_label)
+                    if trigger_x > x + 2 + len(header_text):
+                        stdscr.addstr(row, trigger_x, trigger_label, trigger_color | trigger_attr)
             except curses.error:
                 pass
 
@@ -580,13 +674,16 @@ def _action_progress_line(status, domain_name, key, connected, theme):
 
 
 def _wifi_scan_preview_text(networks, error, theme):
-    """The hover-preview for the "Scan" row itself — the FULL list of
-    currently available networks, not just the
-    connectivity_visible_slots window the box's scrollable section
-    shows. Same None-vs-[] error handling as _build_rows' own —
-    `networks` is the raw ctx.wifi_networks (may be None), not the
-    "or []"-normalized local nav_items() otherwise uses, so a real poll
-    failure still shows as an error here too, not "no networks".
+    """The hover-preview for the WiFi header row itself (name kept from
+    when Enter here triggered a scan directly — it now enters browsing
+    instead, see this module's own "level-2 browsing" section, but the
+    preview content is unchanged) — the FULL list of currently
+    available networks, not just the connectivity_visible_slots window
+    the box's scrollable section shows. Same None-vs-[] error handling
+    as _build_rows' own — `networks` is the raw ctx.wifi_networks (may
+    be None), not the "or []"-normalized local nav_items() otherwise
+    uses, so a real poll failure still shows as an error here too, not
+    "no networks".
     """
     if networks is None and error:
         return [(f"⚠ {error}", theme.get("urgent", 0))]
@@ -604,7 +701,7 @@ def _wifi_scan_preview_text(networks, error, theme):
 
 def _bt_discover_preview_text(devices, error, theme):
     """Same reasoning as _wifi_scan_preview_text above, for the
-    "Discover" row and ctx.bluetooth_devices."""
+    Bluetooth header row and ctx.bluetooth_devices."""
     if devices is None and error:
         return [(f"⚠ {error}", theme.get("urgent", 0))]
     if not devices:
@@ -619,7 +716,21 @@ def _bt_discover_preview_text(devices, error, theme):
     return lines
 
 
-def _wifi_preview_text(network, theme, status):
+def _browsing_hint_line(theme, cfg):
+    """The red "available keys" line appended to a network/device's own
+    preview — individual rows are only ever selectable while browsing
+    (see this module's own "level-2 browsing" section), so this is
+    always relevant whenever it's reached, no is_browsing() check
+    needed. Urgent color, same "this needs your attention" role
+    preview_urgent/sysmon's own diagnostics-issue lines already use —
+    not because it's an error, but because it's the one thing on this
+    screen that's a raw keypress rather than a normal Enter-driven
+    action, worth standing out.
+    """
+    return (f"[{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", theme.get("urgent", 0))
+
+
+def _wifi_preview_text(network, theme, status, cfg):
     lines = [(network.ssid, theme.get("accent", 0))]
     signal_text = f"{network.signal}%" if network.signal is not None else "unknown"
     lines.append((f"Signal: {signal_text}", theme.get("text", 0)))
@@ -634,10 +745,11 @@ def _wifi_preview_text(network, theme, status):
     progress = _action_progress_line(status, "wifi", network.ssid, network.connected, theme)
     if progress is not None:
         lines.append(progress)
+    lines.append(_browsing_hint_line(theme, cfg))
     return lines
 
 
-def _bt_preview_text(device, theme, status):
+def _bt_preview_text(device, theme, status, cfg):
     lines = [(device.name, theme.get("accent", 0))]
     lines.append((f"Address: {device.id}", theme.get("text", 0)))
     if device.address_type:
@@ -655,48 +767,58 @@ def _bt_preview_text(device, theme, status):
     progress = _action_progress_line(status, "bluetooth", device.id, device.connected, theme)
     if progress is not None:
         lines.append(progress)
+    lines.append(_browsing_hint_line(theme, cfg))
     return lines
 
 
-def _wifi_row_nav_item(network, box, row, theme, status) -> NavItem:
+def _wifi_row_nav_item(network, box, row, theme, status, cfg) -> NavItem:
     x, y, w, h = box
     return NavItem(
         id=f"connectivity:wifi:{network.ssid}",
         rect=(x + 1, row, w - 2, 1),
         focus_target=network.ssid,
         target_kind="wifi_network",
-        preview_text=_wifi_preview_text(network, theme, status),
+        preview_text=_wifi_preview_text(network, theme, status, cfg),
     )
 
 
-def _bt_row_nav_item(device, box, row, theme, status) -> NavItem:
+def _bt_row_nav_item(device, box, row, theme, status, cfg) -> NavItem:
     x, y, w, h = box
     return NavItem(
         id=f"connectivity:bt:{device.id}",
         rect=(x + 1, row, w - 2, 1),
         focus_target=device.id,
         target_kind="bluetooth_device",
-        preview_text=_bt_preview_text(device, theme, status),
+        preview_text=_bt_preview_text(device, theme, status, cfg),
     )
 
 
 def nav_items(box, ctx, module_name) -> list[NavItem]:
-    """Real (drawn, windowed) rows first, exactly as
-    ctx.config.connectivity_visible_slots itself lays them out (see
-    _build_rows) — then, for each section that's actually scrolled
-    (more real items than fit), one extra "peek" NavItem just before
-    and/or after the window, reusing the boundary row's own y. Same
-    shape as media.py's own nav_items() — see _section_nav_indices'
-    own docstring for why a peek item is never something a user can
-    see selected-but-undrawn.
+    """Level 1 (not browsing): just the two headers — WiFi/Bluetooth
+    are cross-module-Tab-reachable, individual networks/devices are
+    not. Level 2 (browsing one section): just THAT section's own real
+    (drawn, windowed) rows, exactly as ctx.config.connectivity_
+    visible_slots itself lays them out (see _build_rows), plus — for a
+    section that's actually scrolled (more real items than fit) — one
+    extra "peek" NavItem just before and/or after the window, reusing
+    the boundary row's own y (same shape as media.py's own nav_items()
+    — see _section_nav_indices' own docstring for why a peek item is
+    never something a user can see selected-but-undrawn). See this
+    module's own "level-2 browsing" section docstring for why this is
+    a real mode_stack claim (main.py's handle_connectivity_browsing)
+    rather than the orthogonal two-level-expand mechanism sessions.py/
+    media.py/sysmon.py use — draw() keeps rendering BOTH sections in
+    full regardless of browsing state, only what's reachable here
+    changes.
     """
     x, y, w, h = box
     theme = ctx.theme or {}
+    cfg = ctx.config
     wifi_networks = ctx.wifi_networks or []
     bluetooth_devices = ctx.bluetooth_devices or []
 
-    wifi_scan_item = None
-    bt_discover_item = None
+    wifi_header_item = None
+    bt_header_item = None
     wifi_items: list[NavItem] = []
     wifi_rows: list[int] = []  # one entry per REAL "wifi_item" row drawn, in order
     bt_items: list[NavItem] = []
@@ -708,20 +830,20 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             break
 
         if kind == "wifi_header":
-            wifi_scan_item = NavItem(
-                id="connectivity:wifi:scan", rect=(x + 1, row, w - 2, 1), target_kind="wifi_scan",
+            wifi_header_item = NavItem(
+                id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
                 preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme),
             )
         elif kind == "bt_header":
-            bt_discover_item = NavItem(
-                id="connectivity:bt:discover", rect=(x + 1, row, w - 2, 1), target_kind="bluetooth_discover",
+            bt_header_item = NavItem(
+                id="connectivity:bt:header", rect=(x + 1, row, w - 2, 1), target_kind="bluetooth_browse",
                 preview_text=_bt_discover_preview_text(ctx.bluetooth_devices, ctx.bluetooth_error, theme),
             )
         elif kind == "wifi_item":
-            wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status))
+            wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg))
             wifi_rows.append(row)
         elif kind == "bt_item":
-            bt_items.append(_bt_row_nav_item(payload, box, row, theme, ctx.status))
+            bt_items.append(_bt_row_nav_item(payload, box, row, theme, ctx.status, cfg))
             bt_rows.append(row)
 
     visible_slots = ctx.config.connectivity_visible_slots
@@ -729,81 +851,59 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     selected_wifi_index = _selected_wifi_index(wifi_networks, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(wifi_networks), selected_wifi_index, visible_slots=visible_slots)
     if before_i is not None and wifi_rows:
-        wifi_items = [_wifi_row_nav_item(wifi_networks[before_i], box, wifi_rows[0], theme, ctx.status)] + wifi_items
+        wifi_items = [_wifi_row_nav_item(wifi_networks[before_i], box, wifi_rows[0], theme, ctx.status, cfg)] + wifi_items
     if after_i is not None and wifi_rows:
-        wifi_items = wifi_items + [_wifi_row_nav_item(wifi_networks[after_i], box, wifi_rows[-1], theme, ctx.status)]
+        wifi_items = wifi_items + [_wifi_row_nav_item(wifi_networks[after_i], box, wifi_rows[-1], theme, ctx.status, cfg)]
 
     selected_bt_index = _selected_bt_index(bluetooth_devices, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(bluetooth_devices), selected_bt_index, visible_slots=visible_slots)
     if before_i is not None and bt_rows:
-        bt_items = [_bt_row_nav_item(bluetooth_devices[before_i], box, bt_rows[0], theme, ctx.status)] + bt_items
+        bt_items = [_bt_row_nav_item(bluetooth_devices[before_i], box, bt_rows[0], theme, ctx.status, cfg)] + bt_items
     if after_i is not None and bt_rows:
-        bt_items = bt_items + [_bt_row_nav_item(bluetooth_devices[after_i], box, bt_rows[-1], theme, ctx.status)]
+        bt_items = bt_items + [_bt_row_nav_item(bluetooth_devices[after_i], box, bt_rows[-1], theme, ctx.status, cfg)]
+
+    if _browsing_section == "wifi":
+        return wifi_items
+    if _browsing_section == "bluetooth":
+        return bt_items
 
     items = []
-    if wifi_scan_item is not None:
-        items.append(wifi_scan_item)
-    items.extend(wifi_items)
-    if bt_discover_item is not None:
-        items.append(bt_discover_item)
-    items.extend(bt_items)
+    if wifi_header_item is not None:
+        items.append(wifi_header_item)
+    if bt_header_item is not None:
+        items.append(bt_header_item)
     return items
 
 
-def handle_wifi(ctx, item, cfg):
-    """Enter toggles: connect if not connected, disconnect if it is —
-    same reasoning as handle_bluetooth below (this used to always call
-    connect(), so selecting an already-connected network and pressing
-    confirm silently re-issued a redundant connect instead of
-    disconnecting).
+def handle_wifi_header(ctx, item, cfg):
+    """Enter on the WiFi header enters level-2 browsing (see this
+    module's own "level-2 browsing" section) — main.py notices
+    is_browsing() right after this returns and pushes the
+    "connectivity_browsing" mode_stack tier on its own behalf, same
+    idiom as sessions.py's start_naming()/is_naming(). Jumps straight
+    to the first real network (via ActionContext.reselect_item_id +
+    main.py's existing do_apply_reselect()) rather than leaving
+    selection sitting on the now-unreachable header id; stays on the
+    header id when the section is genuinely empty — still valid, e.g.
+    to immediately press the scan key.
     """
+    start_browsing("wifi")
     networks = ctx.status.get("wifi") or []
-    network = next((n for n in networks if n.ssid == item.focus_target), None)
-    if network is not None and network.connected:
-        ctx.status.request_action("wifi", "disconnect", item.focus_target)
-    else:
-        ctx.status.request_action("wifi", "connect", item.focus_target)
+    if networks:
+        ctx.reselect_item_id = f"connectivity:wifi:{networks[0].ssid}"
     return False, None
 
 
-def handle_bluetooth(ctx, item, cfg):
-    """Enter toggles: connect if not connected, disconnect if it is —
-    otherwise pressing Enter on an already-connected device silently
-    did nothing, since only connect() was ever called regardless of
-    current state.
-    """
+def handle_bt_header(ctx, item, cfg):
+    """Same reasoning as handle_wifi_header above, for Bluetooth."""
+    start_browsing("bluetooth")
     devices = ctx.status.get("bluetooth") or []
-    device = next((d for d in devices if d.id == item.focus_target), None)
-    if device is not None and device.connected:
-        ctx.status.request_action("bluetooth", "disconnect", item.focus_target)
-    else:
-        ctx.status.request_action("bluetooth", "connect", item.focus_target)
-    return False, None
-
-
-def handle_wifi_scan(ctx, item, cfg):
-    """Fire-and-forget, same shape as handle_wifi/handle_bluetooth —
-    WifiBackend.scan() itself only schedules iwd's scan and returns
-    (see iwd.py's own scan() docstring), so this doesn't wait for
-    results: the next regular StatusWorker poll tick picks up whatever
-    iwd found by then. No live progress signal watched — see
-    VISION.md's R4 section for why that's a deliberate simplicity
-    choice, not an oversight.
-    """
-    ctx.status.request_action("wifi", "scan", None)
-    return False, None
-
-
-def handle_bluetooth_discover(ctx, item, cfg):
-    """Same reasoning as handle_wifi_scan above, for
-    BluetoothBackend.start_discovery()."""
-    ctx.status.request_action("bluetooth", "discover", None)
+    if devices:
+        ctx.reselect_item_id = f"connectivity:bt:{devices[0].id}"
     return False, None
 
 
 HANDLERS = {
-    "wifi_network": handle_wifi,
-    "bluetooth_device": handle_bluetooth,
-    "wifi_scan": handle_wifi_scan,
-    "bluetooth_discover": handle_bluetooth_discover,
+    "wifi_browse": handle_wifi_header,
+    "bluetooth_browse": handle_bt_header,
 }

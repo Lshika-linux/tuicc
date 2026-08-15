@@ -129,7 +129,13 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
     connectivity_wants_input = (
         loop_state.pending_confirm is None
         and not resize.active and not spawn_picker.active and not help_state.active
-        and loop_state.mode_stack[-1] == "normal"
+        # "connectivity_browsing" too, not just "normal" — individual
+        # wifi/bt rows are only ever reachable while browsing (see
+        # connectivity.py's own "level-2 browsing" section), so a
+        # passphrase/pairing callback triggered by pressing Enter there
+        # has to be able to nest ON TOP of it (same "help_colors" nests
+        # on "help" idiom) rather than never being noticed at all.
+        and loop_state.mode_stack[-1] in ("normal", "connectivity_browsing")
     )
     # Also fires mid-retry (iwd re-asking RequestPassphrase after a
     # wrong password) — gated to only when actually WAITING on a
@@ -247,6 +253,18 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         media_mode.collapse()
     if loop_state.active_module != "sysmon" and sysmon_mode.is_expanded():
         sysmon_mode.collapse()
+    # Not the same trigger as the three above (those watch active_module
+    # changing away — impossible here, connectivity_browsing claims
+    # every key) — this one watches the browsed domain's backend dying
+    # mid-browse instead, a known accepted edge case: lingering in a
+    # claimed browse mode with nothing left to browse and no way out
+    # but Escape would be actively unhelpful. Doesn't pop mode_stack
+    # itself (only main.py owns that) — the next keypress's
+    # handle_connectivity_browsing sees browsing_section() is None and
+    # pops on its own, same load-bearing-else safety net resize_mode.
+    # handle_editing_key's own fallback already relies on.
+    if connectivity_mode.is_browsing() and status_worker.get_error(connectivity_mode.browsing_section()):
+        connectivity_mode.stop_browsing()
 
     ctx = RenderContext(
         state=state,
