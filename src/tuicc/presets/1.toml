@@ -16,6 +16,26 @@
 # to resize/move, F3 to save as a new preset) rather than
 # hand-computing ratios here.
 #
+# Same pixel resolution across two machines does NOT mean the same
+# terminal grid (font size, DPI/output scale all affect how many
+# columns/rows actually fit) — if you keep separate presets per
+# machine, an optional [preset] table lets tuicc auto-pick the right
+# one at startup instead of you switching manually every time (F4):
+#
+#   [preset]
+#   min_cols = 200
+#   min_rows = 50
+#
+# Opt-in, per preset — a preset with no [preset] table (like this one)
+# never participates; nothing changes unless you add this yourself.
+# Among presets that DO declare it and still fit the current grid,
+# tuicc picks the one with the largest min_cols*min_rows (the most
+# space this preset was actually designed to use, not just the first
+# one that technically fits). If none fit, config.toml's own [layout]
+# preset value is used, unchanged — never a guess, never persisted
+# back to config.toml either way (F4/F5 remain the only things that
+# actually change what's saved there).
+#
 # This is tuicc's own "thesis screen" (see CLAUDE/VISION.md's R7
 # section) — captured from live use, F2/F3'd into shape rather than
 # hand-derived: left column stacks sessions/sidebar/control/power_menu,

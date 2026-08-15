@@ -227,6 +227,55 @@ def save_layout_to_preset(layout: Layout, preset_number: int) -> None:
     tmp_path.replace(path)
 
 
+def pick_preset_for_size(cols: int, rows: int) -> int | None:
+    """Best-fitting preset for a terminal grid this size, among presets
+    that opt in via their own [preset] min_cols/min_rows table — a
+    preset with no such table (every packaged preset, today) never
+    participates, so this returns None and load_config()'s own
+    [layout] preset value wins unchanged for anyone who hasn't set
+    this up. Exists because two machines can report the identical
+    pixel resolution and still hand curses a completely different
+    cell grid (font size, DPI/output scale) — see
+    CLAUDE/NOTES/design-decisions.md#preset-auto-select-by-size for
+    the fuller reasoning.
+
+    "Best fit" = the largest min_cols*min_rows product among presets
+    that still actually fit this grid (cols >= min_cols and
+    rows >= min_rows) — not the closest by absolute difference (could
+    pick one that doesn't actually fit) and not merely the smallest
+    fitting one (would under-use a screen a bigger preset was designed
+    for). Ties broken by preset number, lowest wins, purely for
+    determinism.
+
+    Read-only — unlike ensure_preset_exists(), never copies a packaged
+    preset into USER_PRESETS_DIR just to probe it; load_config()'s own
+    ensure_all_packaged_presets_exist() call already guarantees every
+    packaged preset is materialized before this ever needs to run.
+    """
+    best_number = None
+    best_score = -1
+    for number in available_preset_numbers():
+        user_path = USER_PRESETS_DIR / f"{number}.toml"
+        packaged_path = PACKAGED_PRESETS_DIR / f"{number}.toml"
+        path = user_path if user_path.exists() else packaged_path
+        if not path.exists():
+            continue
+        preset_meta = load_toml(path).get("preset")
+        if not preset_meta:
+            continue
+        min_cols = preset_meta.get("min_cols")
+        min_rows = preset_meta.get("min_rows")
+        if min_cols is None or min_rows is None:
+            continue
+        if cols < min_cols or rows < min_rows:
+            continue
+        score = min_cols * min_rows
+        if score > best_score:
+            best_score = score
+            best_number = number
+    return best_number
+
+
 def available_preset_numbers() -> list[int]:
     """Every preset number that actually exists somewhere — packaged or
     user — sorted. Used by resize mode's preset-cycling (F4) to know
@@ -533,13 +582,24 @@ def _build_sysmon_blocks(user_data: dict) -> list:
     return blocks
 
 
-def load_config() -> Config:
+def load_config(preset_override: int | None = None) -> Config:
+    """preset_override, when given, wins over [layout] preset in
+    config.toml for THIS load only — never written back to the file.
+    This is deliberately not the same thing as F4/F5's own
+    set_active_preset()/save_new_preset(), which do persist: an
+    auto-selected preset (see pick_preset_for_size()) reflects
+    "what fits THIS machine's screen right now", not a standing user
+    preference, and silently overwriting a manually-chosen preset
+    number in config.toml just because tuicc happened to launch on a
+    smaller/bigger grid this one time would be exactly the kind of
+    hidden-default behavior this codebase's own principles reject.
+    """
     ensure_user_config_exists()
     ensure_all_packaged_presets_exist()
 
     user_data = load_toml(USER_CONFIG_PATH)
 
-    preset_number = user_data["layout"]["preset"]
+    preset_number = preset_override if preset_override is not None else user_data["layout"]["preset"]
     layout = build_layout_from_preset(preset_number)
 
     tab_order_mode = user_data["navigation"]["tab_order"]

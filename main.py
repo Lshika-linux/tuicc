@@ -29,6 +29,7 @@ from tuicc.config import (
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
     build_layout_from_preset,
+    pick_preset_for_size,
 )
 from tuicc.loop_state import LoopState
 from tuicc.actions import spawn_detached, handle_pending_confirm, dispatch_action
@@ -386,9 +387,18 @@ def main(stdscr):
     stdscr.timeout(1000)
     stdscr.keypad(True)
 
+    # Two machines can report the identical pixel resolution and still
+    # hand curses a completely different cell grid (font size, DPI/
+    # output scale) — pick_preset_for_size() lets a preset opt in
+    # (its own [preset] min_cols/min_rows) to being auto-selected for
+    # a grid this size, session-only, never persisted to config.toml.
+    # See CLAUDE/NOTES/design-decisions.md#preset-auto-select-by-size.
+    startup_term_height, startup_term_width = stdscr.getmaxyx()
+    preset_override = pick_preset_for_size(startup_term_width, startup_term_height)
+
     # Backends, agents, StatusWorker — everything the loop below needs
     # before it can start. See app_setup.py for why this is split out.
-    app = app_setup.build_app()
+    app = app_setup.build_app(preset_override=preset_override)
     cfg = app.cfg
     control_colors = app.control_colors
     provider = app.provider

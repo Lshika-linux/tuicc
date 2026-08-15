@@ -61,7 +61,7 @@ class AppContext:
     action_ctx: ActionContext
 
 
-def build_app() -> AppContext:
+def build_app(preset_override: int | None = None) -> AppContext:
     """Not unit-tested: setup_theme() below hits curses.start_color(),
     which raises outside a real curses.initscr() session, and
     build_provider()/the backend constructors can hit real WM IPC or
@@ -69,8 +69,14 @@ def build_app() -> AppContext:
     curses-touching functions are already in (tests/test_theme.py only
     covers the curses-free theme.py). Covered by the full test suite
     staying green plus a live-start smoke check instead.
+
+    preset_override passes straight through to load_config() — main()
+    computes it (config.pick_preset_for_size() against the real
+    terminal grid, only available once curses.wrapper() has handed it
+    stdscr) before calling build_app(), since build_app() itself stays
+    deliberately stdscr-free otherwise (see this module's own docstring).
     """
-    cfg = load_config()
+    cfg = load_config(preset_override=preset_override)
     theme_pairs = setup_theme(cfg.theme)
     # Second curses-pair range, for [[control.toggle]] colors — must
     # start past theme_pairs' own range or the two collide.

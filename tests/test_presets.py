@@ -16,6 +16,7 @@ from tuicc.config import (
     save_layout_to_preset,
     build_layout_from_preset,
     available_preset_numbers,
+    pick_preset_for_size,
     set_active_preset,
     set_theme_color,
     set_session_name,
@@ -245,6 +246,107 @@ def test_available_preset_numbers_dedups_across_both_dirs(tmp_path, monkeypatch)
     monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
 
     assert available_preset_numbers() == [1, 2, 5]
+
+
+# ---------- pick_preset_for_size ----------
+# Same pixel resolution across two machines does not mean the same
+# terminal cell grid (font size/DPI/output scale) — see
+# CLAUDE/NOTES/design-decisions.md#preset-auto-select-by-size.
+
+def test_pick_preset_for_size_none_when_no_preset_declares_thresholds(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("[[box]]\nname = \"a\"\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    assert pick_preset_for_size(200, 50) is None
+
+
+def test_pick_preset_for_size_returns_the_one_fitting_preset(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("[preset]\nmin_cols = 200\nmin_rows = 50\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    assert pick_preset_for_size(220, 55) == 1
+
+
+def test_pick_preset_for_size_excludes_a_preset_too_big_for_the_grid(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("[preset]\nmin_cols = 200\nmin_rows = 50\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    # Grid is narrower than this preset's own min_cols — doesn't fit.
+    assert pick_preset_for_size(150, 50) is None
+
+
+def test_pick_preset_for_size_picks_the_best_fit_not_just_any_fit(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("[preset]\nmin_cols = 100\nmin_rows = 30\n")
+    (packaged_dir / "2.toml").write_text("[preset]\nmin_cols = 200\nmin_rows = 50\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    # Both technically fit a 250x60 grid — preset 2 (the bigger,
+    # better-fitting one) should win, not preset 1 just because it
+    # sorts first.
+    assert pick_preset_for_size(250, 60) == 2
+
+
+def test_pick_preset_for_size_ties_break_on_lowest_number(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("[preset]\nmin_cols = 100\nmin_rows = 30\n")
+    (packaged_dir / "2.toml").write_text("[preset]\nmin_cols = 100\nmin_rows = 30\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    assert pick_preset_for_size(150, 40) == 1
+
+
+def test_pick_preset_for_size_ignores_preset_missing_one_of_the_two_keys(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    # min_rows missing entirely — a real config mistake, but this isn't
+    # config.toml's own load-time validation path (that's [weather]'s
+    # job for its own section); silently not participating rather than
+    # crashing tuicc's startup over one malformed preset is the
+    # consistent choice here.
+    (packaged_dir / "1.toml").write_text("[preset]\nmin_cols = 100\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", tmp_path / "user")
+
+    assert pick_preset_for_size(200, 50) is None
+
+
+def test_pick_preset_for_size_user_dir_thresholds_win_over_packaged(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "1.toml").write_text("[preset]\nmin_cols = 200\nmin_rows = 50\n")
+
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    # The user's own live-edited copy has been hand-tuned to a smaller
+    # threshold — same USER_PRESETS_DIR-wins-if-present precedence
+    # ensure_preset_exists() already uses, checked here for the
+    # read-only probe path too.
+    (user_dir / "1.toml").write_text("[preset]\nmin_cols = 80\nmin_rows = 20\n")
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    assert pick_preset_for_size(100, 25) == 1
 
 
 # ---------- set_active_preset ----------

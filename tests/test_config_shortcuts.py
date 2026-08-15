@@ -115,6 +115,24 @@ def test_shortcuts_resolve_to_correct_key_codes(tmp_path, monkeypatch):
     assert cfg.global_shortcuts[15] == {"target_kind": "power_action", "item_id": "power_menu:1"}
 
 
+def test_preset_override_wins_over_config_toml_value_without_persisting(tmp_path, monkeypatch):
+    # preset_override is main.py's own auto-selected-by-grid-size
+    # value (pick_preset_for_size()) — it must win for THIS load, but
+    # config.toml's own [layout] preset line (still "1" here) must
+    # stay untouched, since this is a session-only override, not a
+    # standing preference change (see load_config()'s own docstring).
+    actions_toml = _action_toml("Lock", shortcut=None)
+    _write_config(tmp_path, monkeypatch, actions_toml)
+    (tmp_path / "presets" / "2.toml").write_text(
+        '[[box]]\nname = "override_box"\nx = 0.0\ny = 0.0\nw = 1.0\nh = 1.0\n'
+    )
+
+    cfg = load_config(preset_override=2)
+
+    assert cfg.layout.boxes[0].name == "override_box"
+    assert (tmp_path / "config.toml").read_text() == BASE_TOML.format(power_menu_block=actions_toml)
+
+
 def test_self_app_id_and_return_to_origin_default_when_absent_from_wm_section(tmp_path, monkeypatch):
     # BASE_TOML's [wm] section has no self_app_id/return_to_origin keys
     # at all — load_config() must tolerate that (both are optional
