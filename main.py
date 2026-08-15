@@ -503,6 +503,16 @@ def main(stdscr):
             else:
                 draw_all(stdscr, cfg.layout, boxes, ctx)
 
+                # Redraws sidebar's own border a second time, after
+                # every module's normal draw() has already run — see
+                # sidebar.draw_hidden_indicators()'s own docstring for
+                # why this specific box's "+N hidden" indicator has to
+                # be the literal last thing drawn on its top/bottom
+                # rows this frame, not merely correctly drawn at some
+                # point during it.
+                if "sidebar" in boxes:
+                    sidebar_mode.draw_hidden_indicators(stdscr, boxes["sidebar"], ctx, "sidebar")
+
                 if resize.editing and loop_state.active_module in boxes:
                     resize_mode.draw_editing_highlight(stdscr, boxes[loop_state.active_module], loop_state.theme_pairs)
 

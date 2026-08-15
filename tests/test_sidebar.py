@@ -10,7 +10,7 @@ from tuicc.model import Region, Window, WMState
 from tuicc.navigation import LAST_ITEM_QUERY
 from tuicc.modules.sidebar import (
     nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
-    _visible_slot_range, _selected_slot_index, _hidden_summary, _windowed_range,
+    _visible_slot_range, _selected_slot_index, _hidden_summary, _fitting_border_text,
 )
 
 
@@ -237,41 +237,48 @@ def test_nav_items_peek_item_reaches_the_next_hidden_slot():
     assert any(item.focus_target == "3" for item in items)
 
 
-# ---------- _windowed_range ----------
-# Reserves real content rows for "hidden content" indicators, not a
-# label embedded in the box's own border — found live, adjacent boxes
-# in this codebase's own tightly-packed presets commonly share a
-# border row with zero gap, and whichever draws later in MODULES'
-# iteration order silently overwrites anything the earlier one drew
-# there. See _windowed_range's own docstring for the full story.
+# ---------- _fitting_border_text ----------
+# draw_box_outline's own fallback for a title/bottom_label that
+# doesn't fit its box is BLANK dashes — no text at all, not even a
+# shorter version. Found live: "Workspaces +7 ws, +11 win" routinely
+# doesn't fit a sidebar-width box, and the box's own "Workspaces"
+# identity was disappearing entirely as a result — a real regression
+# from before this indicator existed.
 
-def test_windowed_range_no_indicators_needed_when_everything_fits():
-    start, end, needs_above, needs_below = _windowed_range([2, 2, 2], None, 20)
-    assert (start, end, needs_above, needs_below) == (0, 3, False, False)
-
-
-def test_windowed_range_below_only_reserves_exactly_one_row():
-    # Without reservation, budget=6 fits 3 of these 2-row slots exactly
-    # (6/2=3). With one row reserved for the "below" indicator,
-    # available drops to 5, fitting only 2.
-    start, end, needs_above, needs_below = _windowed_range([2, 2, 2, 2, 2], None, 6)
-    assert needs_above is False
-    assert needs_below is True
-    assert (start, end) == (0, 2)
+def test_fitting_border_text_uses_full_combo_when_it_fits():
+    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 40) == "Workspaces +7 ws, +11 win"
 
 
-def test_windowed_range_above_and_below_both_reserve():
-    # Selection in the middle, budget too small to reach either edge —
-    # both indicators needed, two rows reserved.
-    start, end, needs_above, needs_below = _windowed_range([2, 2, 2, 2, 2], 2, 5)
-    assert needs_above is True
-    assert needs_below is True
-    # 5 - 2 reserved = 3 rows left, fits exactly slot 2 alone (2 rows)
-    # plus 1 leftover row (not enough for a whole neighboring 2-row slot).
-    assert start <= 2 < end
+def test_fitting_border_text_drops_base_when_only_indicator_fits():
+    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 20) == "+7 ws, +11 win"
+
+
+def test_fitting_border_text_falls_back_to_bare_base_when_only_that_fits():
+    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 15) == "Workspaces"
+
+
+def test_fitting_border_text_returns_base_even_when_nothing_fits_at_all():
+    # Still better than draw_box_outline's own blank-dashes fallback —
+    # box identity survives even when the extra info can't.
+    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 3) == "Workspaces"
+
+
+def test_fitting_border_text_empty_base_never_leaves_a_leading_space():
+    # The bottom-border case (no "Workspaces" prefix there at all).
+    assert _fitting_border_text("", "+3 ws", 20) == "+3 ws"
 
 
 # ---------- _hidden_summary ----------
+# Feeds sidebar.draw_hidden_indicators() — a second, later border-only
+# redraw (see that function's own docstring for why it has to be a
+# separate, later pass rather than reserving content rows: found live,
+# this codebase's own tightly-packed presets commonly place another
+# module's box directly adjacent with zero gap, sharing the exact
+# border row, and whichever module draws later in MODULES' own
+# iteration order silently overwrites anything drawn there during the
+# normal per-module pass). draw_hidden_indicators() itself needs a real
+# curses screen to exercise meaningfully, same as draw() — left
+# untested here; _hidden_summary is the pure logic it's built on.
 
 def test_hidden_summary_empty_indices_is_blank():
     slots = [("1", None, [], 2)]

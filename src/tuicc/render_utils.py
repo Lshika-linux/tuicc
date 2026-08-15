@@ -120,28 +120,49 @@ def draw_width_safe(stdscr, row, col, text, color):
             pass
 
 
-def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
+def _labeled_border(corner_left, corner_right, w, label):
+    """One "┌─ label ──┐"-shaped border line — shared by draw_box_outline's
+    top (title) and bottom (bottom_label) borders, which are otherwise
+    identical logic mirrored around the box's other edge.
+    """
+    text = f" {label} "
+    available = max(w - 2, 0)
+    if display_width(text) >= available:
+        return corner_left + "─" * (w - 2) + corner_right
+    left_dashes = 1
+    right_dashes = available - display_width(text) - left_dashes
+    return corner_left + "─" * left_dashes + text + "─" * right_dashes + corner_right
+
+
+def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None, bottom_label=None):
+    """bottom_label mirrors title but on the box's own bottom border.
+
+    Calling this a SECOND time for the same box, later in the same
+    frame, purely to add/change a border label — without redrawing the
+    interior in between — is a real, supported use, not just an
+    accident of how this happens to be implemented: see sidebar.py's
+    own #sidebar-hidden-content-indicator design-decisions.md entry for
+    why a label embedded in a shared border row needs to be the LAST
+    thing drawn on that row for the whole frame, not merely correctly
+    drawn at some point during it.
+    """
     if h < 1 or w < 1:
         return
 
     try:
         if title:
-            label = f" {title} "
-            available = max(w - 2, 0)
-            if display_width(label) >= available:
-                top = "┌" + "─" * (w - 2) + "┐"
-            else:
-                left_dashes = 1
-                right_dashes = available - display_width(label) - left_dashes
-                top = "┌" + "─" * left_dashes + label + "─" * right_dashes + "┐"
-            stdscr.addstr(y, x, top, color_pair)
+            stdscr.addstr(y, x, _labeled_border("┌", "┐", w, title), color_pair)
         else:
             stdscr.addstr(y, x, "┌" + "─" * (w - 2) + "┐", color_pair)
 
         for i in range(1, h - 1):
             stdscr.addstr(y + i, x, "│", color_pair)
             stdscr.addstr(y + i, x + w - 1, "│", color_pair)
-        stdscr.addstr(y + h - 1, x, "└" + "─" * (w - 2) + "┘", color_pair)
+
+        if bottom_label:
+            stdscr.addstr(y + h - 1, x, _labeled_border("└", "┘", w, bottom_label), color_pair)
+        else:
+            stdscr.addstr(y + h - 1, x, "└" + "─" * (w - 2) + "┘", color_pair)
     except curses.error:
         pass
 
