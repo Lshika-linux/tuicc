@@ -622,7 +622,7 @@ def draw(stdscr, box, ctx, module_name):
             # Only once diag is real (not the pre-poll "checking..."
             # state, which nothing can be copied from yet).
             if diag is not None:
-                summary = f"{summary} ({key_label(ctx.config.keybinds['confirm'])}=copy)"
+                summary = f"{summary} ({key_label(ctx.config.keybinds['confirm'])} = copy to clipboard)"
             rest = wc_truncate(f" {summary}", max(inner_w - 1, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
