@@ -12,7 +12,7 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate
+from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate, wrap_text
 from tuicc.title_condense import condense_title
 
 
@@ -164,14 +164,23 @@ def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, cfg, fill
     # uncontrolled window-title text — a browser tab, a document name —
     # genuinely can contain wide/CJK characters or emoji, the exact
     # class of content this whole codebase's width-awareness pass
-    # exists for.
-    full_label = wc_truncate(_window_label(window, cfg), max(win_w - 2, 0))
-    try:
-        center_row = win_y + win_h // 2
-        center_col = centered_x(win_x + 1, max(win_w - 2, 0), full_label)
-        stdscr.addstr(center_row, center_col, full_label, text_color)
-    except curses.error:
-        pass
+    # exists for. Word-wrapped (wrap_text(), render_utils.py) across as
+    # many centered lines as the window box has room for, rather than
+    # clipped to one — a maximized/near-full-box window usually has
+    # real room to spare, and a title read once then left static
+    # doesn't need marquee_text()'s continuous-motion treatment the way
+    # media.py's now-playing text does (that's the right call for
+    # sidebar.py's own cramped per-window row, just not here). Lines
+    # past however many fit just don't draw, same graceful-clip
+    # tolerance wc_truncate's single-line version already had.
+    inner_w = max(win_w - 2, 0)
+    label_lines = wrap_text(_window_label(window, cfg), inner_w)[:max(win_h - 2, 0)]
+    start_row = win_y + max((win_h - len(label_lines)) // 2, 0)
+    for i, line in enumerate(label_lines):
+        try:
+            stdscr.addstr(start_row + i, centered_x(win_x + 1, inner_w, line), line, text_color)
+        except curses.error:
+            pass
 
 
 def nav_items(box, ctx, module_name) -> list[NavItem]:

@@ -10,6 +10,8 @@ from tuicc.render_utils import (
     split_lines_into_columns,
     display_width,
     wc_truncate,
+    marquee_text,
+    wrap_text,
 )
 
 
@@ -226,6 +228,100 @@ def test_wc_truncate_negative_budget_returns_empty():
 
 def test_wc_truncate_fits_whole_string_returns_it_unchanged():
     assert wc_truncate("hi", 10) == "hi"
+
+
+# ---------- marquee_text ----------
+# Originally modules/media.py's own (Now Playing's artist/title
+# scroll) — moved here, unchanged, once modules/sidebar.py needed the
+# same behavior for an overflowing window title.
+
+def test_marquee_text_returns_as_is_when_it_fits():
+    assert marquee_text("Short", width=20, now=0.0) == "Short"
+
+
+def test_marquee_text_returns_exactly_width_chars_when_too_long():
+    result = marquee_text("A very long title that overflows", width=10, now=0.0)
+    assert len(result) == 10
+
+
+def test_marquee_text_scrolls_over_time():
+    text = "A very long title that overflows"
+    first = marquee_text(text, width=10, now=0.0)
+    later = marquee_text(text, width=10, now=10.0)  # many steps later
+    assert first != later
+
+
+def test_marquee_text_zero_width_returns_empty():
+    assert marquee_text("anything", width=0, now=0.0) == ""
+
+
+def test_marquee_text_fits_check_uses_display_width_not_char_count():
+    # 8 CJK characters = 16 terminal columns, well over width=10 despite
+    # len(text) == 8 passing a plain len()-based fits check.
+    text = "スペシャルウィーク"[:8]
+    result = marquee_text(text, width=10, now=0.0)
+    assert result != text
+
+
+def test_marquee_text_result_never_exceeds_width_in_columns_for_cjk_text():
+    text = "スペシャルウィーク（CV. 和氣あず未）"
+    for now in (0.0, 1.0, 5.0, 12.3):
+        result = marquee_text(text, width=10, now=now)
+        assert display_width(result) <= 10
+
+
+def test_marquee_text_never_splits_a_wide_character():
+    text = "和氣あず未" * 3
+    result = marquee_text(text, width=7, now=2.0)
+    # Every character in a valid result must be one of the source
+    # glyphs — a split wide character would produce something outside
+    # that set (there's no such thing as half a glyph on a terminal).
+    assert all(ch in text + "   " for ch in result)
+    assert display_width(result) <= 7
+
+
+# ---------- wrap_text ----------
+# Built for modules/preview.py's per-window label — multi-line
+# word-wrap, the counterpart to wc_truncate's single-line clip.
+
+def test_wrap_text_returns_single_line_when_it_fits():
+    assert wrap_text("short title", 20) == ["short title"]
+
+
+def test_wrap_text_splits_on_word_boundaries():
+    lines = wrap_text("one two three four", 8)
+    assert lines == ["one two", "three", "four"]
+    assert all(display_width(line) <= 8 for line in lines)
+
+
+def test_wrap_text_zero_width_returns_single_empty_line():
+    assert wrap_text("anything", 0) == [""]
+
+
+def test_wrap_text_empty_string_returns_single_empty_line():
+    assert wrap_text("", 10) == [""]
+
+
+def test_wrap_text_hard_splits_a_single_word_longer_than_width():
+    # A URL-shaped title with no spaces at all — must still be bounded
+    # by width per line, not left overflowing.
+    lines = wrap_text("averylongsingletokenwithnospaces", 10)
+    assert all(display_width(line) <= 10 for line in lines)
+    assert "".join(lines) == "averylongsingletokenwithnospaces"
+
+
+def test_wrap_text_never_exceeds_width_for_cjk_text():
+    text = "和氣あず未 スペシャルウィーク"
+    lines = wrap_text(text, 6)
+    assert all(display_width(line) <= 6 for line in lines)
+
+
+def test_wrap_text_single_cjk_char_narrower_than_one_column_stops_without_looping():
+    # width=1 can't fit even one 2-column CJK character — must degrade
+    # (leave the unsplittable remainder as its own line) rather than
+    # loop forever trying to shrink a word that never gets narrower.
+    lines = wrap_text("和", 1)
+    assert lines == ["和"]
 
 
 def test_centered_x_wide_emoji_centers_correctly_not_by_codepoint_count():

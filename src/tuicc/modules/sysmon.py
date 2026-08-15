@@ -617,11 +617,12 @@ def draw(stdscr, box, ctx, module_name):
             attr = curses.A_BOLD if is_row_selected else 0
             summary = _diagnostics_summary_text(diag)
             # Discoverability for handle_diagnostics()'s copy action —
-            # right on the row itself, not tucked away in the hover
-            # preview, so it's visible without selecting the row first.
-            # Only once diag is real (not the pre-poll "checking..."
-            # state, which nothing can be copied from yet).
-            if diag is not None:
+            # right on the row itself. Only shown once hovered (selected)
+            # AND only when there's actually something worth copying
+            # (has_issues) — "All clear" needs no copy hint, and showing
+            # it unconditionally on every row made the box noisier than
+            # the hint was worth.
+            if diag is not None and has_issues and is_row_selected:
                 summary = f"{summary} ({key_label(ctx.config.keybinds['confirm'])} = copy to clipboard)"
             rest = wc_truncate(f" {summary}", max(inner_w - 1, 0))
             try:

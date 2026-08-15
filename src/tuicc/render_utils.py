@@ -326,6 +326,89 @@ def eighth_block_level(value: int, max_value: int, row_idx: int, num_rows: int) 
     return max(0, min(scaled - row_base, 8))
 
 
+MARQUEE_STEP_SECONDS = 0.3
+
+
+def marquee_text(text: str, width: int, now: float) -> str:
+    """text as-is if it already fits width (measured in terminal
+    columns, see display_width() above — a CJK title can be well over
+    `width` columns wide despite having few enough characters to pass a
+    plain len() check). Otherwise a width-wide sliding window into
+    "text + gap" repeated, advancing one character every
+    MARQUEE_STEP_SECONDS of wall-clock time — same "no per-frame state
+    needed, time.time() already is the shared clock" reasoning
+    _pending_blink_style (modules/*.py) uses, just taking `now` as an
+    explicit parameter instead of calling time.time() internally, so
+    this stays unit-testable without a real clock (callers pass
+    time.time() in).
+
+    Originally modules/media.py's own (Now Playing's artist/title
+    scroll); moved here once modules/sidebar.py needed the identical
+    behavior for an overflowing window title — same "shared, low-level
+    drawing primitive" bar eighth_block_level() already cleared, see
+    that function's own docstring. No wrapper needed on either caller's
+    side: unlike _cava_row_level's own thin wrapper over
+    eighth_block_level (which bakes in a domain-specific max value),
+    this signature is already fully general.
+    """
+    if width <= 0:
+        return ""
+    if display_width(text) <= width:
+        return text
+    gap = "   "
+    looped = text + gap
+    offset = int(now / MARQUEE_STEP_SECONDS) % len(looped)
+    doubled = looped + looped  # a character-index slice never runs off the end
+    return wc_truncate(doubled[offset:], width)
+
+
+def wrap_text(text: str, width: int) -> list[str]:
+    """Word-wrap text into width-wide (display-width aware) lines —
+    the multi-line counterpart to wc_truncate's single-line clip.
+    Built for modules/preview.py's per-window label: a maximized
+    window's own box is usually wide enough that word-wrapping a long
+    title across a couple of centered lines reads better than either a
+    single truncated line or a scrolling marquee (a title read once,
+    then left static, doesn't need marquee_text()'s continuous-motion
+    treatment the way media.py's now-playing text does — that's still
+    the right call for sidebar.py's cramped per-window row, just not
+    here).
+
+    A single word wider than `width` on its own (a long URL-shaped
+    title with no spaces) is hard-split via wc_truncate rather than
+    left overflowing the box — same "never write past the caller's
+    stated bound" contract wc_truncate itself keeps. Always returns at
+    least one (possibly empty) line, so callers can index [0] safely.
+    """
+    if width <= 0:
+        return [""]
+    words = text.split(" ")
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}" if current else word
+        if display_width(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+            current = ""
+        while display_width(word) > width:
+            chunk = wc_truncate(word, width)
+            if not chunk:
+                # width is too narrow to fit even this word's first
+                # character (e.g. a lone CJK character against a
+                # 1-column budget) — stop hard-splitting rather than
+                # looping forever on a word that never shrinks.
+                break
+            lines.append(chunk)
+            word = word[len(chunk):]
+        current = word
+    if current or not lines:
+        lines.append(current)
+    return lines
+
+
 def format_shortcut(key_name: str) -> str:
     """Turn a keybinds.py-style key spec into display text, e.g.
     "Ctrl+L" -> "[^L]". Shared so any module showing a keybind hint

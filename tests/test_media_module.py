@@ -14,7 +14,7 @@ from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.media.model import Player
 from tuicc.audio.model import AudioSink
 from tuicc.modules.media import (
-    _player_label, _body_label, _source_label, marquee_text, has_scrolling_content,
+    _player_label, _body_label, _source_label, has_scrolling_content,
     _build_rows, nav_items, handle_row, is_expanded, collapse, _cava_row_level,
     _selected_player_index, _selected_output_index,
 )
@@ -147,54 +147,10 @@ def test_has_scrolling_content_true_for_a_short_but_wide_cjk_body():
     assert has_scrolling_content([player]) is True
 
 
-# ---------- marquee_text ----------
-
-def test_marquee_text_returns_as_is_when_it_fits():
-    assert marquee_text("Short", width=20, now=0.0) == "Short"
-
-
-def test_marquee_text_returns_exactly_width_chars_when_too_long():
-    result = marquee_text("A very long title that overflows", width=10, now=0.0)
-    assert len(result) == 10
-
-
-def test_marquee_text_scrolls_over_time():
-    text = "A very long title that overflows"
-    first = marquee_text(text, width=10, now=0.0)
-    later = marquee_text(text, width=10, now=10.0)  # many steps later
-    assert first != later
-
-
-def test_marquee_text_zero_width_returns_empty():
-    assert marquee_text("anything", width=0, now=0.0) == ""
-
-
-def test_marquee_text_fits_check_uses_display_width_not_char_count():
-    # 8 CJK characters = 16 terminal columns, well over width=10 despite
-    # len(text) == 8 passing a plain len()-based fits check.
-    text = "スペシャルウィーク"[:8]
-    result = marquee_text(text, width=10, now=0.0)
-    assert result != text
-
-
-def test_marquee_text_result_never_exceeds_width_in_columns_for_cjk_text():
-    from tuicc.render_utils import display_width
-    text = "スペシャルウィーク（CV. 和氣あず未）"
-    for now in (0.0, 1.0, 5.0, 12.3):
-        result = marquee_text(text, width=10, now=now)
-        assert display_width(result) <= 10
-
-
-def test_marquee_text_never_splits_a_wide_character():
-    from tuicc.render_utils import display_width
-    text = "和氣あず未" * 3
-    result = marquee_text(text, width=7, now=2.0)
-    # Every character in a valid result must be one of the source
-    # glyphs — a split wide character would produce something outside
-    # that set (there's no such thing as half a glyph on a terminal).
-    assert all(ch in text + "   " for ch in result)
-    assert display_width(result) <= 7
-
+# marquee_text's own tests moved to test_render_utils.py — it's a
+# shared render_utils.py primitive now (modules/sidebar.py's second
+# consumer), imported here unwrapped rather than redefined, so its
+# behavior is only tested once, at its real home.
 
 # ---------- is_expanded / collapse ----------
 

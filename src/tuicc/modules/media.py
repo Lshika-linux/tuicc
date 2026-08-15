@@ -23,12 +23,13 @@ from urllib.parse import urlparse
 
 from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, eighth_block_level, display_width, wc_truncate
+from tuicc.render_utils import (
+    draw_box_outline, eighth_block_level, display_width, wc_truncate,
+    marquee_text, MARQUEE_STEP_SECONDS,
+)
 from tuicc.windowed_list import section_nav_indices as _section_nav_indices
 from tuicc.windowed_list import section_rows as _section_rows
 from tuicc.windowed_list import header_with_count as _header_with_count
-
-MARQUEE_STEP_SECONDS = 0.3
 
 # Redraw cadence while the cava visualizer is actively streaming —
 # matched to cava.conf's own `framerate = 30` (see cava.py). Redrawing
@@ -123,28 +124,10 @@ def _player_label(player) -> str:
     return f"[{source}] {body}" if source else body
 
 
-def marquee_text(text: str, width: int, now: float) -> str:
-    """text as-is if it already fits width (measured in terminal
-    COLUMNS, see render_utils.py's display_width() — a CJK title can be well over `width`
-    columns wide despite having few enough characters to pass a plain
-    len() check). Otherwise a width-wide sliding window into "text +
-    gap" repeated, advancing one character every MARQUEE_STEP_SECONDS
-    of wall-clock time — same "no per-frame state needed, time.time()
-    already is the shared clock" reasoning _pending_blink_style uses,
-    just taking `now` as an explicit parameter instead of calling
-    time.time() internally, so this stays unit-testable without a real
-    clock (draw() passes time.time() in).
-    """
-    if width <= 0:
-        return ""
-    if display_width(text) <= width:
-        return text
-    gap = "   "
-    looped = text + gap
-    offset = int(now / MARQUEE_STEP_SECONDS) % len(looped)
-    doubled = looped + looped  # a character-index slice never runs off the end
-    return wc_truncate(doubled[offset:], width)
-
+# marquee_text/MARQUEE_STEP_SECONDS moved to render_utils.py (imported
+# above) once modules/sidebar.py needed the identical scrolling
+# behavior for an overflowing window title — see marquee_text()'s own
+# docstring there.
 
 # A rough "this body text probably won't fit a typical box, so it's
 # probably marquee-scrolling somewhere" length threshold — main.py uses

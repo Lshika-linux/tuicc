@@ -20,9 +20,10 @@ items are — the core never guesses a module's internal layout.
 """
 
 import curses
+import time
 
 from tuicc.navigation import NavItem, LAST_ITEM_QUERY
-from tuicc.render_utils import draw_box_outline, display_width, wc_truncate
+from tuicc.render_utils import draw_box_outline, display_width, wc_truncate, marquee_text
 from tuicc.title_condense import condense_title
 
 
@@ -180,6 +181,7 @@ def _hidden_summary(slots, indices) -> str:
 def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
+    now = time.time()  # marquee_text()'s own clock — see the detail-line loop below
 
     is_active = module_name == ctx.active_module
     outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
@@ -240,7 +242,16 @@ def draw(stdscr, box, ctx, module_name):
                     # outer slot-range boundary (from _visible_slot_range).
                     row_end = x + 2 + available
                     if detail and cx + 1 < row_end:
-                        stdscr.addstr(item_y + 1 + i, cx, wc_truncate(f" {detail}", row_end - cx), text_color | curses.A_DIM)
+                        # app_id (above) stays fixed, only the detail
+                        # part scrolls when it's the one too long to
+                        # fit — same fixed-prefix/scrolling-body split
+                        # media.py's Now Playing row already uses (see
+                        # marquee_text()'s own docstring in
+                        # render_utils.py). -1 reserves the leading
+                        # space this line always draws before detail.
+                        detail_w = max(row_end - cx - 1, 0)
+                        scrolled = marquee_text(detail, detail_w, now)
+                        stdscr.addstr(item_y + 1 + i, cx, f" {scrolled}", text_color | curses.A_DIM)
                 except curses.error:
                     pass
             existing_count = len(region.windows)
