@@ -7,7 +7,10 @@ drawing code is left untested here.
 from types import SimpleNamespace
 
 from tuicc.model import Region, Window, WMState
-from tuicc.modules.sidebar import nav_items, _slot_height, _preview_apps_for, shift_workspace_id
+from tuicc.modules.sidebar import (
+    nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
+    _visible_slot_range, _selected_slot_index,
+)
 
 
 def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
@@ -16,6 +19,8 @@ def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
         config=SimpleNamespace(total_workspaces=total_workspaces),
         selected_id=selected_id,
         session_preview=session_preview,
+        typing_mode=False,
+        focus_id=None,
     )
 
 
@@ -63,6 +68,67 @@ def test_preview_apps_for_region_with_no_preview_entries_returns_empty_list():
     ctx = _ctx(regions=[], session_preview={"5": ["obsidian"]})
 
     assert _preview_apps_for(ctx, "3") == []
+
+
+# ---------- _visible_slot_range / _selected_slot_index (scrolling) ----------
+# Budget-based windowing, not slot-count-based like windowed_list.py's
+# own window_start() — a workspace slot's own height varies with window
+# count, so "fits N items" doesn't apply the same way. See sidebar.py's
+# own module docstring for the fuller reasoning.
+
+def test_visible_slot_range_everything_fits_shows_it_all():
+    assert _visible_slot_range([2, 2, 2], selected_index=None, available_rows=20) == (0, 3)
+
+
+def test_visible_slot_range_no_selection_starts_at_zero():
+    # available_rows=5 only fits 2 of these 2-row slots
+    assert _visible_slot_range([2, 2, 2], selected_index=None, available_rows=5) == (0, 2)
+
+
+def test_visible_slot_range_selection_forces_scroll_forward():
+    # slot 4 (index 3) selected, only 2 rows worth fit at a time (2-row
+    # slots) — the newly-scrolled-to selection lands at the BOTTOM of
+    # the window (matches window_start()'s own bias), not the top.
+    assert _visible_slot_range([2, 2, 2, 2, 2], selected_index=3, available_rows=5) == (2, 4)
+
+
+def test_visible_slot_range_backfills_when_room_is_left_over():
+    # selecting the LAST slot with room for 3: greedy forward finds
+    # nothing past it, so it backfills backward instead of showing just
+    # the one selected slot alone.
+    assert _visible_slot_range([2, 2, 2], selected_index=2, available_rows=6) == (0, 3)
+
+
+def test_visible_slot_range_variable_heights_respected():
+    # slot 0 is tall (6 rows, e.g. many windows); with a budget of 8,
+    # only slot 0 + one more 2-row slot fit, not three slots.
+    assert _visible_slot_range([6, 2, 2], selected_index=0, available_rows=8) == (0, 2)
+
+
+def test_visible_slot_range_a_single_slot_taller_than_budget_still_returns_it_alone():
+    # An extreme case (one workspace piled with windows) — no crash, no
+    # infinite loop, just a 1-slot range that itself still overflows
+    # the box (accepted limit, see the function's own docstring).
+    assert _visible_slot_range([20, 2, 2], selected_index=0, available_rows=8) == (0, 1)
+
+
+def test_visible_slot_range_empty_list():
+    assert _visible_slot_range([], selected_index=None, available_rows=10) == (0, 0)
+
+
+def test_selected_slot_index_finds_the_matching_slot():
+    slots = [("1", None), ("2", None), ("3", None)]
+    assert _selected_slot_index(slots, "sidebar:2") == 1
+
+
+def test_selected_slot_index_none_when_selection_belongs_to_another_module():
+    slots = [("1", None), ("2", None)]
+    assert _selected_slot_index(slots, "control:0") is None
+
+
+def test_selected_slot_index_none_when_nothing_selected():
+    slots = [("1", None)]
+    assert _selected_slot_index(slots, None) is None
 
 
 # ---------- nav_items ----------
@@ -116,6 +182,47 @@ def test_nav_items_subsequent_slot_offset_accounts_for_preview_height():
     # slot 2 starts right after slot 1's inflated height, not the
     # un-inflated one.
     assert items[1].rect[1] == 6
+
+
+def test_nav_items_windowed_when_box_too_short_for_everything():
+    # 5 empty workspaces (2 rows each = 10 rows) in a box with only
+    # h=7 (5 available content rows, after the 2-row border budget
+    # subtracted the same way draw() does) — only some slots fit.
+    ctx = _ctx(regions=[], total_workspaces=5, selected_id=None)
+
+    items = nav_items((0, 0, 20, 7), ctx, "sidebar")
+
+    # Not all 5 — this is the actual overflow bug being fixed: nav_items()
+    # (and draw()) used to return/draw every slot regardless of h.
+    assert len(items) < 5
+
+
+def test_nav_items_scrolls_to_keep_the_selection_visible():
+    ctx = _ctx(regions=[], total_workspaces=5, selected_id="sidebar:5")
+
+    items = nav_items((0, 0, 20, 7), ctx, "sidebar")
+
+    assert any(item.id == "sidebar:5" for item in items)
+
+
+def test_nav_items_peek_item_reaches_the_next_hidden_slot():
+    # Selection on slot 1 (topmost), box only fits 2 of 5 slots — Tab
+    # forward needs a way to reach slot 3, the next hidden one, same
+    # "peek" mechanism windowed_list.py's own consumers (sysmon.py/
+    # media.py) already use.
+    ctx = _ctx(regions=[], total_workspaces=5, selected_id="sidebar:1")
+
+    items = nav_items((0, 0, 20, 7), ctx, "sidebar")
+
+    assert any(item.focus_target == "3" for item in items)
+
+
+def test_nav_items_no_peek_items_when_everything_fits():
+    ctx = _ctx(regions=[], total_workspaces=3, selected_id=None)
+
+    items = nav_items((0, 0, 20, 20), ctx, "sidebar")
+
+    assert [item.focus_target for item in items] == ["1", "2", "3"]
 
 
 # ---------- shift_workspace_id ----------
