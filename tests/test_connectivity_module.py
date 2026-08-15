@@ -14,10 +14,12 @@ from types import SimpleNamespace
 from tuicc.connectivity.model import WifiNetwork, BluetoothDevice
 from tuicc.modules.connectivity import (
     _action_progress_line,
+    _browsing_hint_footer,
     _build_rows,
     _bt_discover_preview_text,
     _bt_preview_text,
     _format_timestamp,
+    _header_enter_hint_footer,
     _security_label,
     _selected_bt_index,
     _selected_wifi_index,
@@ -433,7 +435,7 @@ def _text_of(lines):
 def test_wifi_preview_text_includes_core_fields():
     network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None))
 
     assert "Home" in lines
     assert "Signal: 80%" in lines
@@ -445,7 +447,7 @@ def test_wifi_preview_text_includes_core_fields():
 def test_wifi_preview_text_omits_known_network_fields_when_unknown():
     network = WifiNetwork(ssid="Stranger", connected=False, signal=40, known=False, security="open")
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None))
 
     assert not any(line.startswith("Auto-connect:") for line in lines)
     assert not any(line.startswith("Hidden:") for line in lines)
@@ -458,7 +460,7 @@ def test_wifi_preview_text_includes_known_network_fields_when_known():
         auto_connect=True, hidden=False, last_connected="2026-08-10T05:35:00Z",
     )
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None))
 
     assert "Auto-connect: yes" in lines
     assert "Hidden: no" in lines
@@ -468,7 +470,7 @@ def test_wifi_preview_text_includes_known_network_fields_when_known():
 def test_wifi_preview_text_signal_unknown_when_none():
     network = WifiNetwork(ssid="Home", connected=False, signal=None, known=True)
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None, _cfg()))
+    lines = _text_of(_wifi_preview_text(network, _theme(), None))
 
     assert "Signal: unknown" in lines
 
@@ -479,7 +481,7 @@ def test_bt_preview_text_includes_core_fields():
         trusted=True, blocked=False, icon="audio-headphones", address_type="public",
     )
 
-    lines = _text_of(_bt_preview_text(device, _theme(), None, _cfg()))
+    lines = _text_of(_bt_preview_text(device, _theme(), None))
 
     assert "Speaker" in lines
     assert "Address: AA:BB:CC:DD:EE:FF" in lines
@@ -495,7 +497,7 @@ def test_bt_preview_text_includes_core_fields():
 def test_bt_preview_text_omits_optional_fields_when_absent():
     device = BluetoothDevice(id="AA", name="Unknown Device", connected=False, paired=False)
 
-    lines = _text_of(_bt_preview_text(device, _theme(), None, _cfg()))
+    lines = _text_of(_bt_preview_text(device, _theme(), None))
 
     assert not any(line.startswith("Icon:") for line in lines)
     assert not any(line.startswith("Address type:") for line in lines)
@@ -507,7 +509,7 @@ def test_bt_preview_text_blocked_uses_urgent_color():
     device = BluetoothDevice(id="AA", name="Blocked One", connected=False, blocked=True)
     theme = _theme()
 
-    lines = _bt_preview_text(device, theme, None, _cfg())
+    lines = _bt_preview_text(device, theme, None)
     blocked_line = next(line for line in lines if line[0] == "Blocked: yes")
 
     assert blocked_line[1] == theme["urgent"]
@@ -588,7 +590,7 @@ def test_wifi_preview_text_includes_progress_line_when_pending():
     network = WifiNetwork(ssid="Home", connected=False, signal=50, known=True, security="psk")
     status = _FakeStatus(pending_keys={("wifi", "Home")})
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), status, _cfg()))
+    lines = _text_of(_wifi_preview_text(network, _theme(), status))
 
     assert "Connecting…" in lines
 
@@ -597,7 +599,7 @@ def test_bt_preview_text_includes_error_when_settled_and_failed():
     device = BluetoothDevice(id="AA:BB", name="Speaker", connected=False)
     status = _FakeStatus(errors_for={("bluetooth", "AA:BB"): "org.bluez.Error.Failed"})
 
-    lines = _text_of(_bt_preview_text(device, _theme(), status, _cfg()))
+    lines = _text_of(_bt_preview_text(device, _theme(), status))
 
     assert "⚠ org.bluez.Error.Failed" in lines
 
@@ -608,7 +610,7 @@ def test_preview_text_progress_scoped_to_the_right_key_only():
     network = WifiNetwork(ssid="Home", connected=False, signal=50, known=True, security="psk")
     status = _FakeStatus(errors_for={("wifi", "Office"): "some other network's error"})
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), status, _cfg()))
+    lines = _text_of(_wifi_preview_text(network, _theme(), status))
 
     assert not any(line.startswith("⚠") for line in lines)
 
@@ -617,14 +619,15 @@ def test_preview_text_progress_scoped_to_the_right_key_only():
 # Hovering the header row itself used to show the default (unrelated)
 # preview.py content; this is the full list at a glance, not just the
 # connectivity_visible_slots window the box's own scrollable section
-# shows — plus a trailing "[Enter] Browse ..." discoverability hint
-# every branch ends on (_header_enter_hint_line), the level-1
-# counterpart to the level-2 rows' own "[S] Scan   [Esc] Back" hint.
+# shows. The "[Enter] Browse ..." discoverability hint lives in a
+# SEPARATE preview_footer now (see NavItem.preview_footer's own
+# docstring and _header_enter_hint_footer's own tests below), not
+# appended into this list — so these go back to exact equality.
 
 def test_wifi_scan_preview_lists_every_network_not_just_the_window():
     networks = [WifiNetwork(ssid=f"AP{i}", connected=False, signal=50) for i in range(10)]
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme(), _cfg()))
+    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
 
     assert "Available networks [10]" in lines
     assert any("AP0" in line for line in lines)
@@ -634,41 +637,33 @@ def test_wifi_scan_preview_lists_every_network_not_just_the_window():
 def test_wifi_scan_preview_marks_new_networks():
     networks = [WifiNetwork(ssid="Stranger", connected=False, signal=40, known=False)]
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme(), _cfg()))
+    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
 
     assert any("[new] Stranger" in line for line in lines)
 
 
 def test_wifi_scan_preview_empty_list_says_so():
-    lines = _text_of(_wifi_scan_preview_text([], None, _theme(), _cfg()))
+    lines = _text_of(_wifi_scan_preview_text([], None, _theme()))
 
-    assert lines[0] == "No networks found"
-    assert any(line.startswith("[Enter] Browse") for line in lines)
+    assert lines == ["No networks found"]
 
 
 def test_wifi_scan_preview_shows_error_when_none_with_error():
-    lines = _text_of(_wifi_scan_preview_text(None, "D-Bus unreachable", _theme(), _cfg()))
+    lines = _text_of(_wifi_scan_preview_text(None, "D-Bus unreachable", _theme()))
 
-    assert lines[0] == "⚠ D-Bus unreachable"
-    assert any(line.startswith("[Enter] Browse") for line in lines)
+    assert lines == ["⚠ D-Bus unreachable"]
 
 
 def test_wifi_scan_preview_cold_start_none_no_error_is_empty_not_error():
-    lines = _text_of(_wifi_scan_preview_text(None, None, _theme(), _cfg()))
+    lines = _text_of(_wifi_scan_preview_text(None, None, _theme()))
 
-    assert lines[0] == "No networks found"
-
-
-def test_wifi_scan_preview_ends_on_the_enter_hint():
-    lines = _text_of(_wifi_scan_preview_text([], None, _theme(), _cfg()))
-
-    assert lines[-1] == "[Enter] Browse networks"
+    assert lines == ["No networks found"]
 
 
 def test_bt_discover_preview_lists_every_device():
     devices = [BluetoothDevice(id=f"AA:{i}", name=f"Dev{i}", connected=False) for i in range(4)]
 
-    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), _cfg()))
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
 
     assert "Available devices [4]" in lines
     assert any("Dev0" in line for line in lines)
@@ -678,13 +673,36 @@ def test_bt_discover_preview_lists_every_device():
 def test_bt_discover_preview_marks_unpaired_devices():
     devices = [BluetoothDevice(id="AA", name="Stranger", connected=False, paired=False)]
 
-    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), _cfg()))
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
 
     assert any("[new] Stranger" in line for line in lines)
 
 
 def test_bt_discover_preview_shows_error_when_none_with_error():
-    lines = _text_of(_bt_discover_preview_text(None, "bluez unreachable", _theme(), _cfg()))
+    lines = _text_of(_bt_discover_preview_text(None, "bluez unreachable", _theme()))
 
-    assert lines[0] == "⚠ bluez unreachable"
-    assert lines[-1] == "[Enter] Browse devices"
+    assert lines == ["⚠ bluez unreachable"]
+
+
+# ---------- _header_enter_hint_footer / _browsing_hint_footer ----------
+# The level-1/level-2 discoverability hints, each their own separate
+# preview_footer (a boxed-off strip preview.py draws across the bottom
+# of the panel — see NavItem.preview_footer's own docstring) rather
+# than a line mixed into preview_text above.
+
+def test_header_enter_hint_footer_names_the_section():
+    footer = _header_enter_hint_footer(_theme(), _cfg(), "networks")
+
+    assert footer == [("[Enter] Browse networks", _theme()["urgent"])]
+
+
+def test_header_enter_hint_footer_bluetooth_wording():
+    footer = _header_enter_hint_footer(_theme(), _cfg(), "devices")
+
+    assert footer == [("[Enter] Browse devices", _theme()["urgent"])]
+
+
+def test_browsing_hint_footer_shows_the_configured_scan_key():
+    footer = _browsing_hint_footer(_theme(), _cfg())
+
+    assert footer == [("[S] Scan   [Esc] Back", _theme()["urgent"])]

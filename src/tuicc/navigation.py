@@ -55,6 +55,15 @@ class NavItem:
     # in this codebase. False (the default) leaves preview.py's border
     # exactly as it already was for every other module's preview_text.
     preview_urgent: bool = False
+    # (text, color_pair) lines for a SEPARATE, boxed-off strip across
+    # the bottom of the preview panel — for "how do I interact with
+    # this" hints (a raw keypress a module just made available, e.g.
+    # connectivity.py's "[Enter] Browse"/"[S] Scan   [Esc] Back") that
+    # need to visually stand apart from preview_text's own informational
+    # content, not blend into just another centered line of it. None
+    # (the default) draws nothing extra — preview.py behaves exactly as
+    # it did before this field existed.
+    preview_footer: list[tuple[str, int]] | None = None
 
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:

@@ -61,7 +61,27 @@ def draw(stdscr, box, ctx, module_name):
     draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:
-        draw_centered_lines(stdscr, box, ctx.selected_item.preview_text)
+        footer = ctx.selected_item.preview_footer
+        if footer:
+            # A separate, boxed-off strip across the bottom of the
+            # panel for "how do I interact with this" hints (see
+            # NavItem.preview_footer's own docstring) — a real
+            # draw_box_outline(), not just another centered line of
+            # preview_text, specifically so it can't blend into the
+            # informational content above it. Always urgent-colored
+            # regardless of the footer's own per-line colors (same as
+            # preview_urgent's whole-border treatment above) — a module
+            # asking for this separate strip at all already means "pay
+            # attention here", independent of what the text itself says.
+            footer_h = min(len(footer) + 2, h)
+            content_h = h - footer_h
+            if content_h > 0:
+                draw_centered_lines(stdscr, (x, y, w, content_h), ctx.selected_item.preview_text)
+            footer_y = y + content_h
+            draw_box_outline(stdscr, footer_y, x, footer_h, w, theme.get("urgent", 0))
+            draw_centered_lines(stdscr, (x, footer_y, w, footer_h), footer)
+        else:
+            draw_centered_lines(stdscr, box, ctx.selected_item.preview_text)
         return
 
     target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
