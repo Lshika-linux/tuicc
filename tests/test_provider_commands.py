@@ -1,8 +1,17 @@
 """Tests for Provider.focus_region / focus_window / move_window_to_region
 across both sway and i3 — using a fake connection that just records the
 command string, so no live WM is needed.
+
+copy_to_clipboard() is different — it shells out to a real external CLI
+tool (wl-copy / xclip), not conn.command() — tested by monkeypatching
+subprocess.run directly, same pattern control.py's own probe_state
+tests already use for the identical class of external-tool boundary.
 """
 
+import subprocess
+
+import tuicc.providers.sway as sway_module
+import tuicc.providers.i3 as i3_module
 from tuicc.providers.sway import SwayProvider
 from tuicc.providers.i3 import I3Provider
 
@@ -256,3 +265,67 @@ def test_i3_close_window():
     provider.close_window("42")
 
     assert conn.commands == ["[con_id=42] kill"]
+
+
+# ---------- copy_to_clipboard ----------
+
+def test_sway_copy_to_clipboard_uses_wl_copy(monkeypatch):
+    calls = []
+
+    def _run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("input")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+    monkeypatch.setattr(sway_module.subprocess, "run", _run)
+    provider = SwayProvider(conn=FakeConnection())
+
+    result = provider.copy_to_clipboard("hello")
+
+    assert calls == [(["wl-copy"], b"hello")]
+    assert result is True
+
+
+def test_sway_copy_to_clipboard_missing_binary_returns_false(monkeypatch):
+    def _raise(cmd, **kwargs):
+        raise FileNotFoundError("wl-copy not found")
+
+    monkeypatch.setattr(sway_module.subprocess, "run", _raise)
+    provider = SwayProvider(conn=FakeConnection())
+
+    assert provider.copy_to_clipboard("hello") is False
+
+
+def test_sway_copy_to_clipboard_nonzero_exit_returns_false(monkeypatch):
+    def _run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(sway_module.subprocess, "run", _run)
+    provider = SwayProvider(conn=FakeConnection())
+
+    assert provider.copy_to_clipboard("hello") is False
+
+
+def test_i3_copy_to_clipboard_uses_xclip(monkeypatch):
+    calls = []
+
+    def _run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("input")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+    monkeypatch.setattr(i3_module.subprocess, "run", _run)
+    provider = I3Provider(conn=FakeConnection())
+
+    result = provider.copy_to_clipboard("hello")
+
+    assert calls == [(["xclip", "-selection", "clipboard"], b"hello")]
+    assert result is True
+
+
+def test_i3_copy_to_clipboard_missing_binary_returns_false(monkeypatch):
+    def _raise(cmd, **kwargs):
+        raise FileNotFoundError("xclip not found")
+
+    monkeypatch.setattr(i3_module.subprocess, "run", _raise)
+    provider = I3Provider(conn=FakeConnection())
+
+    assert provider.copy_to_clipboard("hello") is False

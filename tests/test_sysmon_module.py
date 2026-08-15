@@ -14,8 +14,9 @@ from tuicc.modules.sysmon import (
     _diagnostics_summary_text, _format_stats_grid, _format_window_label,
     _friendly_app_name, _selected_window_index, _severity_role,
     _window_action_positions, apply_nice_edit, collapse, handle_action,
-    handle_row, handle_nice_key, is_editing_nice, is_expanded, nav_items,
-    sort_windows_by_drain, start_nice_edit, visible_window_ids,
+    handle_diagnostics, handle_row, handle_nice_key, is_editing_nice,
+    is_expanded, nav_items, sort_windows_by_drain, start_nice_edit,
+    visible_window_ids,
 )
 from tuicc.procmon import WindowStat
 
@@ -659,9 +660,14 @@ def test_nav_items_diagnostics_row_is_urgent_when_there_are_real_issues():
 class _FakeProvider:
     def __init__(self):
         self.closed = []
+        self.clipboard = []
 
     def close_window(self, window_id):
         self.closed.append(window_id)
+
+    def copy_to_clipboard(self, text):
+        self.clipboard.append(text)
+        return True
 
 
 class _FakeActionCtx:
@@ -732,3 +738,32 @@ def test_handle_action_nice_starts_editing():
 
     assert is_editing_nice() is True
     assert sysmon_module._nice_target["pid"] == 4242
+
+
+# ---------- handle_diagnostics ----------
+
+def test_handle_diagnostics_copies_preview_text_joined_by_newlines():
+    provider = _FakeProvider()
+    ctx = SimpleNamespace(provider=provider)
+    item = SimpleNamespace(preview_text=[
+        ("✗ unit.service failed", 1),
+        ("kernel: some real error line", 2),
+    ])
+
+    should_dismiss, pending = handle_diagnostics(ctx, item, cfg=None)
+
+    assert provider.clipboard == ["✗ unit.service failed\nkernel: some real error line"]
+    assert should_dismiss is False
+    assert pending is None
+
+
+def test_handle_diagnostics_no_preview_text_is_a_noop():
+    provider = _FakeProvider()
+    ctx = SimpleNamespace(provider=provider)
+    item = SimpleNamespace(preview_text=None)
+
+    should_dismiss, pending = handle_diagnostics(ctx, item, cfg=None)
+
+    assert provider.clipboard == []
+    assert should_dismiss is False
+    assert pending is None

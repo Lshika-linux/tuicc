@@ -1,6 +1,7 @@
 """i3 provider — translates i3's IPC tree into tuicc's generic model."""
 
 import os
+import subprocess
 
 from i3ipc import Connection
 from Xlib import display, X
@@ -214,3 +215,21 @@ class I3Provider(Provider):
             f"[con_id={window_id}] floating enable, "
             f"resize set {w}px {h}px, move position {x}px {y}px"
         )
+
+    def copy_to_clipboard(self, text: str) -> bool:
+        """xclip — the standard X11 clipboard CLI, matching this
+        provider's own X11-ness the way sway.py's wl-copy matches
+        Wayland. xclip daemonizes itself on a successful set (X11's own
+        clipboard semantics require the owning process to stay alive
+        to keep serving the selection, unlike Wayland's compositor-
+        mediated wl-copy) — subprocess.run() returning just means the
+        SET succeeded, not that the daemonized child has exited too.
+        Missing binary/any subprocess failure both just return False —
+        see Provider's own docstring for why this degrades rather than
+        raising.
+        """
+        try:
+            subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode(), check=True)
+            return True
+        except (OSError, subprocess.CalledProcessError):
+            return False

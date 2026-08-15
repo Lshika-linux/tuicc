@@ -100,3 +100,22 @@ class Provider(ABC):
         restored window at the WM's own default placement.
         """
         pass
+
+    def copy_to_clipboard(self, text: str) -> bool:
+        """Copy text to the system clipboard — sysmon.py's diagnostics
+        row uses this so a real journal/kernel error dump can be
+        pasted elsewhere (a search engine, a bug report, a support
+        forum) instead of only ever being readable inside tuicc's own
+        narrow preview box. Genuinely tied to the DISPLAY SERVER
+        (Wayland vs X11), not the WM itself, but that maps 1:1 onto
+        this codebase's own sway/i3 provider split (sway = Wayland,
+        i3 = X11), so it lives here rather than as a separate
+        registry the way audio/connectivity's real multi-backend
+        cases need. Optional, default no-op returning False: sway/i3
+        both implement it via an external CLI tool (wl-copy / xclip)
+        that might not be installed — same missing-binary-is-not-an-
+        error tolerance as brightness.py/cava's own external tools.
+        Returns whether it actually worked, so a caller can choose to
+        surface a failure rather than silently claim success.
+        """
+        return False

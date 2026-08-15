@@ -1,6 +1,7 @@
 """Sway provider — translates sway's IPC tree into tuicc's generic model."""
 
 import os
+import subprocess
 
 from i3ipc import Connection
 
@@ -155,3 +156,16 @@ class SwayProvider(Provider):
             f"[con_id={window_id}] floating enable, "
             f"resize set {w}px {h}px, move position {x}px {y}px"
         )
+
+    def copy_to_clipboard(self, text: str) -> bool:
+        """wl-copy — the standard Wayland clipboard CLI (wl-clipboard),
+        not a sway-specific tool, but sway is always Wayland so this is
+        the right choice for this provider. Missing binary/any
+        subprocess failure both just return False — see Provider's own
+        docstring for why this degrades rather than raising.
+        """
+        try:
+            subprocess.run(["wl-copy"], input=text.encode(), check=True)
+            return True
+        except (OSError, subprocess.CalledProcessError):
+            return False

@@ -773,7 +773,38 @@ def handle_action(ctx, item, cfg):
     return False, None
 
 
+def handle_diagnostics(ctx, item, cfg):
+    """Enter on the diagnostics summary row copies its own hover-preview
+    breakdown (item.preview_text — the exact same lines shown in
+    preview.py, not a re-fetch of raw diagnostics data) to the system
+    clipboard, so a real journal/kernel error dump can be pasted into a
+    search engine or bug report instead of only ever being readable
+    inside tuicc's own narrow preview box. No confirm dialog, no
+    dismiss — same "state action, stays visible" category as a toggle
+    (VISION.md section 2), not a focus/power action.
+
+    item.preview_text is None only when nothing's selected here at all
+    (shouldn't happen — this handler only runs because the row WAS
+    selected — but checked anyway rather than assumed, matching this
+    codebase's own no-silent-failure discipline: a bug in that
+    assumption should be a silent no-op, not a crash).
+
+    Provider.copy_to_clipboard()'s own success/failure isn't surfaced
+    anywhere yet (no toast/status-line mechanism this handler has
+    access to) — a real, accepted gap, not silently pretending it
+    always works: revisit if a missing wl-copy/xclip turns out to be a
+    real problem in practice, same "known limitation, not preemptive
+    complexity" tolerance as everywhere else in this codebase.
+    """
+    if item.preview_text is None:
+        return False, None
+    text = "\n".join(line for line, _color in item.preview_text)
+    ctx.provider.copy_to_clipboard(text)
+    return False, None
+
+
 HANDLERS = {
     "sysmon_row": handle_row,
     "sysmon_action": handle_action,
+    "sysmon_diagnostics": handle_diagnostics,
 }
