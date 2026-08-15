@@ -304,6 +304,22 @@ def do_apply_reselect(loop_state, action_ctx, ordered):
     action_ctx.reselect_region_id = None
 
 
+def do_apply_toast(loop_state, action_ctx):
+    # See ActionContext.toast_message's own docstring — same "handler
+    # writes an output field on ctx, main.py drains it right after the
+    # dispatch call that may have set it, single-use" idiom as
+    # do_apply_reselect above. Reuses the same generic toast mechanism
+    # save/cycle-preset already do (loop_state.py's own comment on why
+    # resize_message is generic despite its name).
+    if action_ctx.toast_message is None:
+        return
+    loop_state.resize_message = action_ctx.toast_message
+    loop_state.resize_message_until = time.monotonic() + 3.0
+    loop_state.resize_message_urgent = action_ctx.toast_urgent
+    action_ctx.toast_message = None
+    action_ctx.toast_urgent = False
+
+
 def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
     # Up/Down shift the ambient launch target without leaving typing
     # mode. Left/Right stay with handle_typing_key (they move the
@@ -586,6 +602,7 @@ def main(stdscr):
             if loop_state.pending_confirm is not None:
                 should_dismiss, loop_state.pending_confirm = handle_pending_confirm(action_ctx, loop_state.pending_confirm, key, cfg)
                 do_apply_reselect(loop_state, action_ctx, ordered)
+                do_apply_toast(loop_state, action_ctx)
                 if should_dismiss:
                     loop_state.dismissed = True
                     provider.dismiss_self()
@@ -595,6 +612,7 @@ def main(stdscr):
             if global_item is not None:
                 should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, global_item, cfg)
                 do_apply_reselect(loop_state, action_ctx, ordered)
+                do_apply_toast(loop_state, action_ctx)
                 if should_dismiss:
                     loop_state.dismissed = True
                     provider.dismiss_self()
@@ -647,6 +665,7 @@ def main(stdscr):
             if key == cfg.keybinds["confirm"] and selected_item is not None:
                 should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
                 do_apply_reselect(loop_state, action_ctx, ordered)
+                do_apply_toast(loop_state, action_ctx)
                 # sessions.py's/sysmon.py's own "name"/NICE actions call
                 # start_naming()/start_nice_edit() on themselves —
                 # main.py notices right after dispatch and claims the

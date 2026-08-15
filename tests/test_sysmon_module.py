@@ -6,6 +6,7 @@ building, and handle_row/handle_action. draw() needs a real curses
 screen, left untested here, same as every other module.
 """
 
+import curses
 from types import SimpleNamespace
 
 import tuicc.modules.sysmon as sysmon_module
@@ -564,7 +565,8 @@ def _ctx(windows=None, windows_error=None, sysinfo_data=None, sensors_data=None,
             errors={"windows": windows_error},
         ),
         theme={}, selected_id=selected_id,
-        config=SimpleNamespace(sysmon_blocks=_DEFAULT_BLOCKS, sysmon_visible_slots=3),
+        config=SimpleNamespace(sysmon_blocks=_DEFAULT_BLOCKS, sysmon_visible_slots=3,
+                                keybinds={"confirm": 10}),
         pending_confirm=None,
     )
 
@@ -638,7 +640,11 @@ def test_nav_items_includes_diagnostics_row():
 
     diag_items = [it for it in items if it.target_kind == "sysmon_diagnostics"]
     assert len(diag_items) == 1
-    assert diag_items[0].preview_text == [("No issues found", 0)]
+    assert diag_items[0].preview_text == [
+        ("No issues found", 0),
+        ("", 0),
+        ("[Enter] copy to clipboard", 0 | curses.A_DIM),
+    ]
     assert diag_items[0].preview_urgent is False
 
 
@@ -658,16 +664,17 @@ def test_nav_items_diagnostics_row_is_urgent_when_there_are_real_issues():
 # ---------- handle_row / handle_action ----------
 
 class _FakeProvider:
-    def __init__(self):
+    def __init__(self, copy_succeeds=True):
         self.closed = []
         self.clipboard = []
+        self._copy_succeeds = copy_succeeds
 
     def close_window(self, window_id):
         self.closed.append(window_id)
 
     def copy_to_clipboard(self, text):
         self.clipboard.append(text)
-        return True
+        return self._copy_succeeds
 
 
 class _FakeActionCtx:
@@ -742,24 +749,48 @@ def test_handle_action_nice_starts_editing():
 
 # ---------- handle_diagnostics ----------
 
-def test_handle_diagnostics_copies_preview_text_joined_by_newlines():
-    provider = _FakeProvider()
-    ctx = SimpleNamespace(provider=provider)
-    item = SimpleNamespace(preview_text=[
-        ("✗ unit.service failed", 1),
-        ("kernel: some real error line", 2),
-    ])
+# preview_text as _diagnostics_preview_text() actually builds it now:
+# real content lines, then its own trailing (blank spacer, hint) pair —
+# see _DIAGNOSTICS_HINT_LINE_COUNT's own comment for why these tests
+# have to include that pair rather than just the content lines.
+_DIAGNOSTICS_PREVIEW_WITH_HINT = [
+    ("✗ unit.service failed", 1),
+    ("kernel: some real error line", 2),
+    ("", 0),
+    ("[ENTER] copy to clipboard", 0),
+]
+
+
+def test_handle_diagnostics_copies_content_lines_only_not_the_hint():
+    provider = _FakeProvider(copy_succeeds=True)
+    ctx = SimpleNamespace(provider=provider, toast_message=None, toast_urgent=False)
+    item = SimpleNamespace(preview_text=_DIAGNOSTICS_PREVIEW_WITH_HINT)
 
     should_dismiss, pending = handle_diagnostics(ctx, item, cfg=None)
 
     assert provider.clipboard == ["✗ unit.service failed\nkernel: some real error line"]
     assert should_dismiss is False
     assert pending is None
+    assert ctx.toast_message == "Copied to clipboard"
+    assert ctx.toast_urgent is False
+
+
+def test_handle_diagnostics_copy_failure_sets_urgent_toast():
+    provider = _FakeProvider(copy_succeeds=False)
+    ctx = SimpleNamespace(provider=provider, toast_message=None, toast_urgent=False)
+    item = SimpleNamespace(preview_text=_DIAGNOSTICS_PREVIEW_WITH_HINT)
+
+    should_dismiss, pending = handle_diagnostics(ctx, item, cfg=None)
+
+    assert provider.clipboard == ["✗ unit.service failed\nkernel: some real error line"]
+    assert should_dismiss is False
+    assert ctx.toast_message == "⚠ Copy failed — clipboard tool unavailable?"
+    assert ctx.toast_urgent is True
 
 
 def test_handle_diagnostics_no_preview_text_is_a_noop():
     provider = _FakeProvider()
-    ctx = SimpleNamespace(provider=provider)
+    ctx = SimpleNamespace(provider=provider, toast_message=None, toast_urgent=False)
     item = SimpleNamespace(preview_text=None)
 
     should_dismiss, pending = handle_diagnostics(ctx, item, cfg=None)
@@ -767,3 +798,4 @@ def test_handle_diagnostics_no_preview_text_is_a_noop():
     assert provider.clipboard == []
     assert should_dismiss is False
     assert pending is None
+    assert ctx.toast_message is None

@@ -74,6 +74,18 @@ class ActionContext:
     # (the default) means no request; main.py clears it back to None
     # once consumed, same single-use idiom as reselect_region_id.
     reselect_item_id: str | None = None
+    # A handler sets this to show a transient toast (main.py's shared
+    # LoopState.resize_message mechanism, see loop_state.py's own
+    # comment on why that field is generic despite its resize-mode
+    # name) right after this dispatch resolves — e.g. sysmon.py's
+    # copy-to-clipboard confirmation. Same single-use idiom as
+    # reselect_region_id/reselect_item_id above: main.py drains it
+    # (do_apply_toast()) immediately after the dispatch call that may
+    # have set it, then resets both fields back to their defaults.
+    # toast_urgent picks the "urgent" vs "accent" theme role, same
+    # meaning as NavItem.preview_urgent/resize_message_urgent.
+    toast_message: str | None = None
+    toast_urgent: bool = False
 
 
 def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
