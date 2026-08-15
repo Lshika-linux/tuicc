@@ -8,7 +8,15 @@ import pytest
 
 import tuicc.connectivity.bluez as bluez_module
 import tuicc.connectivity.iwd as iwd_module
-from tuicc.connectivity.iwd import IwdBackend, find_station_path_in_objects, _signal_to_percent, _connect_succeeded
+import tuicc.connectivity.networkmanager as nm_module
+from tuicc.connectivity.iwd import (
+    IwdBackend, find_station_path_in_objects, find_adapter_path_in_objects as iwd_find_adapter_path_in_objects,
+    _signal_to_percent, _connect_succeeded, _build_adapter_info as iwd_build_adapter_info,
+)
+from tuicc.connectivity.networkmanager import (
+    NetworkManagerBackend, _nm_wifi_mode_label, _nm_device_state_label,
+    _build_adapter_info as nm_build_adapter_info,
+)
 from tuicc.connectivity.bluez import (
     BluezBackend,
     find_adapter_path_in_objects,
@@ -92,6 +100,134 @@ def test_connect_succeeded_false_when_connected_network_absent():
     station_props = {}
 
     assert _connect_succeeded(station_props, "/net/connman/iwd/0/4/target_psk") is False
+
+
+# ---------- iwd: find_adapter_path_in_objects ----------
+
+def test_iwd_find_adapter_path_finds_matching_object():
+    objects = {
+        "/net/connman/iwd/0": {"net.connman.iwd.Adapter": {}},
+        "/net/connman/iwd/0/4": {
+            "net.connman.iwd.Device": {},
+            "net.connman.iwd.Station": {},
+        },
+    }
+
+    assert iwd_find_adapter_path_in_objects(objects) == "/net/connman/iwd/0"
+
+
+def test_iwd_find_adapter_path_no_adapter_returns_none():
+    objects = {"/net/connman/iwd/0/4": {"net.connman.iwd.Device": {}}}
+
+    assert iwd_find_adapter_path_in_objects(objects) is None
+
+
+# ---------- iwd: _build_adapter_info ----------
+
+def test_iwd_build_adapter_info_combines_all_three_objects():
+    adapter_props = {"Model": ("s", "Wireless 8265"), "Vendor": ("s", "Intel Corporation"),
+                      "SupportedModes": ("as", ["ad-hoc", "station", "ap"])}
+    device_props = {"Name": ("s", "wlan0"), "Address": ("s", "D0:C6:37:61:24:D4"), "Mode": ("s", "station"),
+                     "Powered": ("b", True)}
+    station_props = {"State": ("s", "connected")}
+
+    info = iwd_build_adapter_info(adapter_props, device_props, station_props)
+
+    assert info.name == "wlan0"
+    assert info.address == "D0:C6:37:61:24:D4"
+    assert info.model == "Wireless 8265"
+    assert info.vendor == "Intel Corporation"
+    assert info.supported_modes == ["ad-hoc", "station", "ap"]
+    assert info.mode == "station"
+    assert info.powered is True
+    assert info.state == "connected"
+
+
+def test_iwd_build_adapter_info_device_powered_wins_over_adapter_powered():
+    adapter_props = {"Powered": ("b", False)}
+    device_props = {"Powered": ("b", True)}
+
+    info = iwd_build_adapter_info(adapter_props, device_props, {})
+
+    assert info.powered is True
+
+
+def test_iwd_build_adapter_info_falls_back_to_adapter_powered_when_device_lacks_it():
+    adapter_props = {"Powered": ("b", False)}
+
+    info = iwd_build_adapter_info(adapter_props, {}, {})
+
+    assert info.powered is False
+
+
+def test_iwd_build_adapter_info_missing_props_are_none():
+    info = iwd_build_adapter_info({}, {}, {})
+
+    assert info.name is None
+    assert info.address is None
+    assert info.model is None
+    assert info.vendor is None
+    assert info.supported_modes is None
+    assert info.mode is None
+    assert info.powered is None
+    assert info.state is None
+
+
+# ---------- networkmanager: _nm_wifi_mode_label / _nm_device_state_label ----------
+
+def test_nm_wifi_mode_label_known_values():
+    assert _nm_wifi_mode_label(1) == "ad-hoc"
+    assert _nm_wifi_mode_label(2) == "station"
+    assert _nm_wifi_mode_label(3) == "ap"
+    assert _nm_wifi_mode_label(4) == "mesh"
+
+
+def test_nm_wifi_mode_label_unknown_is_none():
+    assert _nm_wifi_mode_label(0) is None
+    assert _nm_wifi_mode_label(99) is None
+
+
+def test_nm_device_state_label_settled_states():
+    assert _nm_device_state_label(30) == "disconnected"
+    assert _nm_device_state_label(100) == "connected"
+    assert _nm_device_state_label(110) == "disconnecting"
+    assert _nm_device_state_label(120) == "failed"
+
+
+def test_nm_device_state_label_in_between_states_collapse_to_connecting():
+    # PREPARE/CONFIG/NEED_AUTH/IP_CONFIG/... — the fine-grained NM
+    # transition states between DISCONNECTED (30) and ACTIVATED (100).
+    for code in (40, 50, 60, 70, 80, 90):
+        assert _nm_device_state_label(code) == "connecting"
+
+
+def test_nm_device_state_label_unknown_code_falls_back_honestly():
+    assert _nm_device_state_label(12345) == "state 12345"
+
+
+# ---------- networkmanager: _build_adapter_info ----------
+
+def test_nm_build_adapter_info_reads_device_and_wireless_props():
+    device_props = {"Interface": ("s", "wlan0"), "State": ("u", 100)}
+    wireless_props = {"PermHwAddress": ("s", "D0:C6:37:61:24:D4"), "Mode": ("u", 2)}
+
+    info = nm_build_adapter_info(device_props, wireless_props, True)
+
+    assert info.name == "wlan0"
+    assert info.address == "D0:C6:37:61:24:D4"
+    assert info.mode == "station"
+    assert info.state == "connected"
+    assert info.powered is True
+
+
+def test_nm_build_adapter_info_model_vendor_supported_modes_always_none():
+    # No NetworkManager D-Bus property carries any of the three — a
+    # real backend gap (see AdapterInfo's own docstring), not a bug.
+    info = nm_build_adapter_info({}, {}, False)
+
+    assert info.model is None
+    assert info.vendor is None
+    assert info.supported_modes is None
 
 
 # ---------- bluez: find_devices_in_objects ----------
@@ -311,3 +447,85 @@ def test_bluez_is_discovering_propagates_dbus_connection_failure(monkeypatch):
 
     with pytest.raises(ConnectionError):
         BluezBackend().is_discovering()
+
+
+# ---------- same discipline for the four newer WifiBackend methods, both backends ----------
+
+def test_iwd_forget_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        IwdBackend().forget("Home")
+
+
+def test_iwd_connect_hidden_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        IwdBackend().connect_hidden("Home")
+
+
+def test_iwd_get_adapter_info_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        IwdBackend().get_adapter_info()
+
+
+def test_iwd_set_powered_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        IwdBackend().set_powered(True)
+
+
+def test_nm_forget_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(nm_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        NetworkManagerBackend().forget("Home")
+
+
+def test_nm_connect_hidden_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(nm_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        NetworkManagerBackend().connect_hidden("Home")
+
+
+def test_nm_get_adapter_info_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(nm_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        NetworkManagerBackend().get_adapter_info()
+
+
+def test_nm_set_powered_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(nm_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        NetworkManagerBackend().set_powered(True)

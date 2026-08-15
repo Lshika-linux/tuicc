@@ -313,7 +313,15 @@ def pairing_error() -> str | None:
 # mode_stack; this one is a genuine modal claim, same shape as
 # resize_mode.py's editing level, chosen specifically so a dedicated
 # "scan" key becomes safe to bind without colliding with ambient
-# typing or global shortcuts).
+# typing or global shortcuts). Grew three more wifi-only dedicated keys
+# after "scan" — forget a known network (request_forget()/
+# is_confirming_forget() below, a Y/N sub-state of browsing itself, not
+# its own tier), connect to a hidden network by typed SSID
+# (is_entering_hidden_ssid()'s own quartet below, a genuine second
+# tier, "connectivity_hidden_ssid" — typed text is a different KIND of
+# interaction than a plain y/n), and toggle the radio's power (handled
+# entirely in main.py's handle_connectivity_browsing, no module state
+# of its own needed beyond reading the "wifi_adapter" domain).
 _browsing_section = None  # "wifi" | "bluetooth" | None
 
 
@@ -382,6 +390,90 @@ def toggle_bluetooth(status, device_id: str) -> None:
         status.request_action("bluetooth", "disconnect", device_id)
     else:
         status.request_action("bluetooth", "connect", device_id)
+
+
+# ---------- forget confirm: a Y/N sub-state of browsing, not its own mode_stack tier ----------
+# Same shape resize_mode.py's own confirm_delete flag uses (and
+# bluetooth pairing's inline y/n, above) rather than the shared
+# pending_confirm dict — both existing "confirm while already inside a
+# claimed mode" precedents in this codebase use a small inline flag
+# checked FIRST by that mode's own key handler, not a second claim.
+# main.py's handle_connectivity_browsing checks is_confirming_forget()
+# before its normal key branches.
+
+_confirming_forget_ssid = None  # str | None
+
+
+def is_confirming_forget() -> bool:
+    return _confirming_forget_ssid is not None
+
+
+def confirming_forget_ssid() -> str | None:
+    return _confirming_forget_ssid
+
+
+def request_forget(ssid: str) -> None:
+    global _confirming_forget_ssid
+    _confirming_forget_ssid = ssid
+
+
+def cancel_forget() -> None:
+    global _confirming_forget_ssid
+    _confirming_forget_ssid = None
+
+
+# ---------- hidden network entry: a real mode_stack tier ("connectivity_hidden_ssid") ----------
+# Genuinely a different KIND of interaction than forget's plain y/n —
+# typed text — so unlike forget above, this DOES need its own claim,
+# same shape as the R4 wifi-passphrase-entry quartet above (typing/
+# apply/cancel), just user-initiated (the "n" key while browsing)
+# rather than daemon-initiated.
+
+_hidden_ssid_input = ""
+_entering_hidden_ssid = False
+
+
+def is_entering_hidden_ssid() -> bool:
+    return _entering_hidden_ssid
+
+
+def start_hidden_ssid_entry() -> None:
+    global _hidden_ssid_input, _entering_hidden_ssid
+    _hidden_ssid_input = ""
+    _entering_hidden_ssid = True
+
+
+def cancel_hidden_ssid_entry() -> None:
+    global _hidden_ssid_input, _entering_hidden_ssid
+    _hidden_ssid_input = ""
+    _entering_hidden_ssid = False
+
+
+def handle_hidden_ssid_key(key: int) -> bool:
+    """Same shape as handle_passphrase_key above — Enter isn't handled
+    here (the caller checks for confirm before falling back to this for
+    everything else)."""
+    global _hidden_ssid_input
+    if key == 27:  # Escape
+        return False
+    if key in (curses.KEY_BACKSPACE, 127, 8):
+        _hidden_ssid_input = _hidden_ssid_input[:-1]
+        return True
+    if 32 <= key <= 126:
+        _hidden_ssid_input += chr(key)
+    return True
+
+
+def apply_hidden_ssid() -> str | None:
+    """The typed SSID (may be empty), or None if nothing's in progress
+    — same "hand the raw answer to the caller, don't decide here
+    whether it's usable" shape apply_passphrase() already has. Unlike
+    apply_passphrase(), the caller (main.py) treats an empty submit as
+    a silent cancel rather than a real answer — there's no legitimate
+    reason to fire connect_hidden("") at a backend."""
+    if not _entering_hidden_ssid:
+        return None
+    return _hidden_ssid_input
 
 
 def _pending_blink_style(theme):
@@ -457,6 +549,24 @@ def draw(stdscr, box, ctx, module_name):
                 lines.append((f"Confirm code: {request.passkey:06d}", theme.get("text", 0)))
             hint = f"{key_label(ctx.config.keybinds['confirm_yes'])}/{key_label(ctx.config.keybinds['confirm_no'])}"
             lines.append((hint, theme.get("text", 0)))
+        draw_centered_lines(stdscr, box, lines)
+        return
+
+    # Forget-confirm (a browsing sub-state, not its own mode_stack tier
+    # — see request_forget()'s own docstring) and hidden-network entry
+    # (a real tier) each take over the whole box too, same shape as the
+    # two R4 overlays above.
+    if is_confirming_forget():
+        lines = [(f"Forget {_confirming_forget_ssid}?", theme.get("accent", 0))]
+        hint = f"{key_label(ctx.config.keybinds['confirm_yes'])}/{key_label(ctx.config.keybinds['confirm_no'])}"
+        lines.append((hint, theme.get("text", 0)))
+        draw_centered_lines(stdscr, box, lines)
+        return
+
+    if is_entering_hidden_ssid():
+        lines = [("Hidden network name", theme.get("accent", 0))]
+        lines.append((f"{_hidden_ssid_input}_", theme.get("text", 0)))
+        lines.append((f"{key_label(ctx.config.keybinds['confirm'])} to connect, Esc to cancel", theme.get("text", 0) | curses.A_DIM))
         draw_centered_lines(stdscr, box, lines)
         return
 
@@ -709,22 +819,64 @@ def _header_enter_hint_footer(theme, cfg, section_label):
     return [(f"[{key_label(cfg.keybinds['confirm'])}] Browse {section_label}", theme.get("urgent", 0))]
 
 
-def _wifi_scan_preview_text(networks, error, theme):
+def _adapter_info_lines(adapter, theme):
+    """The adapter/device info block prepended to the WiFi header's own
+    hover-preview by _wifi_scan_preview_text() below — impala's own
+    separate "Adapter Infos" panel, folded into this module's existing
+    header-preview slot rather than a new mode/key (it's read-only,
+    the same VISION.md "Context" category test every other bounded
+    info readout in this codebase already passes). `adapter` is the
+    raw ctx.status.get("wifi_adapter") value — None (no wifi adapter
+    found at all) shows nothing, same "genuinely nothing there"
+    tolerance WifiBackend.get_adapter_info()'s own contract documents.
+    Every field is independently optional (see AdapterInfo's own
+    docstring for why model/vendor/supported_modes are None on
+    NetworkManager specifically) — each line only shows when that
+    field actually has something to say.
+    """
+    if adapter is None:
+        return []
+    lines = []
+    if adapter.name:
+        lines.append((f"Adapter: {adapter.name}", theme.get("text", 0)))
+    if adapter.address:
+        lines.append((f"Address: {adapter.address}", theme.get("text", 0)))
+    if adapter.model:
+        lines.append((f"Model: {adapter.model}", theme.get("text", 0)))
+    if adapter.vendor:
+        lines.append((f"Vendor: {adapter.vendor}", theme.get("text", 0)))
+    if adapter.supported_modes:
+        lines.append((f"Modes: {', '.join(adapter.supported_modes)}", theme.get("text", 0)))
+    if adapter.mode:
+        lines.append((f"Current mode: {adapter.mode}", theme.get("text", 0)))
+    if adapter.state:
+        lines.append((f"State: {adapter.state}", theme.get("text", 0)))
+    if adapter.powered is not None:
+        lines.append((f"Powered: {_yes_no(adapter.powered)}", theme.get("accent", 0) if adapter.powered else theme.get("text", 0)))
+    return lines
+
+
+def _wifi_scan_preview_text(networks, error, theme, adapter=None):
     """The hover-preview for the WiFi header row itself (name kept from
     when Enter here triggered a scan directly — it now enters browsing
     instead, see this module's own "level-2 browsing" section) — the
+    adapter/device info block (_adapter_info_lines) followed by the
     FULL list of currently available networks, not just the
     connectivity_visible_slots window the box's scrollable section
-    shows. Same None-vs-[] error handling as _build_rows' own —
-    `networks` is the raw ctx.wifi_networks (may be None), not the
-    "or []"-normalized local nav_items() otherwise uses, so a real poll
-    failure still shows as an error here too, not "no networks".
+    shows. Adapter info shows regardless of the networks/error branch
+    below — knowing the radio's own state is exactly as useful when the
+    scan errored or came back empty as when it didn't. Same None-vs-[]
+    error handling as _build_rows' own — `networks` is the raw
+    ctx.wifi_networks (may be None), not the "or []"-normalized local
+    nav_items() otherwise uses, so a real poll failure still shows as
+    an error here too, not "no networks".
     """
+    lines = _adapter_info_lines(adapter, theme)
     if networks is None and error:
-        return [(f"⚠ {error}", theme.get("urgent", 0))]
+        return lines + [(f"⚠ {error}", theme.get("urgent", 0))]
     if not networks:
-        return [("No networks found", theme.get("text", 0) | curses.A_DIM)]
-    lines = [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
+        return lines + [("No networks found", theme.get("text", 0) | curses.A_DIM)]
+    lines = lines + [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
     for network in networks:
         dot = "●" if network.connected else "○"
         prefix = "[new] " if not network.known else ""
@@ -863,9 +1015,10 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             break
 
         if kind == "wifi_header":
+            adapter_info = ctx.status.get("wifi_adapter") if ctx.status is not None else None
             wifi_header_item = NavItem(
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
-                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme),
+                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme, adapter_info),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "networks"),
             )
         elif kind == "bt_header":

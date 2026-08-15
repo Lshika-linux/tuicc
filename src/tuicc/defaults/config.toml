@@ -49,6 +49,15 @@ confirm_no = "n"
 # preview panel while browsing, reflecting whatever you bind here.
 scan = "s"
 
+# Also only live while browsing — WiFi only, no bluetooth equivalent.
+# wifi_forget: forget the selected known network (asks Y/N first).
+# wifi_connect_hidden: type in a network name that doesn't broadcast
+# its SSID and connect to it. wifi_power_toggle: turn the wifi radio
+# itself on/off.
+wifi_forget = "d"
+wifi_connect_hidden = "n"
+wifi_power_toggle = "o"
+
 # Only used when vim_mode = true below (ambient typing is disabled in
 # that mode specifically so h/j/k/l etc. don't collide with it) —
 # press this to start typing into the launcher instead.

@@ -8,7 +8,7 @@ available this way, via Station.GetOrderedNetworks().
 from jeepney.io.blocking import open_dbus_connection
 
 from tuicc.connectivity.base import WifiBackend
-from tuicc.connectivity.model import WifiNetwork
+from tuicc.connectivity.model import WifiNetwork, AdapterInfo
 from tuicc.connectivity.util import dbus_call
 
 BUS_NAME = "net.connman.iwd"
@@ -56,6 +56,62 @@ def _find_station_path(connection):
         connection, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"
     )[0]
     return find_station_path_in_objects(objects)
+
+
+def find_adapter_path_in_objects(objects):
+    """Same shape as find_station_path_in_objects above, for the
+    PARENT net.connman.iwd.Adapter object (the physical radio, e.g.
+    "phy0") rather than the Device/Station object underneath it —
+    needed by get_adapter_info() for Model/Vendor/SupportedModes,
+    which live on the Adapter, not the Device.
+    """
+    for path, interfaces in objects.items():
+        if "net.connman.iwd.Adapter" in interfaces:
+            return path
+    return None
+
+
+def _find_adapter_path(connection):
+    objects = _call(
+        connection, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"
+    )[0]
+    return find_adapter_path_in_objects(objects)
+
+
+def _prop(props, name):
+    """A GetAll reply's props dict has each value as a (type_code,
+    value) tuple (jeepney's variant convention) — this pulls just the
+    value, None if the property is absent entirely rather than KeyError,
+    same "degrade honestly" tolerance _security_label()'s unknown-value
+    fallback already uses elsewhere in this module.
+    """
+    entry = props.get(name)
+    return entry[1] if entry is not None else None
+
+
+def _build_adapter_info(adapter_props, device_props, station_props):
+    """Pure logic half of get_adapter_info() — testable without a real
+    D-Bus connection. Combines all three objects' own property sets
+    into one flat AdapterInfo, same "modules/connectivity.py doesn't
+    need to know these are 3 separate D-Bus objects" reasoning
+    AdapterInfo's own docstring gives. Device's own Powered (if
+    present) wins over Adapter's — NOT YET LIVE-CONFIRMED which of the
+    two actually carries it on a real machine (this whole Adapter-vs-
+    Device property split needs a `busctl introspect` check against a
+    real iwd, see get_adapter_info()'s own docstring below); checking
+    Device first costs nothing if it turns out to only ever live on
+    Adapter.
+    """
+    return AdapterInfo(
+        name=_prop(device_props, "Name"),
+        address=_prop(device_props, "Address"),
+        model=_prop(adapter_props, "Model"),
+        vendor=_prop(adapter_props, "Vendor"),
+        supported_modes=_prop(adapter_props, "SupportedModes"),
+        mode=_prop(device_props, "Mode"),
+        powered=_prop(device_props, "Powered") if _prop(device_props, "Powered") is not None else _prop(adapter_props, "Powered"),
+        state=_prop(station_props, "State"),
+    )
 
 
 def _signal_to_percent(centi_dbm):
@@ -255,5 +311,109 @@ class IwdBackend(WifiBackend):
             )[0]
             scanning_prop = props.get("Scanning")
             return scanning_prop[1] if scanning_prop is not None else False
+        finally:
+            connection.close()
+
+    def forget(self, ssid: str) -> None:
+        """KnownNetwork.Forget() — deletes iwd's own stored credentials
+        for this network. Same "walk GetOrderedNetworks, match by name"
+        pattern connect() already uses to find the right network path;
+        a network with no KnownNetwork object at all (never was known
+        to begin with) is silently a no-op, matching connect()'s own
+        "not found, nothing happens" tolerance rather than raising.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            station_path = _find_station_path(connection)
+            if station_path is None:
+                return
+            ordered = _call(
+                connection, station_path, "net.connman.iwd.Station", "GetOrderedNetworks"
+            )[0]
+            for network_path, _signal in ordered:
+                props = _call(
+                    connection, network_path, "org.freedesktop.DBus.Properties", "GetAll",
+                    "s", ("net.connman.iwd.Network",),
+                )[0]
+                if props["Name"][1] != ssid:
+                    continue
+                known_network = props.get("KnownNetwork")
+                if known_network is not None:
+                    _call(connection, known_network[1], "net.connman.iwd.KnownNetwork", "Forget")
+                break
+        finally:
+            connection.close()
+
+    def connect_hidden(self, ssid: str) -> None:
+        """Station.ConnectHiddenNetwork() — same agent-passphrase round
+        trip as connect() if the network needs credentials (hence the
+        same generous CONNECT_TIMEOUT_SECONDS), just addressed by a
+        typed name instead of a network object path since a hidden
+        network never shows up in GetOrderedNetworks() to begin with.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            station_path = _find_station_path(connection)
+            if station_path is None:
+                return
+            _call(
+                connection, station_path, "net.connman.iwd.Station", "ConnectHiddenNetwork",
+                "s", (ssid,), timeout=CONNECT_TIMEOUT_SECONDS,
+            )
+        finally:
+            connection.close()
+
+    def get_adapter_info(self) -> AdapterInfo | None:
+        """None only when no adapter/station could be found at all —
+        see this method's own "genuinely nothing there" contract on
+        WifiBackend. The exact Adapter-vs-Device property split below
+        (_build_adapter_info's own docstring) is modeled on a real
+        impala screenshot, not yet independently confirmed against
+        `busctl introspect net.connman.iwd <path>` on a real machine —
+        do that once while this is still being tested live, per this
+        repo's own "empirical debugging" discipline.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            station_path = _find_station_path(connection)
+            adapter_path = _find_adapter_path(connection)
+            if station_path is None and adapter_path is None:
+                return None
+            device_props = {}
+            station_props = {}
+            if station_path is not None:
+                device_props = _call(
+                    connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
+                    "s", ("net.connman.iwd.Device",),
+                )[0]
+                station_props = _call(
+                    connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
+                    "s", ("net.connman.iwd.Station",),
+                )[0]
+            adapter_props = {}
+            if adapter_path is not None:
+                adapter_props = _call(
+                    connection, adapter_path, "org.freedesktop.DBus.Properties", "GetAll",
+                    "s", ("net.connman.iwd.Adapter",),
+                )[0]
+            return _build_adapter_info(adapter_props, device_props, station_props)
+        finally:
+            connection.close()
+
+    def set_powered(self, powered: bool) -> None:
+        """Properties.Set on the Adapter's own Powered property — the
+        whole radio, not just this one station/device (iwd models
+        power at the Adapter level; see get_adapter_info()'s own
+        Device-vs-Adapter Powered fallback for the same ambiguity,
+        still needing live confirmation)."""
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            adapter_path = _find_adapter_path(connection)
+            if adapter_path is None:
+                return
+            _call(
+                connection, adapter_path, "org.freedesktop.DBus.Properties", "Set",
+                "ssv", ("net.connman.iwd.Adapter", "Powered", ("b", powered)),
+            )
         finally:
             connection.close()

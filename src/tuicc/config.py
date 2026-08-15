@@ -633,6 +633,12 @@ def load_config(preset_override: int | None = None) -> Config:
     # added after [navigation.keys] for connectivity.py's level-2 wifi/
     # bluetooth browsing.
     keybinds.setdefault("scan", resolve_key("s"))
+    # Same reasoning again — these three followed "scan" into
+    # [navigation.keys] for connectivity.py's wifi-only forget/connect-
+    # hidden/power-toggle keys.
+    keybinds.setdefault("wifi_forget", resolve_key("d"))
+    keybinds.setdefault("wifi_connect_hidden", resolve_key("n"))
+    keybinds.setdefault("wifi_power_toggle", resolve_key("o"))
 
     quick_actions = []
     for action_data in user_data["quick_actions"]["action"]:

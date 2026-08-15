@@ -125,7 +125,22 @@ def build_app(preset_override: int | None = None) -> AppContext:
                 # network connects at a time.
                 "disconnect": lambda ssid: wifi_backend.disconnect(),
                 "scan": lambda _arg: wifi_backend.scan(),
+                "forget": wifi_backend.forget,
+                "connect_hidden": wifi_backend.connect_hidden,
+                "set_powered": lambda powered: wifi_backend.set_powered(powered),
             },
+        ),
+        # Single-object poll (not a list) — same precedent "battery"/
+        # "wifi_scanning" below already set for a Domain that isn't a
+        # per-item list. Read-only (empty actions): power toggling goes
+        # through the "wifi" domain's own "set_powered" action above,
+        # not a separate action here, since is_pending()/get_action_
+        # error_for() keying off "wifi" is what modules/connectivity.py
+        # already reads for every other wifi action.
+        Domain(
+            name="wifi_adapter",
+            poll=wifi_backend.get_adapter_info,
+            actions={},
         ),
         Domain(
             name="bluetooth",

@@ -33,6 +33,35 @@ class WifiNetwork:
 
 
 @dataclass
+class AdapterInfo:
+    """The wifi adapter/device itself — genuinely new info, not a
+    per-network concept, hence its own dataclass rather than more
+    WifiNetwork fields. Fed to modules/connectivity.py's WiFi header
+    hover-preview (see its own "level-2 browsing" section) — the
+    natural existing "separate info panel" slot, matching how impala
+    shows this in its own dedicated panel, without inventing a fourth
+    mode_stack tier for something that's read-only.
+
+    model/vendor/supported_modes are iwd-only in practice —
+    NetworkManager's D-Bus API has no equivalent property for any of
+    the three, so networkmanager.py's own get_adapter_info() leaves
+    them None, same "degrade honestly, don't guess" precedent
+    WifiNetwork.security's unknown-value fallback already sets.
+    Frequency/security of the CURRENT connection are deliberately not
+    duplicated here — they already live on the connected WifiNetwork
+    object, no need for a second copy.
+    """
+    name: str | None = None  # iwd Device.Name / NM's own interface name, e.g. "wlan0"
+    address: str | None = None  # MAC
+    model: str | None = None
+    vendor: str | None = None
+    supported_modes: list[str] | None = None
+    mode: str | None = None  # "station"/"ap"/"ad-hoc"
+    powered: bool | None = None
+    state: str | None = None  # raw backend string ("connected"/"disconnected"/...), not normalized
+
+
+@dataclass
 class BluetoothDevice:
     id: str
     name: str

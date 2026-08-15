@@ -11,9 +11,10 @@ other module.
 
 from types import SimpleNamespace
 
-from tuicc.connectivity.model import WifiNetwork, BluetoothDevice
+from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo
 from tuicc.modules.connectivity import (
     _action_progress_line,
+    _adapter_info_lines,
     _browsing_hint_footer,
     _build_rows,
     _bt_discover_preview_text,
@@ -29,6 +30,15 @@ from tuicc.modules.connectivity import (
     next_browsing_selection,
     toggle_wifi,
     toggle_bluetooth,
+    is_confirming_forget,
+    confirming_forget_ssid,
+    request_forget,
+    cancel_forget,
+    is_entering_hidden_ssid,
+    start_hidden_ssid_entry,
+    cancel_hidden_ssid_entry,
+    handle_hidden_ssid_key,
+    apply_hidden_ssid,
 )
 
 
@@ -706,3 +716,140 @@ def test_browsing_hint_footer_shows_the_configured_scan_key():
     footer = _browsing_hint_footer(_theme(), _cfg())
 
     assert footer == [("[S] Scan   [Esc] Back", _theme()["urgent"])]
+
+
+# ---------- _adapter_info_lines / _wifi_scan_preview_text(adapter=...) ----------
+# impala's own separate "Adapter Infos" panel, folded into the WiFi
+# header's existing hover-preview slot — see _adapter_info_lines' own
+# docstring.
+
+def test_adapter_info_lines_none_adapter_is_empty():
+    assert _adapter_info_lines(None, _theme()) == []
+
+
+def test_adapter_info_lines_includes_every_present_field():
+    adapter = AdapterInfo(
+        name="wlan0", address="D0:C6:37:61:24:D4", model="Wireless 8265",
+        vendor="Intel Corporation", supported_modes=["ad-hoc", "station", "ap"],
+        mode="station", powered=True, state="connected",
+    )
+
+    lines = _text_of(_adapter_info_lines(adapter, _theme()))
+
+    assert "Adapter: wlan0" in lines
+    assert "Address: D0:C6:37:61:24:D4" in lines
+    assert "Model: Wireless 8265" in lines
+    assert "Vendor: Intel Corporation" in lines
+    assert "Modes: ad-hoc, station, ap" in lines
+    assert "Current mode: station" in lines
+    assert "State: connected" in lines
+    assert "Powered: yes" in lines
+
+
+def test_adapter_info_lines_omits_absent_fields():
+    adapter = AdapterInfo(name="wlan0")
+
+    lines = _text_of(_adapter_info_lines(adapter, _theme()))
+
+    assert lines == ["Adapter: wlan0"]
+
+
+def test_wifi_scan_preview_prepends_adapter_info_before_the_network_list():
+    networks = [WifiNetwork(ssid="Home", connected=False)]
+    adapter = AdapterInfo(name="wlan0")
+
+    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme(), adapter))
+
+    assert lines[0] == "Adapter: wlan0"
+    assert "Available networks [1]" in lines
+
+
+def test_wifi_scan_preview_shows_adapter_info_even_when_networks_errored():
+    adapter = AdapterInfo(name="wlan0")
+
+    lines = _text_of(_wifi_scan_preview_text(None, "D-Bus unreachable", _theme(), adapter))
+
+    assert lines[0] == "Adapter: wlan0"
+    assert "⚠ D-Bus unreachable" in lines
+
+
+def test_wifi_scan_preview_no_adapter_defaults_to_no_adapter_lines():
+    # Existing 3-arg call sites (adapter defaults to None) must keep
+    # working unchanged.
+    lines = _text_of(_wifi_scan_preview_text([], None, _theme()))
+
+    assert lines == ["No networks found"]
+
+
+# ---------- forget-confirm: a Y/N sub-state of browsing, not its own mode_stack tier ----------
+
+def test_forget_confirm_starts_unset():
+    cancel_forget()  # reset module state by hand — same convention every other quartet's tests use
+
+    assert is_confirming_forget() is False
+    assert confirming_forget_ssid() is None
+
+
+def test_request_forget_sets_the_pending_ssid():
+    cancel_forget()
+    request_forget("Home")
+
+    assert is_confirming_forget() is True
+    assert confirming_forget_ssid() == "Home"
+
+
+def test_cancel_forget_clears_it():
+    request_forget("Home")
+    cancel_forget()
+
+    assert is_confirming_forget() is False
+    assert confirming_forget_ssid() is None
+
+
+# ---------- hidden network entry: is_entering_hidden_ssid()'s own quartet ----------
+
+def test_hidden_ssid_entry_starts_unset():
+    cancel_hidden_ssid_entry()  # reset module state by hand
+
+    assert is_entering_hidden_ssid() is False
+    assert apply_hidden_ssid() is None
+
+
+def test_start_hidden_ssid_entry_resets_any_previous_input():
+    start_hidden_ssid_entry()
+    handle_hidden_ssid_key(ord("X"))
+    start_hidden_ssid_entry()  # a fresh start must not carry over "X"
+
+    assert apply_hidden_ssid() == ""
+
+
+def test_handle_hidden_ssid_key_types_printable_characters():
+    start_hidden_ssid_entry()
+    for ch in "MyNetwork":
+        handle_hidden_ssid_key(ord(ch))
+
+    assert apply_hidden_ssid() == "MyNetwork"
+
+
+def test_handle_hidden_ssid_key_backspace_removes_last_character():
+    start_hidden_ssid_entry()
+    handle_hidden_ssid_key(ord("A"))
+    handle_hidden_ssid_key(ord("B"))
+    handle_hidden_ssid_key(127)  # backspace
+
+    assert apply_hidden_ssid() == "A"
+
+
+def test_handle_hidden_ssid_key_escape_returns_false():
+    start_hidden_ssid_entry()
+
+    assert handle_hidden_ssid_key(27) is False
+
+
+def test_cancel_hidden_ssid_entry_clears_input_and_state():
+    start_hidden_ssid_entry()
+    handle_hidden_ssid_key(ord("X"))
+    cancel_hidden_ssid_entry()
+
+    assert is_entering_hidden_ssid() is False
+    assert apply_hidden_ssid() is None

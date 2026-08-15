@@ -101,6 +101,20 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
     section = connectivity_mode.browsing_section()
     if section is None:
         return False  # safety net — shouldn't happen, see frame_update.py's own auto-exit
+
+    # Forget-confirm: a Y/N sub-state of browsing itself (see
+    # connectivity.request_forget()'s own docstring for why this isn't
+    # a separate mode_stack tier) — checked first, same structure the
+    # resize browsing-level dispatch uses for its own confirm_delete.
+    if connectivity_mode.is_confirming_forget():
+        ssid = connectivity_mode.confirming_forget_ssid()
+        if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
+            status_worker.request_action("wifi", "forget", ssid)
+            connectivity_mode.cancel_forget()
+        elif key == cfg.keybinds["confirm_no"] or key == 27:  # Escape also cancels
+            connectivity_mode.cancel_forget()
+        return True
+
     if key == 27:  # Escape
         connectivity_mode.stop_browsing()
         loop_state.selected_id = f"connectivity:{'wifi' if section == 'wifi' else 'bt'}:header"
@@ -110,6 +124,24 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
             status_worker.request_action("wifi", "scan", None)
         else:
             status_worker.request_action("bluetooth", "discover", None)
+        return True
+    # wifi-only keys below — forgetting/hidden-connect/radio-power are
+    # wifi concepts, no bluetooth equivalent was asked for (see this
+    # feature's own scoping — impala doesn't cover bluetooth either).
+    if section == "wifi" and key == cfg.keybinds["wifi_forget"] and loop_state.selected_id:
+        ssid = loop_state.selected_id.split(":", 2)[2]
+        networks = status_worker.get("wifi") or []
+        if any(n.ssid == ssid for n in networks):
+            connectivity_mode.request_forget(ssid)
+        return True
+    if section == "wifi" and key == cfg.keybinds["wifi_connect_hidden"]:
+        connectivity_mode.start_hidden_ssid_entry()
+        loop_state.mode_stack.append("connectivity_hidden_ssid")
+        return True
+    if section == "wifi" and key == cfg.keybinds["wifi_power_toggle"]:
+        adapter = status_worker.get("wifi_adapter")
+        if adapter is not None and adapter.powered is not None:
+            status_worker.request_action("wifi", "set_powered", not adapter.powered)
         return True
     items = status_worker.get(section) or []
     if key == cfg.keybinds["confirm"] and items and loop_state.selected_id:
@@ -134,6 +166,19 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
     if key in prev_item_keys and items:
         loop_state.selected_id = connectivity_mode.next_browsing_selection(section, items, loop_state.selected_id, -1)
         return True
+    return True
+
+
+def handle_connectivity_hidden_ssid(key, loop_state, cfg, status_worker):
+    if key == cfg.keybinds["confirm"]:
+        ssid = connectivity_mode.apply_hidden_ssid()
+        connectivity_mode.cancel_hidden_ssid_entry()
+        if ssid:  # empty submit is a silent cancel — see apply_hidden_ssid()'s own docstring
+            status_worker.request_action("wifi", "connect_hidden", ssid)
+        return False
+    if not connectivity_mode.handle_hidden_ssid_key(key):
+        connectivity_mode.cancel_hidden_ssid_entry()
+        return False
     return True
 
 
@@ -540,6 +585,7 @@ def main(stdscr):
         "connectivity_browsing": lambda key: handle_connectivity_browsing(
             key, loop_state, cfg, status_worker, next_item_keys, prev_item_keys
         ),
+        "connectivity_hidden_ssid": lambda key: handle_connectivity_hidden_ssid(key, loop_state, cfg, status_worker),
         "help": lambda key: handle_help(key, loop_state, cfg, help_state),
         "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state),
         "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves),

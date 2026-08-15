@@ -11,7 +11,7 @@ count.
 
 from abc import ABC, abstractmethod
 
-from tuicc.connectivity.model import WifiNetwork, BluetoothDevice
+from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo
 
 
 class WifiBackend(ABC):
@@ -42,6 +42,38 @@ class WifiBackend(ABC):
         progress — see IwdBackend.is_scanning()'s own docstring for
         why this needs to be its own poll, separate from scan() and
         from get_networks()."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def forget(self, ssid: str) -> None:
+        """Deletes a saved (known) network's stored credentials —
+        connecting to it again afterward needs a fresh passphrase.
+        Raises on failure, same StatusWorker action-error convention
+        connect()/disconnect() already follow."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def connect_hidden(self, ssid: str) -> None:
+        """Connects to a network that doesn't broadcast its SSID —
+        can't be found in a normal scan, so the name has to come from
+        the user typing it rather than picking a row. Same agent-
+        passphrase round trip as connect() if it needs credentials."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_adapter_info(self) -> AdapterInfo | None:
+        """Static-ish info about the wifi adapter/device itself (name,
+        address, model, vendor, supported modes, current mode/power/
+        state) — None only when no wifi adapter could be found at all
+        (same "genuinely nothing there" case get_networks() already
+        returns [] for, distinct from a real poll failure which raises
+        instead, same as every other backend method here)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_powered(self, powered: bool) -> None:
+        """Turns the wifi radio on/off. Raises on failure, same
+        convention as every other action method here."""
         raise NotImplementedError
 
 

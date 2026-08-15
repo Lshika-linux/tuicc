@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from jeepney.io.blocking import open_dbus_connection
 
 from tuicc.connectivity.base import WifiBackend
-from tuicc.connectivity.model import WifiNetwork
+from tuicc.connectivity.model import WifiNetwork, AdapterInfo
 from tuicc.connectivity.util import dbus_call, decode_ssid
 
 BUS_NAME = "org.freedesktop.NetworkManager"
@@ -53,6 +53,28 @@ NM_ACTIVE_CONNECTION_STATE_ACTIVATING = 1
 NM_ACTIVE_CONNECTION_STATE_ACTIVATED = 2
 NM_ACTIVE_CONNECTION_STATE_DEACTIVATING = 3
 NM_ACTIVE_CONNECTION_STATE_DEACTIVATED = 4
+
+# NM80211Mode (nm-dbus-types.html) — Device.Wireless's own "Mode"
+# property, for get_adapter_info(). Normalized onto iwd's own
+# "station"/"ap"/"ad-hoc" vocabulary where the concept matches (see
+# _nm_wifi_mode_label() below), same reasoning classify_security()
+# already gives for reusing iwd's security-token vocabulary.
+NM_802_11_MODE_ADHOC = 1
+NM_802_11_MODE_INFRA = 2
+NM_802_11_MODE_AP = 3
+NM_802_11_MODE_MESH = 4
+
+# NMDeviceState (nm-dbus-types.html), the subset get_adapter_info()'s
+# own state label needs — grouped into the handful of states a user
+# actually cares about, not the full transition granularity NM itself
+# tracks internally.
+NM_DEVICE_STATE_UNKNOWN = 0
+NM_DEVICE_STATE_UNMANAGED = 10
+NM_DEVICE_STATE_UNAVAILABLE = 20
+NM_DEVICE_STATE_DISCONNECTED = 30
+NM_DEVICE_STATE_ACTIVATED = 100
+NM_DEVICE_STATE_DEACTIVATING = 110
+NM_DEVICE_STATE_FAILED = 120
 
 # NMDeviceStateReason (the wifi-auth-relevant subset)
 NM_DEVICE_STATE_REASON_NO_SECRETS = 7
@@ -281,6 +303,66 @@ def _failure_reason_message(reason_code):
     return _FAILURE_REASON_MESSAGES.get(reason_code, f"connection failed (reason {reason_code})")
 
 
+def _nm_wifi_mode_label(mode_code):
+    """Pure logic: NM80211Mode int -> iwd-vocabulary string, None for
+    "unknown"/unmapped (0, or a future mode this table doesn't know
+    about yet — same "degrade honestly" fallback as _security_label()'s
+    own unknown-value handling, just to None instead of a raw string
+    since AdapterInfo.mode has no established "raw NM code" reader the
+    way security's raw-string fallback does)."""
+    return {
+        NM_802_11_MODE_ADHOC: "ad-hoc",
+        NM_802_11_MODE_INFRA: "station",
+        NM_802_11_MODE_AP: "ap",
+        NM_802_11_MODE_MESH: "mesh",
+    }.get(mode_code)
+
+
+def _nm_device_state_label(state_code):
+    """Pure logic: NMDeviceState int -> a plain lowercase label, in the
+    same vocabulary iwd.py's own (raw, un-normalized) Station.State
+    values already use where the concept matches ("connected"/
+    "disconnected"/"connecting"). Every code between DISCONNECTED and
+    ACTIVATED (the PREPARE/CONFIG/NEED_AUTH/IP_CONFIG/... in-between
+    states) collapses to "connecting" — a user watching AdapterInfo.state
+    doesn't need NM's own fine-grained transition detail, just whether
+    it's settled or still working. Honest raw-code fallback for
+    anything genuinely unrecognized, same as _failure_reason_message().
+    """
+    if state_code == NM_DEVICE_STATE_UNKNOWN:
+        return "unknown"
+    if state_code == NM_DEVICE_STATE_UNMANAGED:
+        return "unmanaged"
+    if state_code == NM_DEVICE_STATE_UNAVAILABLE:
+        return "unavailable"
+    if state_code == NM_DEVICE_STATE_DISCONNECTED:
+        return "disconnected"
+    if NM_DEVICE_STATE_DISCONNECTED < state_code < NM_DEVICE_STATE_ACTIVATED:
+        return "connecting"
+    if state_code == NM_DEVICE_STATE_ACTIVATED:
+        return "connected"
+    if state_code == NM_DEVICE_STATE_DEACTIVATING:
+        return "disconnecting"
+    if state_code == NM_DEVICE_STATE_FAILED:
+        return "failed"
+    return f"state {state_code}"
+
+
+def _build_adapter_info(device_props, wireless_props, wireless_enabled):
+    """Pure logic half of get_adapter_info() — testable without a real
+    D-Bus connection. model/vendor/supported_modes stay None: no
+    NetworkManager D-Bus property carries either concept (see
+    AdapterInfo's own docstring for why that's a real backend gap, not
+    an oversight here)."""
+    return AdapterInfo(
+        name=device_props.get("Interface", (None, None))[1],
+        address=wireless_props.get("PermHwAddress", (None, None))[1],
+        mode=_nm_wifi_mode_label(wireless_props.get("Mode", (None, None))[1]),
+        powered=wireless_enabled,
+        state=_nm_device_state_label(device_props.get("State", (None, NM_DEVICE_STATE_UNKNOWN))[1]),
+    )
+
+
 class NetworkManagerBackend(WifiBackend):
     def __init__(self):
         # See is_scanning()'s own docstring — genuinely needs instance
@@ -468,3 +550,89 @@ class NetworkManagerBackend(WifiBackend):
 
     def _get_last_scan(self, connection, device_path):
         return _call(connection, device_path, IFACE_PROPERTIES, "Get", "ss", (IFACE_WIRELESS, "LastScan"))[0][1]
+
+    def forget(self, ssid: str) -> None:
+        """Settings.Connection.Delete() on the profile matching this
+        ssid — NetworkManager's "known network" is a whole separate
+        Connection object (see this module's own docstring, point 3),
+        not a sub-object of the scan result the way iwd's KnownNetwork
+        is, so deleting it means finding that profile first, same
+        find_known_profile_for_ssid() lookup connect() already uses.
+        No profile found (never was known) is silently a no-op, same
+        tolerance connect()/IwdBackend.forget() both have.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            connections = self._list_connections_with_settings(connection)
+            profile_path = find_known_profile_for_ssid(connections, ssid)
+            if profile_path is not None:
+                _call(connection, profile_path, IFACE_CONNECTION, "Delete")
+        finally:
+            connection.close()
+
+    def connect_hidden(self, ssid: str) -> None:
+        """Same AddAndActivateConnection path connect()'s own "no saved
+        profile" branch already takes, with hidden=True added to the
+        wireless settings — NetworkManager has no separate "connect
+        hidden" method the way iwd's Station.ConnectHiddenNetwork() is;
+        it's the identical AddAndActivateConnection call, just told the
+        AP it's matching against won't itself broadcast the SSID.
+        Needs a target AccessPoint path same as connect() — a hidden
+        network still shows up as an AP entry with an empty decoded
+        SSID once actually in range (NetworkManager can detect a hidden
+        AP's presence via probe requests even without knowing its
+        name), so the closest current in-range AP with no visible SSID
+        is used as the association target.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            device_path = self._find_wifi_device(connection)
+            if device_path is None:
+                return
+            entries = self._list_access_point_entries(connection, device_path)
+            target = next((e for e in entries if not e["ssid"]), None)
+            target_path = target["path"] if target is not None else "/"
+            new_settings = {"802-11-wireless": {
+                "ssid": ("ay", ssid.encode("utf-8")),
+                "hidden": ("b", True),
+            }}
+            reply = _call(
+                connection, ROOT_PATH, IFACE_ROOT, "AddAndActivateConnection",
+                "a{sa{sv}}oo", (new_settings, device_path, target_path),
+            )
+            self._wait_for_activation(connection, reply[1], device_path, ssid)
+        finally:
+            connection.close()
+
+    def get_adapter_info(self) -> AdapterInfo | None:
+        """None only when no wifi device could be found at all — see
+        WifiBackend's own contract. model/vendor/supported_modes always
+        stay None here (no NetworkManager equivalent — see
+        _build_adapter_info()'s own docstring)."""
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            device_path = self._find_wifi_device(connection)
+            if device_path is None:
+                return None
+            device_props = _call(connection, device_path, IFACE_PROPERTIES, "GetAll", "s", (IFACE_DEVICE,))[0]
+            wireless_props = _call(connection, device_path, IFACE_PROPERTIES, "GetAll", "s", (IFACE_WIRELESS,))[0]
+            wireless_enabled = _call(
+                connection, ROOT_PATH, IFACE_PROPERTIES, "Get", "ss", (IFACE_ROOT, "WirelessEnabled"),
+            )[0][1]
+            return _build_adapter_info(device_props, wireless_props, wireless_enabled)
+        finally:
+            connection.close()
+
+    def set_powered(self, powered: bool) -> None:
+        """NetworkManager's own wifi radio switch is a single top-level
+        property on the root manager object (WirelessEnabled) — unlike
+        iwd's per-Adapter Powered, there's exactly one of these
+        regardless of how many wifi devices exist."""
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            _call(
+                connection, ROOT_PATH, IFACE_PROPERTIES, "Set",
+                "ssv", (IFACE_ROOT, "WirelessEnabled", ("b", powered)),
+            )
+        finally:
+            connection.close()
