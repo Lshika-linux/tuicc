@@ -423,7 +423,7 @@ def _theme():
 
 
 def _cfg():
-    return SimpleNamespace(keybinds={"scan": ord("s")})
+    return SimpleNamespace(keybinds={"scan": ord("s"), "confirm": ord("\n")})
 
 
 def _text_of(lines):
@@ -614,15 +614,17 @@ def test_preview_text_progress_scoped_to_the_right_key_only():
 
 
 # ---------- _wifi_scan_preview_text / _bt_discover_preview_text ----------
-# Hovering the Scan/Discover row itself used to show the default
-# (unrelated) preview.py content; this is the full list at a glance,
-# not just the connectivity_visible_slots window the box's own
-# scrollable section shows.
+# Hovering the header row itself used to show the default (unrelated)
+# preview.py content; this is the full list at a glance, not just the
+# connectivity_visible_slots window the box's own scrollable section
+# shows — plus a trailing "[Enter] Browse ..." discoverability hint
+# every branch ends on (_header_enter_hint_line), the level-1
+# counterpart to the level-2 rows' own "[S] Scan   [Esc] Back" hint.
 
 def test_wifi_scan_preview_lists_every_network_not_just_the_window():
     networks = [WifiNetwork(ssid=f"AP{i}", connected=False, signal=50) for i in range(10)]
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
+    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme(), _cfg()))
 
     assert "Available networks [10]" in lines
     assert any("AP0" in line for line in lines)
@@ -632,33 +634,41 @@ def test_wifi_scan_preview_lists_every_network_not_just_the_window():
 def test_wifi_scan_preview_marks_new_networks():
     networks = [WifiNetwork(ssid="Stranger", connected=False, signal=40, known=False)]
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
+    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme(), _cfg()))
 
     assert any("[new] Stranger" in line for line in lines)
 
 
 def test_wifi_scan_preview_empty_list_says_so():
-    lines = _text_of(_wifi_scan_preview_text([], None, _theme()))
+    lines = _text_of(_wifi_scan_preview_text([], None, _theme(), _cfg()))
 
-    assert lines == ["No networks found"]
+    assert lines[0] == "No networks found"
+    assert any(line.startswith("[Enter] Browse") for line in lines)
 
 
 def test_wifi_scan_preview_shows_error_when_none_with_error():
-    lines = _text_of(_wifi_scan_preview_text(None, "D-Bus unreachable", _theme()))
+    lines = _text_of(_wifi_scan_preview_text(None, "D-Bus unreachable", _theme(), _cfg()))
 
-    assert lines == ["⚠ D-Bus unreachable"]
+    assert lines[0] == "⚠ D-Bus unreachable"
+    assert any(line.startswith("[Enter] Browse") for line in lines)
 
 
 def test_wifi_scan_preview_cold_start_none_no_error_is_empty_not_error():
-    lines = _text_of(_wifi_scan_preview_text(None, None, _theme()))
+    lines = _text_of(_wifi_scan_preview_text(None, None, _theme(), _cfg()))
 
-    assert lines == ["No networks found"]
+    assert lines[0] == "No networks found"
+
+
+def test_wifi_scan_preview_ends_on_the_enter_hint():
+    lines = _text_of(_wifi_scan_preview_text([], None, _theme(), _cfg()))
+
+    assert lines[-1] == "[Enter] Browse networks"
 
 
 def test_bt_discover_preview_lists_every_device():
     devices = [BluetoothDevice(id=f"AA:{i}", name=f"Dev{i}", connected=False) for i in range(4)]
 
-    lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), _cfg()))
 
     assert "Available devices [4]" in lines
     assert any("Dev0" in line for line in lines)
@@ -668,12 +678,13 @@ def test_bt_discover_preview_lists_every_device():
 def test_bt_discover_preview_marks_unpaired_devices():
     devices = [BluetoothDevice(id="AA", name="Stranger", connected=False, paired=False)]
 
-    lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), _cfg()))
 
     assert any("[new] Stranger" in line for line in lines)
 
 
 def test_bt_discover_preview_shows_error_when_none_with_error():
-    lines = _text_of(_bt_discover_preview_text(None, "bluez unreachable", _theme()))
+    lines = _text_of(_bt_discover_preview_text(None, "bluez unreachable", _theme(), _cfg()))
 
-    assert lines == ["⚠ bluez unreachable"]
+    assert lines[0] == "⚠ bluez unreachable"
+    assert lines[-1] == "[Enter] Browse devices"

@@ -694,22 +694,36 @@ def _action_progress_line(status, domain_name, key, connected, theme):
     return None
 
 
-def _wifi_scan_preview_text(networks, error, theme):
+def _header_enter_hint_line(theme, cfg, section_label):
+    """The red "how do I get in" line appended to a header's own
+    preview — the level-1 counterpart to _browsing_hint_line's level-2
+    "what can I do in here" line, same urgent styling for the same
+    reason (a raw discoverability nudge, not a status readout). Enter
+    here isn't obvious from the row itself anymore since it stopped
+    triggering a scan directly (see this module's own "level-2
+    browsing" section) — this is what replaces that lost affordance.
+    """
+    return (f"[{key_label(cfg.keybinds['confirm'])}] Browse {section_label}", theme.get("urgent", 0))
+
+
+def _wifi_scan_preview_text(networks, error, theme, cfg):
     """The hover-preview for the WiFi header row itself (name kept from
     when Enter here triggered a scan directly — it now enters browsing
-    instead, see this module's own "level-2 browsing" section, but the
-    preview content is unchanged) — the FULL list of currently
-    available networks, not just the connectivity_visible_slots window
-    the box's scrollable section shows. Same None-vs-[] error handling
-    as _build_rows' own — `networks` is the raw ctx.wifi_networks (may
-    be None), not the "or []"-normalized local nav_items() otherwise
-    uses, so a real poll failure still shows as an error here too, not
-    "no networks".
+    instead, see this module's own "level-2 browsing" section) — the
+    FULL list of currently available networks, not just the
+    connectivity_visible_slots window the box's scrollable section
+    shows, plus the same discoverability hint every branch ends on
+    (_header_enter_hint_line). Same None-vs-[] error handling as
+    _build_rows' own — `networks` is the raw ctx.wifi_networks (may be
+    None), not the "or []"-normalized local nav_items() otherwise uses,
+    so a real poll failure still shows as an error here too, not "no
+    networks".
     """
+    hint = _header_enter_hint_line(theme, cfg, "networks")
     if networks is None and error:
-        return [(f"⚠ {error}", theme.get("urgent", 0))]
+        return [(f"⚠ {error}", theme.get("urgent", 0)), hint]
     if not networks:
-        return [("No networks found", theme.get("text", 0) | curses.A_DIM)]
+        return [("No networks found", theme.get("text", 0) | curses.A_DIM), hint]
     lines = [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
     for network in networks:
         dot = "●" if network.connected else "○"
@@ -717,16 +731,18 @@ def _wifi_scan_preview_text(networks, error, theme):
         signal = f" {network.signal}%" if network.signal is not None else ""
         color = theme.get("accent", 0) if network.connected else theme.get("text", 0)
         lines.append((f"{dot} {prefix}{network.ssid}{signal}", color))
+    lines.append(hint)
     return lines
 
 
-def _bt_discover_preview_text(devices, error, theme):
+def _bt_discover_preview_text(devices, error, theme, cfg):
     """Same reasoning as _wifi_scan_preview_text above, for the
     Bluetooth header row and ctx.bluetooth_devices."""
+    hint = _header_enter_hint_line(theme, cfg, "devices")
     if devices is None and error:
-        return [(f"⚠ {error}", theme.get("urgent", 0))]
+        return [(f"⚠ {error}", theme.get("urgent", 0)), hint]
     if not devices:
-        return [("No devices found", theme.get("text", 0) | curses.A_DIM)]
+        return [("No devices found", theme.get("text", 0) | curses.A_DIM), hint]
     lines = [(f"Available devices [{len(devices)}]", theme.get("accent", 0))]
     for device in devices:
         dot = "●" if device.connected else "○"
@@ -734,6 +750,7 @@ def _bt_discover_preview_text(devices, error, theme):
         battery = f" {device.battery}%" if device.battery is not None else ""
         color = theme.get("accent", 0) if device.connected else theme.get("text", 0)
         lines.append((f"{dot} {prefix}{device.name}{battery}", color))
+    lines.append(hint)
     return lines
 
 
@@ -853,12 +870,12 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
         if kind == "wifi_header":
             wifi_header_item = NavItem(
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
-                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme),
+                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme, cfg),
             )
         elif kind == "bt_header":
             bt_header_item = NavItem(
                 id="connectivity:bt:header", rect=(x + 1, row, w - 2, 1), target_kind="bluetooth_browse",
-                preview_text=_bt_discover_preview_text(ctx.bluetooth_devices, ctx.bluetooth_error, theme),
+                preview_text=_bt_discover_preview_text(ctx.bluetooth_devices, ctx.bluetooth_error, theme, cfg),
             )
         elif kind == "wifi_item":
             wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg))
