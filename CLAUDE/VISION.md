@@ -751,7 +751,7 @@ are NOT in the default preset. Then rewrite README/wiki around the
 final philosophy (sections 1–2 of this document) — after R1–R6, half
 the current docs will be wrong.
 
-### R8 — Bars module (done) + push-worker resolution (gate before v0.1.0)
+### R8 — Bars module (done) + push-worker resolution (done — the last gate before v0.1.0, now closed)
 A late addition, found live after R5/R7 both already referenced
 "sliders" as control's own unfinished business (see R5's own update
 note above) — a session of live back-and-forth on VOL/BRI/BAT display
@@ -881,6 +881,30 @@ Either outcome is an acceptable way to close this out — leaving it as
 "built, tested, unused, problem still open" is the one outcome that
 isn't.
 
+**Resolved: outcome 1, pyudev.** Confirmed live exactly per this
+section's own acceptance bar — `udevadm monitor --subsystem-match=power_supply`
+against several real charger plug/unplug cycles reliably captured
+`change` events on AC/BAT0/BAT1/the USB-C PD source every single
+cycle, no misses. `battery.watch()` is now `pyudev.Monitor.from_netlink()`-backed;
+`battery.PYUDEV_AVAILABLE` (a real runtime probe — constructing a
+`pyudev.Context()`, not just checking the bare import) decides at
+`app_setup.py`'s wiring time whether `battery` becomes a real
+`PushDomain` or stays the plain fast-poll `StatusWorker` `Domain` it
+already was — automatic either way, no manual step. A genuine, live-
+found wrinkle worth knowing before assuming this "just works"
+everywhere: `pyudev.Context()` lazily loads `libudev.so` via
+`ctypes.util.find_library()`, which fails on NixOS specifically (no
+`ldconfig` cache the way most distros have one) even when the `pyudev`
+package itself installs and imports fine — confirmed the mechanism
+itself is sound via `nix-shell -p 'python3.withPackages (ps: [ps.pyudev])'`
+(Nix's own packaging links it correctly), so this is an environment/
+library-discovery gap, not a flaw in the design. `PushWorker`/
+`CombinedStatus` are no longer speculative — `battery` is a real,
+production domain routed through them now. Full story, including why
+`LD_LIBRARY_PATH` alone doesn't fix the NixOS gap and what would, in
+`CLAUDE/NOTES/design-decisions.md#battery-push-pyudev` and
+`CLAUDE/NOTES/known-limitations.md#pyudev-libudev-nixos`.
+
 ## 5. Phase order
 
 1. **R1** lifecycle (small code, changes UX ground for everything) — done
@@ -897,9 +921,10 @@ isn't.
 6. **R4** connectivity v2 agents (hardest, most infrastructure needed)
    — done
 7. **R7** default preset + docs
-8. **R8** bars module (done) + push-worker resolution — the actual
-   final gate: v0.1.0 does not tag until this section's own "make it
-   work or delete it" decision is made, whichever way it goes
+8. **R8** bars module (done) + push-worker resolution — done, resolved
+   via pyudev (see R8's own section for the live confirmation and the
+   NixOS-specific `libudev` wrinkle found along the way). The last
+   gate before v0.1.0 is now closed.
 
 Each refactor: its own branch, tests green before merge to main,
 GitHub issues for R4–R6 so contributors can see the direction.
