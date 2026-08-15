@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from tuicc.context import RenderContext
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order, resolve_selection, module_of_item
-from tuicc.render import collect_nav_items
+from tuicc.render import collect_nav_items, PREVIEW_RENDERERS
 from tuicc import procmon, pending_moves
 from tuicc.modules import sessions as sessions_mode
 from tuicc.modules import media as media_mode
@@ -318,6 +318,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         session_preview=sessions_mode.expanded_preview(),
         control_colors=control_colors,
         cava=cava_reader,
+        preview_renderers=PREVIEW_RENDERERS,
     )
 
     items = collect_nav_items(cfg.layout, boxes, ctx)

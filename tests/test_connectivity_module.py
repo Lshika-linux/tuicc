@@ -963,8 +963,8 @@ def test_empty_browsing_nav_item_wifi_carries_the_device_table():
     item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
                                      adapter_info=adapter, scanning=False)
 
-    assert [title for title, _rows in item.preview_tables] == ["Device"]
-    assert dict(item.preview_tables[0][1][0])["Powered"] == "no"
+    assert [title for title, _rows in item.preview_data] == ["Device"]
+    assert dict(item.preview_data[0][1][0])["Powered"] == "no"
 
 
 def test_empty_browsing_nav_item_bluetooth_has_no_device_table():
@@ -972,7 +972,7 @@ def test_empty_browsing_nav_item_bluetooth_has_no_device_table():
     item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
                                      adapter_info=None, scanning=False)
 
-    assert item.preview_tables is None
+    assert item.preview_data is None
 
 
 def test_empty_browsing_nav_item_shows_power_progress_when_pending():

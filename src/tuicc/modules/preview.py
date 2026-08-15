@@ -11,8 +11,8 @@ items are — the core never guesses a module's internal layout.
 
 import curses
 
-from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, draw_table_box, centered_x, display_width, wc_truncate, wrap_text
+from tuicc.navigation import NavItem, module_of_item
+from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate, wrap_text
 from tuicc.title_condense import condense_title
 
 
@@ -23,7 +23,7 @@ def draw(stdscr, box, ctx, module_name):
     is_active = module_name == ctx.active_module
     showing_preview = ctx.selected_item is not None and (
         ctx.selected_item.preview_text is not None
-        or ctx.selected_item.preview_tables is not None
+        or ctx.selected_item.preview_data is not None
     )
 
     # Unconditionally re-blank this box's whole inner area with real
@@ -64,37 +64,30 @@ def draw(stdscr, box, ctx, module_name):
     draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:
-        tables = ctx.selected_item.preview_tables or []
         footer = ctx.selected_item.preview_footer
 
-        # Three kinds of stacked areas, top to bottom: zero or more
-        # bordered tables (NavItem.preview_tables — "info panel"
-        # content that wants its own box, e.g. connectivity.py's WiFi
-        # "Device" info, plus a second "Connection" one for whichever
-        # row is actually connected), the normal centered preview_text
-        # in whatever's left, then an optional boxed-off footer
-        # (NavItem.preview_footer — "how do I interact with this"
-        # hints) at the very bottom. Each is only given real height
-        # when actually present/fits, so a NavItem using none/some/all
-        # of preview_tables/preview_text/preview_footer just gets
-        # exactly that, no reserved blank gaps. A table that doesn't
-        # fit in whatever height is left is simply skipped, not
-        # partially drawn — same "degrade, don't corrupt" tolerance
-        # every other primitive here has for a too-small box.
+        # Three kinds of stacked areas, top to bottom: an optional
+        # module-owned content area (NavItem.preview_data, drawn by
+        # whichever render.py's PREVIEW_RENDERERS entry the item's own
+        # owning module registered — this file has NO idea what that
+        # content looks like, see navigation.py's own preview_data
+        # docstring and CLAUDE/NOTES/design-decisions.md
+        # #module-self-sufficiency-vs-preview for why), the normal
+        # centered preview_text in whatever's left, then an optional
+        # boxed-off footer (NavItem.preview_footer — "how do I interact
+        # with this" hints) at the very bottom. Each is only given real
+        # height when actually present/fits, so a NavItem using none/
+        # some/all of preview_data/preview_text/preview_footer just
+        # gets exactly that, no reserved blank gaps.
         content_y = y
         content_h = h
-        for table_title, table_rows in tables:
-            needed_h = 2 + 2 * len(table_rows)  # top+bottom border + a header+value pair per row
-            table_h = min(needed_h, content_h)
-            if table_h < needed_h:
-                break
-            draw_table_box(
-                stdscr, content_y, x, table_h, w, table_title, table_rows,
-                header_color=theme.get("text", 0), value_color=theme.get("text", 0) | curses.A_DIM,
-                border_color=theme.get("text", 0),
-            )
-            content_y += table_h
-            content_h -= table_h
+        if ctx.selected_item.preview_data is not None:
+            owner = module_of_item(ctx.selected_item)
+            renderer = ctx.preview_renderers.get(owner)
+            if renderer is not None:
+                used_h = renderer(stdscr, (x, content_y, w, content_h), ctx.selected_item.preview_data, theme)
+                content_y += used_h
+                content_h -= used_h
 
         if footer:
             # A separate, boxed-off strip for "how do I interact with

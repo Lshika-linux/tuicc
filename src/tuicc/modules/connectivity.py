@@ -36,7 +36,7 @@ import time
 from datetime import datetime
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_centered_lines, display_width, wc_truncate
+from tuicc.render_utils import draw_box_outline, draw_centered_lines, draw_table_box, display_width, wc_truncate
 from tuicc.keybinds import key_label
 from tuicc.windowed_list import section_nav_indices as _section_nav_indices
 from tuicc.windowed_list import section_rows as _section_rows
@@ -890,10 +890,10 @@ def _adapter_info_table(adapter, scanning):
 
 def _connection_diagnostics_table(diagnostics):
     """impala's own bordered panel worth of live, negotiated details
-    for the CURRENTLY connected network — a second preview_tables
-    entry, stacked under "Device" (see NavItem.preview_tables' own
-    docstring), not folded into the Device table itself since it's a
-    per-connection concept, not a per-device one — see
+    for the CURRENTLY connected network — a second table entry,
+    stacked under "Device" (see draw_preview()'s own docstring), not
+    folded into the Device table itself since it's a per-connection
+    concept, not a per-device one — see
     ConnectionDiagnostics' own docstring for the live-confirmed reason
     this is genuinely different information from WifiNetwork.security,
     not a duplicate. Every column is independently optional, same
@@ -944,8 +944,9 @@ def _connection_diagnostics_table(diagnostics):
 
 def _wifi_preview_tables(adapter_info, scanning, diagnostics=None, connected=False, ssid=None):
     """The stacked "Device" (+ "Connection - <ssid>", only when
-    connected and diagnostics are actually available) preview_tables
-    every WiFi-section NavItem carries — one shared builder so the
+    connected and diagnostics are actually available) tables every
+    WiFi-section NavItem's preview_data carries — one shared builder
+    so the
     header, real network rows, and the empty-section placeholder can't
     drift out of sync with each other on what gets shown where. The
     ssid in the second table's own title exists so it can't be
@@ -960,6 +961,37 @@ def _wifi_preview_tables(adapter_info, scanning, diagnostics=None, connected=Fal
         title = f"Connection - {ssid}" if ssid else "Connection"
         tables.append((title, _connection_diagnostics_table(diagnostics)))
     return tables
+
+
+def draw_preview(stdscr, box, preview_data, theme) -> int:
+    """Registered into render.py's PREVIEW_RENDERERS (keyed "connectivity")
+    — draws the WiFi Device/Connection table stack a NavItem's own
+    preview_data carries (_wifi_preview_tables()'s return value, [(title,
+    rows), ...]) and returns how much height it used, so preview.py can
+    keep stacking preview_text/preview_footer below it. Moved here,
+    unchanged, from what used to be preview.py's own inline tables loop
+    — this whole indirection exists so preview.py never has to know this
+    module's content shape at all; see CLAUDE/NOTES/design-decisions.md
+    #module-self-sufficiency-vs-preview for the full reasoning. A table
+    that doesn't fit in whatever height is left is simply skipped, not
+    partially drawn — same "degrade, don't corrupt" tolerance every
+    other primitive here has for a too-small box.
+    """
+    x, y, w, h = box
+    content_y, content_h = y, h
+    for table_title, table_rows in (preview_data or []):
+        needed_h = 2 + 2 * len(table_rows)  # top+bottom border + a header+value pair per row
+        table_h = min(needed_h, content_h)
+        if table_h < needed_h:
+            break
+        draw_table_box(
+            stdscr, content_y, x, table_h, w, table_title, table_rows,
+            header_color=theme.get("text", 0), value_color=theme.get("text", 0) | curses.A_DIM,
+            border_color=theme.get("text", 0),
+        )
+        content_y += table_h
+        content_h -= table_h
+    return h - content_h
 
 
 def _wifi_scan_preview_text(networks, error, theme, status=None, adapter_info=None):
@@ -1185,7 +1217,7 @@ def _empty_browsing_nav_item(section, row, box, theme, cfg, status, adapter_info
         preview_footer=_browsing_hint_footer(
             theme, cfg, section, connected=False, known=False, has_item=False, powered=powered,
         ),
-        preview_tables=_wifi_preview_tables(adapter_info, scanning) if section == "wifi" else None,
+        preview_data=_wifi_preview_tables(adapter_info, scanning) if section == "wifi" else None,
     )
 
 
@@ -1208,7 +1240,7 @@ def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scan
         # param) — only ever meaningful for whichever row IS the
         # currently connected one, diagnostics is Station-wide, not
         # per-network, so it wouldn't mean anything on any other row.
-        preview_tables=_wifi_preview_tables(adapter_info, scanning, diagnostics, network.connected, network.ssid),
+        preview_data=_wifi_preview_tables(adapter_info, scanning, diagnostics, network.connected, network.ssid),
     )
 
 
@@ -1294,7 +1326,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
                 # the header represents the whole section, not one
                 # specific row, so there's no narrower scope to check
                 # here the way a real network row has.
-                preview_tables=_wifi_preview_tables(adapter_info, scanning, diagnostics, connected=True, ssid=connected_ssid),
+                preview_data=_wifi_preview_tables(adapter_info, scanning, diagnostics, connected=True, ssid=connected_ssid),
             )
         elif kind == "bt_header":
             in_wifi_section = False

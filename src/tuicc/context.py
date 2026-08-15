@@ -41,6 +41,16 @@ class RenderContext:
     # per-frame/per-action value in tuicc already uses.
     status: object = None
     selected_item: object = None
+    # render.py's PREVIEW_RENDERERS dict (module_name -> render
+    # function), threaded through here rather than imported directly by
+    # preview.py — render.py imports every module including preview.py
+    # itself to build MODULES, so preview.py importing back from
+    # render.py would be circular. frame_update.py (which already
+    # imports render.py.collect_nav_items with no such problem) threads
+    # it through once per frame instead, same pattern active_module/
+    # selected_item already use. See navigation.py's own preview_data
+    # docstring for what this is for.
+    preview_renderers: dict = field(default_factory=dict)
     # {target_region: [app_id, ...]} for whichever session slot is
     # currently expanded in the Sessions module (None if none is, or
     # that slot has nothing saved) — main.py reads sessions.py's own

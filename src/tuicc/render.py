@@ -8,6 +8,13 @@ nav-item logic, and must never hardcode a module's name in an if/else.
 
 !!! Adding a new module means adding one line to MODULES and NAV_PROVIDERS,
 not editing draw_all() or collect_nav_items(). !!!
+
+PREVIEW_RENDERERS is a third, OPTIONAL registry (module_name -> a
+`(stdscr, box, preview_data, theme) -> int` function) — only a module
+that populates NavItem.preview_data needs an entry here; see
+navigation.py's own preview_data docstring and CLAUDE/NOTES/
+design-decisions.md#module-self-sufficiency-vs-preview for why this
+exists as a registry rather than a field on NavItem itself.
 """
 
 from tuicc.modules import (
@@ -58,6 +65,10 @@ NAV_PROVIDERS = {
     "media": media.nav_items,
     "bars": bars.nav_items,
     "sysmon": sysmon.nav_items,
+}
+
+PREVIEW_RENDERERS = {
+    "connectivity": connectivity.draw_preview,
 }
 
 ACTION_HANDLERS = dict(BASE_HANDLERS)

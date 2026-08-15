@@ -64,27 +64,28 @@ class NavItem:
     # (the default) draws nothing extra — preview.py behaves exactly as
     # it did before this field existed.
     preview_footer: list[tuple[str, int]] | None = None
-    # A THIRD kind of separate, boxed-off area — zero or more bordered
-    # tables (title + one-or-more header+value row pairs each, e.g.
-    # connectivity.py's WiFi "Device" info: Name/Mode/Powered/State/...,
-    # stacked above a second "Connection" table of live diagnostics for
-    # whichever row is actually connected: Frequency/Channel/Live
-    # Security/RSSI/Cipher/Tx Rate/Rx Rate/IP Address, all on one row)
-    # drawn above preview_text, modeled on impala's own bordered panels
-    # rather than dumped as plain preview_text lines, the same "this
-    # needs its own visual box, not just more centered text" reasoning
-    # preview_footer already established. preview_tables is
-    # [(title, [[(column_label, value), ...], ...]), ...] — each outer
-    # tuple is one box's own title + a list of rows, each row its own
-    # list of columns; preview.py stacks however many boxes are given,
-    # top to bottom, in list order, and draw_table_box() stacks however
-    # many rows fit inside each one (in practice always exactly one row
-    # per table today, but the shape stays general — see
-    # draw_table_box()'s own docstring for why it was briefly two).
-    # None/empty (the default) draws nothing extra, same "behaves
-    # exactly as before" tolerance preview_footer's own None default
-    # already has.
-    preview_tables: list[tuple[str, list[list[tuple[str, str]]]]] | None = None
+    # A THIRD kind of separate, boxed-off content: an opaque payload plus
+    # a registered renderer (render.py's PREVIEW_RENDERERS, keyed by
+    # module_of_item(item) — see navigation.py's own module_of_item())
+    # draws it. preview.py has NO idea what shape preview_data is — it
+    # just hands it, and the remaining content rect, to whichever
+    # renderer the owning module registered, and gets back how much
+    # height was used so it can keep stacking preview_text/preview_footer
+    # below it. Replaced a typed `preview_tables` field (2026-08-16,
+    # see CLAUDE/NOTES/design-decisions.md
+    # #module-self-sufficiency-vs-preview) that grew this whole file a
+    # table-stacking rendering subsystem for exactly one consumer
+    # (connectivity.py's WiFi Device/Connection tables) — the same
+    # "the core never guesses a module's internal layout" principle
+    # this module's own docstring states, now actually followed here
+    # too. A raw Callable directly on this field was considered and
+    # rejected: it would be the first instance of behavior embedded in
+    # otherwise-pure data anywhere in this codebase, and would mean
+    # render-time behavior travels through a construction-time channel
+    # (deep in a module's nav_items()) before the render context even
+    # exists — a layering violation, not just a style preference. None
+    # (the default) draws nothing extra.
+    preview_data: object | None = None
 
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:
