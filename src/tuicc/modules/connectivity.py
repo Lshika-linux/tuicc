@@ -646,7 +646,7 @@ def draw(stdscr, box, ctx, module_name):
             # trying to Tab onto one and nothing happening.
             browsable = _browsing_section == "wifi"
             bars = _signal_bars(network.signal)
-            # "[new] " prefix, not a " (new)" suffix \u2014 see
+            # "[new] " prefix, not a " (new)" suffix — see
             # CLAUDE/NOTES/design-decisions.md#connectivity-module-design.
             display_name = ("[new] " if not network.known else "") + network.ssid
             name_width = max(inner_w - 3 - len(bars), 0)
@@ -701,7 +701,7 @@ def draw(stdscr, box, ctx, module_name):
             # See wifi_item's own comment above — same reasoning.
             browsable = _browsing_section == "bluetooth"
             battery = f" {device.battery}%" if device.battery is not None else ""
-            # "[new] " prefix \u2014 same reasoning as wifi_item's own
+            # "[new] " prefix — same reasoning as wifi_item's own
             # display_name above.
             display_name = ("[new] " if not device.paired else "") + device.name
 
@@ -804,6 +804,33 @@ def _action_progress_line(status, domain_name, key, connected, theme):
     return None
 
 
+def _power_progress_line(status, adapter_info, theme):
+    """Same role as _action_progress_line above, for the radio power
+    toggle specifically — "Powering on…"/"Powering off…" while in
+    flight, or the real failure message once it's done. Uses its own
+    fixed pending_key ("power", set explicitly by main.py's
+    handle_connectivity_browsing — see its own request_action() call)
+    rather than the request's own target bool, so this only ever has
+    to check ONE key regardless of which direction was requested,
+    instead of checking both is_pending("wifi", True) and
+    is_pending("wifi", False). Direction is inferred from
+    adapter_info's own last-known `powered` (the toggle always
+    requests the opposite of what it saw) — genuinely just a best
+    guess while the real answer is still in flight, same as every
+    other "Connecting…"/"Disconnecting…" progress line already is.
+    """
+    if status is None:
+        return None
+    if status.is_pending("wifi", "power"):
+        text_color, attr = _pending_blink_style(theme)
+        target_on = adapter_info is None or not adapter_info.powered
+        return ("Powering on…" if target_on else "Powering off…", text_color | attr)
+    action_error = status.get_action_error_for("wifi", "power")
+    if action_error:
+        return (f"⚠ {action_error}", theme.get("urgent", 0))
+    return None
+
+
 def _header_enter_hint_footer(theme, cfg, section_label):
     """The red "how do I get in" footer for a header's own preview —
     the level-1 counterpart to _browsing_hint_footer's level-2 "what
@@ -861,30 +888,126 @@ def _adapter_info_table(adapter, scanning):
     return columns
 
 
-def _wifi_scan_preview_text(networks, error, theme):
+def _connection_diagnostics_table(diagnostics):
+    """impala's own bordered panel worth of live, negotiated details
+    for the CURRENTLY connected network — a second preview_tables
+    entry, stacked under "Device" (see NavItem.preview_tables' own
+    docstring), not folded into the Device table itself since it's a
+    per-connection concept, not a per-device one — see
+    ConnectionDiagnostics' own docstring for the live-confirmed reason
+    this is genuinely different information from WifiNetwork.security,
+    not a duplicate. Every column is independently optional, same
+    "only show what's real" discipline _adapter_info_table() already
+    has. Live Security goes through the existing _security_label() —
+    the SAME normalization WifiNetwork.security already gets — so
+    iwd's own already-human "WPA3-Personal" and NetworkManager's raw
+    "sae" token both end up in the identical display vocabulary
+    regardless of which backend produced them (a "WPA3-Personal"-
+    shaped string isn't a key in _WIFI_SECURITY_LABELS, so it passes
+    through that lookup completely unchanged — no double-translation
+    risk). Labeled "Live Security", not plain "Security" — found live,
+    Rafi's own report: sitting right below the network's own preview_
+    text "Security: ..." line (WifiNetwork.security, the network's
+    static configured type), an identically-labeled second value read
+    as a contradiction/duplicate rather than two genuinely different,
+    both-true answers.
+
+    One row: briefly split into two (2026-08-15, same session) once
+    Tx/Rx Rate and IP Address joined Frequency/Channel/Live Security/
+    RSSI/Cipher — reverted back to one the same day, Rafi's own call,
+    once it turned out to comfortably fit as a single line after all.
+    """
+    columns = []
+    if diagnostics.frequency is not None:
+        columns.append(("Frequency", f"{diagnostics.frequency / 1000:.2f} GHz"))
+    if diagnostics.channel is not None:
+        columns.append(("Channel", str(diagnostics.channel)))
+    if diagnostics.security is not None:
+        columns.append(("Live Security", _security_label(diagnostics.security)))
+    if diagnostics.rssi is not None:
+        columns.append(("RSSI", f"{diagnostics.rssi} dBm"))
+    if diagnostics.cipher is not None:
+        columns.append(("Cipher", diagnostics.cipher))
+    if diagnostics.tx_bitrate is not None:
+        # Arrow suffix matches sysmon.py's own swap in/out convention
+        # (↓/↑) — ↑ = leaving this machine (upload/transmit), ↓ =
+        # arriving at it (download/receive), same direction both
+        # readers already know from any real network UI.
+        columns.append(("Tx Rate ↑", f"{diagnostics.tx_bitrate:.1f} Mb/s"))
+    if diagnostics.rx_bitrate is not None:
+        columns.append(("Rx Rate ↓", f"{diagnostics.rx_bitrate:.1f} Mb/s"))
+    if diagnostics.ip_address is not None:
+        columns.append(("IP Address", diagnostics.ip_address))
+
+    return [columns] if columns else []
+
+
+def _wifi_preview_tables(adapter_info, scanning, diagnostics=None, connected=False, ssid=None):
+    """The stacked "Device" (+ "Connection - <ssid>", only when
+    connected and diagnostics are actually available) preview_tables
+    every WiFi-section NavItem carries — one shared builder so the
+    header, real network rows, and the empty-section placeholder can't
+    drift out of sync with each other on what gets shown where. The
+    ssid in the second table's own title exists so it can't be
+    mistaken for yet another property of the DEVICE above it — found
+    live, Rafi's own report: "Connection" alone, directly under
+    "Device", read as more device info at a glance, not "here's what's
+    happening on THIS specific network."
+    """
+    device_columns = _adapter_info_table(adapter_info, scanning)
+    tables = [("Device", [device_columns] if device_columns else [])]
+    if connected and diagnostics is not None:
+        title = f"Connection - {ssid}" if ssid else "Connection"
+        tables.append((title, _connection_diagnostics_table(diagnostics)))
+    return tables
+
+
+def _wifi_scan_preview_text(networks, error, theme, status=None, adapter_info=None):
     """The hover-preview for the WiFi header row itself (name kept from
     when Enter here triggered a scan directly — it now enters browsing
     instead, see this module's own "level-2 browsing" section) — the
     FULL list of currently available networks, not just the
     connectivity_visible_slots window the box's scrollable section
     shows. Adapter/device info lives in a separate preview_table now
-    (see _adapter_info_table above), not folded in here. Same
-    None-vs-[] error handling as _build_rows' own — `networks` is the
-    raw ctx.wifi_networks (may be None), not the "or []"-normalized
-    local nav_items() otherwise uses, so a real poll failure still
-    shows as an error here too, not "no networks".
+    (see _adapter_info_table above), not folded in here — only the
+    live power-toggle progress line (_power_progress_line) is, since
+    "Powering on…" is exactly as relevant here as anywhere else
+    wifi's own preview shows. Same None-vs-[] error handling as
+    _build_rows' own — `networks` is the raw ctx.wifi_networks (may be
+    None), not the "or []"-normalized local nav_items() otherwise
+    uses, so a real poll failure still shows as an error here too, not
+    "no networks".
+
+    Each network's own name is left-padded to a shared width before
+    its signal % (same "label padded, value follows" convention
+    _wifi_preview_text() below uses, just with no literal label text —
+    there's nothing to pad but the name itself), so every percentage
+    lands in the same column — plus a blank line between every row
+    (Rafi's own call, 2026-08-15, after a boxed version was tried and
+    rejected as unnecessary: "give it breathing room" was the actual
+    ask, not a border).
     """
+    power_progress = _power_progress_line(status, adapter_info, theme)
+    trailer = [power_progress] if power_progress is not None else []
     if networks is None and error:
-        return [(f"⚠ {error}", theme.get("urgent", 0))]
+        return [(f"⚠ {error}", theme.get("urgent", 0))] + trailer
     if not networks:
-        return [("No networks found", theme.get("text", 0) | curses.A_DIM)]
-    lines = [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
+        return [("No networks found", theme.get("text", 0) | curses.A_DIM)] + trailer
+    rows = []
     for network in networks:
         dot = "●" if network.connected else "○"
         prefix = "[new] " if not network.known else ""
-        signal = f" {network.signal}%" if network.signal is not None else ""
         color = theme.get("accent", 0) if network.connected else theme.get("text", 0)
-        lines.append((f"{dot} {prefix}{network.ssid}{signal}", color))
+        signal = f"{network.signal}%" if network.signal is not None else ""
+        rows.append((f"{dot} {prefix}{network.ssid}", signal, color))
+    name_width = max(len(name) for name, _signal, _color in rows)
+    lines = [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
+    for name, signal, color in rows:
+        lines.append(("", 0))
+        lines.append((f"{name.ljust(name_width)} {signal}".rstrip(), color))
+    if trailer:
+        lines.append(("", 0))
+        lines.extend(trailer)
     return lines
 
 
@@ -905,7 +1028,7 @@ def _bt_discover_preview_text(devices, error, theme):
     return lines
 
 
-def _browsing_hint_footer(theme, cfg, section, connected, known=True):
+def _browsing_hint_footer(theme, cfg, section, connected, known=True, has_item=True, powered=True):
     """The red "available keys" footer for a network/device's own
     preview — a separate boxed-off preview_footer (see NavItem.
     preview_footer's own docstring), not just another line of
@@ -919,48 +1042,74 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True):
     actually do on Enter, and the hint should say so unconditionally
     rather than only for the wifi-only extra keys below it.
 
-    wifi_forget/wifi_connect_hidden only ever DO anything while
-    section == "wifi" (see main.py's handle_connectivity_browsing —
-    bluetooth rows have no equivalent), so they're only listed there.
-    [D] Forget specifically is further narrowed to `known` networks
-    only — forgetting an unknown network (never actually saved,
-    nothing to delete) isn't a real action, so offering the key there
-    would be misleading, not just redundant.
+    wifi_forget/wifi_connect_hidden/wifi_power_toggle only ever DO
+    anything while section == "wifi" (see main.py's handle_
+    connectivity_browsing — bluetooth rows have no equivalent), so
+    they're only listed there. [D] Forget specifically is further
+    narrowed to `known` networks only — forgetting an unknown network
+    (never actually saved, nothing to delete) isn't a real action, so
+    offering the key there would be misleading, not just redundant.
 
-    wifi_power_toggle is deliberately NOT listed here — its key
-    handling in main.py's handle_connectivity_browsing is commented
-    out (found live: a single keypress killed networking hard enough
-    to need a reboot, cause not yet understood — see CLAUDE/NOTES/
-    known-limitations.md#wifi-power-toggle-disabled). Advertising a key
-    that no longer does anything would be worse than not mentioning it
-    at all — re-add this hint in the same commit that re-enables the
-    key, not before.
+    has_item=False (the synthetic placeholder nav_items() emits when
+    the browsed section has zero real items — see
+    _empty_browsing_nav_item()'s own docstring) drops [Enter] Connect/
+    Disconnect and [D] Forget entirely, since neither has a selected
+    network/device to act on.
+
+    powered=False (wifi only — bluetooth has no equivalent concept)
+    narrows the WHOLE hint down to just [O] Power/[Esc] Back — found
+    live, Rafi's own report: with the radio off, Scan/Hidden/Forget
+    all genuinely can't do anything (nothing to scan, no radio to
+    connect a hidden network on), so offering them was actively
+    confusing, not just unhelpful clutter.
     """
     urgent = theme.get("urgent", 0)
-    connect_hint = f"[{key_label(cfg.keybinds['confirm'])}] {'Disconnect' if connected else 'Connect'}"
+    if section == "wifi" and not powered:
+        return [(f"[{key_label(cfg.keybinds['wifi_power_toggle'])}] Power   [Esc] Back", urgent)]
+    connect_hint = f"[{key_label(cfg.keybinds['confirm'])}] {'Disconnect' if connected else 'Connect'}   " if has_item else ""
     if section != "wifi":
-        return [(f"{connect_hint}   [{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", urgent)]
-    forget_hint = f"   [{key_label(cfg.keybinds['wifi_forget'])}] Forget" if known else ""
+        return [(f"{connect_hint}[{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", urgent)]
+    forget_hint = f"   [{key_label(cfg.keybinds['wifi_forget'])}] Forget" if (has_item and known) else ""
     return [
-        (f"{connect_hint}   [{key_label(cfg.keybinds['scan'])}] Scan{forget_hint}", urgent),
-        (f"[{key_label(cfg.keybinds['wifi_connect_hidden'])}] Hidden   [Esc] Back", urgent),
+        (f"{connect_hint}[{key_label(cfg.keybinds['scan'])}] Scan{forget_hint}", urgent),
+        (f"[{key_label(cfg.keybinds['wifi_connect_hidden'])}] Hidden   [{key_label(cfg.keybinds['wifi_power_toggle'])}] Power   [Esc] Back", urgent),
     ]
 
 
 def _wifi_preview_text(network, theme, status):
-    lines = [(network.ssid, theme.get("accent", 0))]
+    """SSID first, then Signal:/Security:/Known:/... — each label
+    padded to a shared width first so every value lands in the same
+    column, one blank line between every row so the block has some
+    breathing room instead of reading as a packed wall of text (Rafi's
+    own call, 2026-08-15, after a boxed version was tried and rejected
+    as unnecessary — plain, aligned, spaced-out centered text was the
+    actual ask, not a border). A live connect/disconnect attempt's own
+    progress/error line (_action_progress_line) rides along as one
+    more (unpadded) row — genuinely just one more fact about this same
+    network, not a separate concept needing its own alignment.
+    """
+    text = theme.get("text", 0)
+    connected_color = theme.get("accent", 0) if network.connected else text
     signal_text = f"{network.signal}%" if network.signal is not None else "unknown"
-    lines.append((f"Signal: {signal_text}", theme.get("text", 0)))
-    lines.append((f"Security: {_security_label(network.security)}", theme.get("text", 0)))
-    lines.append((f"Known: {_yes_no(network.known)}", theme.get("text", 0)))
+    rows = [
+        ("Signal:", signal_text, text),
+        ("Security:", _security_label(network.security), text),
+        ("Known:", _yes_no(network.known), text),
+    ]
     if network.known:
-        lines.append((f"Auto-connect: {_yes_no(network.auto_connect)}", theme.get("text", 0)))
-        lines.append((f"Hidden: {_yes_no(network.hidden)}", theme.get("text", 0)))
+        rows.append(("Auto-connect:", _yes_no(network.auto_connect), text))
+        rows.append(("Hidden:", _yes_no(network.hidden), text))
         if network.last_connected:
-            lines.append((f"Last connected: {_format_timestamp(network.last_connected)}", theme.get("text", 0)))
-    lines.append((f"Connected: {_yes_no(network.connected)}", theme.get("accent", 0) if network.connected else theme.get("text", 0)))
+            rows.append(("Last connected:", _format_timestamp(network.last_connected), text))
+    rows.append(("Connected:", _yes_no(network.connected), connected_color))
+    label_width = max(len(label) for label, _value, _color in rows)
+    lines = [(network.ssid, theme.get("accent", 0))]
+    for label, value, color in rows:
+        lines.append(("", 0))
+        lines.append((f"{label.ljust(label_width)} {value}", color))
     progress = _action_progress_line(status, "wifi", network.ssid, network.connected, theme)
     if progress is not None:
+        lines.append(("", 0))
         lines.append(progress)
     return lines
 
@@ -986,7 +1135,61 @@ def _bt_preview_text(device, theme, status):
     return lines
 
 
-def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scanning) -> NavItem:
+def _empty_browsing_nav_item(section, row, box, theme, cfg, status, adapter_info, scanning) -> NavItem:
+    """The synthetic placeholder nav_items() returns when browsing
+    (mode_stack "connectivity_browsing") a section that currently has
+    zero real items — WiFi radio just turned off, Bluetooth discovery
+    hasn't found anything yet, etc.
+
+    Found live (2026-08-15): without SOME NavItem for loop_state.
+    selected_id to point at, frame_update.py's own stale-selection
+    recovery (which has no idea this module is mid-claimed-browse)
+    silently reassigned selection to an unrelated module (sidebar) the
+    instant the list emptied — while mode_stack kept trapping every
+    key for handle_connectivity_browsing regardless, since that check
+    is keyed purely off mode_stack, not off what's currently selected.
+    The result looked exactly like tuicc had frozen in a loop (Escape
+    "worked" once, back to the header, but re-entering the still-empty
+    section hit the identical reassignment again) even though the
+    process itself never hung — confirmed live, tuicc kept running the
+    whole time. This placeholder closes that gap: browsing always has
+    a real, stable NavItem to select, so the stale-selection recovery
+    never has a reason to fire.
+
+    Still carries the same Device table + hint footer real rows get
+    (minus Connect/Disconnect/Forget, which need a real item — see
+    _browsing_hint_footer's own has_item=False) — "Powered: no" right
+    here is exactly what explains why the list is empty and that the
+    same power key fixes it, for wifi specifically; bluetooth has no
+    adapter_info concept, so those two args are always None/False there.
+    Also carries the live power-toggle progress line
+    (_power_progress_line) and narrows the hint to just Power/Back
+    while the radio is actually off (_browsing_hint_footer's own
+    powered=False) — Scan/Hidden/Forget can't do anything without a
+    radio, so offering them here would be actively confusing, not just
+    unhelpful.
+    """
+    x, y, w, h = box
+    id_prefix = "wifi" if section == "wifi" else "bt"
+    noun = "networks" if section == "wifi" else "devices"
+    powered = adapter_info.powered if (section == "wifi" and adapter_info is not None) else True
+    power_progress = _power_progress_line(status, adapter_info, theme) if section == "wifi" else None
+    preview_text = [(f"No {noun} in range", theme.get("text", 0) | curses.A_DIM)]
+    if power_progress is not None:
+        preview_text.append(power_progress)
+    return NavItem(
+        id=f"connectivity:{id_prefix}:empty",
+        rect=(x + 1, row, w - 2, 1),
+        target_kind=f"{id_prefix}_empty",
+        preview_text=preview_text,
+        preview_footer=_browsing_hint_footer(
+            theme, cfg, section, connected=False, known=False, has_item=False, powered=powered,
+        ),
+        preview_tables=_wifi_preview_tables(adapter_info, scanning) if section == "wifi" else None,
+    )
+
+
+def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scanning, diagnostics) -> NavItem:
     x, y, w, h = box
     return NavItem(
         id=f"connectivity:wifi:{network.ssid}",
@@ -1000,9 +1203,12 @@ def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scan
         # browsing (see this module's own "level-2 browsing" section),
         # so seeing the device's own current state (Powered/Scanning
         # especially) right where those controls actually live matters
-        # more here than at the header, not less.
-        preview_table_title="Device",
-        preview_table=_adapter_info_table(adapter_info, scanning),
+        # more here than at the header, not less. Plus a second
+        # "Connection" table (_wifi_preview_tables' own connected=
+        # param) — only ever meaningful for whichever row IS the
+        # currently connected one, diagnostics is Station-wide, not
+        # per-network, so it wouldn't mean anything on any other row.
+        preview_tables=_wifi_preview_tables(adapter_info, scanning, diagnostics, network.connected, network.ssid),
     )
 
 
@@ -1047,6 +1253,12 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     # survive into browsing) for the exact same preview_table content.
     adapter_info = ctx.status.get("wifi_adapter") if ctx.status is not None else None
     scanning = bool(ctx.status.get("wifi_scanning")) if ctx.status is not None else False
+    diagnostics = ctx.status.get("wifi_diagnostics") if ctx.status is not None else None
+    # For the header's own "Connection - <ssid>" table title — the
+    # header has no single `network` object in scope the way a real
+    # row does, so the connected one (there's at most one) has to be
+    # found by hand.
+    connected_ssid = next((n.ssid for n in wifi_networks if n.connected), None)
 
     wifi_header_item = None
     bt_header_item = None
@@ -1054,6 +1266,15 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     wifi_rows: list[int] = []  # one entry per REAL "wifi_item" row drawn, in order
     bt_items: list[NavItem] = []
     bt_rows: list[int] = []
+    # First "empty_slot" row's own y, per section — the fallback
+    # position for _empty_browsing_nav_item() below when browsing a
+    # section with zero real items. `in_wifi_section` tracks which
+    # section the loop is currently walking (wifi_header..bt_header
+    # exclusive), since "empty_slot" rows themselves carry no section
+    # marker of their own (see windowed_list.section_rows()).
+    wifi_empty_row = None
+    bt_empty_row = None
+    in_wifi_section = True
 
     for i, (kind, payload) in enumerate(_build_rows(ctx, h)):
         row = y + 1 + i
@@ -1061,34 +1282,47 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             break
 
         if kind == "wifi_header":
+            in_wifi_section = True
             wifi_header_item = NavItem(
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
-                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme),
+                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme, ctx.status, adapter_info),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "networks"),
-                preview_table_title="Device",
-                preview_table=_adapter_info_table(adapter_info, scanning),
+                # connected=True unconditionally — diagnostics itself
+                # already gates the "Connection" table's presence (see
+                # _wifi_preview_tables' own docstring): it's only ever
+                # non-None when something genuinely IS connected, and
+                # the header represents the whole section, not one
+                # specific row, so there's no narrower scope to check
+                # here the way a real network row has.
+                preview_tables=_wifi_preview_tables(adapter_info, scanning, diagnostics, connected=True, ssid=connected_ssid),
             )
         elif kind == "bt_header":
+            in_wifi_section = False
             bt_header_item = NavItem(
                 id="connectivity:bt:header", rect=(x + 1, row, w - 2, 1), target_kind="bluetooth_browse",
                 preview_text=_bt_discover_preview_text(ctx.bluetooth_devices, ctx.bluetooth_error, theme),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "devices"),
             )
         elif kind == "wifi_item":
-            wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg, adapter_info, scanning))
+            wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg, adapter_info, scanning, diagnostics))
             wifi_rows.append(row)
         elif kind == "bt_item":
             bt_items.append(_bt_row_nav_item(payload, box, row, theme, ctx.status, cfg))
             bt_rows.append(row)
+        elif kind == "empty_slot":
+            if in_wifi_section and wifi_empty_row is None:
+                wifi_empty_row = row
+            elif not in_wifi_section and bt_empty_row is None:
+                bt_empty_row = row
 
     visible_slots = ctx.config.connectivity_visible_slots
 
     selected_wifi_index = _selected_wifi_index(wifi_networks, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(wifi_networks), selected_wifi_index, visible_slots=visible_slots)
     if before_i is not None and wifi_rows:
-        wifi_items = [_wifi_row_nav_item(wifi_networks[before_i], box, wifi_rows[0], theme, ctx.status, cfg, adapter_info, scanning)] + wifi_items
+        wifi_items = [_wifi_row_nav_item(wifi_networks[before_i], box, wifi_rows[0], theme, ctx.status, cfg, adapter_info, scanning, diagnostics)] + wifi_items
     if after_i is not None and wifi_rows:
-        wifi_items = wifi_items + [_wifi_row_nav_item(wifi_networks[after_i], box, wifi_rows[-1], theme, ctx.status, cfg, adapter_info, scanning)]
+        wifi_items = wifi_items + [_wifi_row_nav_item(wifi_networks[after_i], box, wifi_rows[-1], theme, ctx.status, cfg, adapter_info, scanning, diagnostics)]
 
     selected_bt_index = _selected_bt_index(bluetooth_devices, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(bluetooth_devices), selected_bt_index, visible_slots=visible_slots)
@@ -1098,9 +1332,17 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
         bt_items = bt_items + [_bt_row_nav_item(bluetooth_devices[after_i], box, bt_rows[-1], theme, ctx.status, cfg)]
 
     if _browsing_section == "wifi":
-        return wifi_items
+        if wifi_items:
+            return wifi_items
+        if wifi_empty_row is not None:
+            return [_empty_browsing_nav_item("wifi", wifi_empty_row, box, theme, cfg, ctx.status, adapter_info, scanning)]
+        return []
     if _browsing_section == "bluetooth":
-        return bt_items
+        if bt_items:
+            return bt_items
+        if bt_empty_row is not None:
+            return [_empty_browsing_nav_item("bluetooth", bt_empty_row, box, theme, cfg, ctx.status, None, False)]
+        return []
 
     items = []
     if wifi_header_item is not None:
@@ -1118,14 +1360,22 @@ def handle_wifi_header(ctx, item, cfg):
     idiom as sessions.py's start_naming()/is_naming(). Jumps straight
     to the first real network (via ActionContext.reselect_item_id +
     main.py's existing do_apply_reselect()) rather than leaving
-    selection sitting on the now-unreachable header id; stays on the
-    header id when the section is genuinely empty — still valid, e.g.
-    to immediately press the scan key.
+    selection sitting on the now-unreachable header id.
+
+    ALWAYS sets reselect_item_id, even when the section is empty — an
+    earlier version left it unset there on the theory the header id
+    "was still valid." Found live it wasn't: the instant browsing
+    starts, nav_items() stops returning the header entirely (browsing
+    only ever returns THAT section's own items — see this module's own
+    "level-2 browsing" section), so a stale header id triggered
+    frame_update.py's stale-selection recovery to reassign selection
+    to an unrelated module, while mode_stack kept every key trapped
+    here regardless — see _empty_browsing_nav_item()'s own docstring
+    for the full incident this fixes.
     """
     start_browsing("wifi")
     networks = ctx.status.get("wifi") or []
-    if networks:
-        ctx.reselect_item_id = f"connectivity:wifi:{networks[0].ssid}"
+    ctx.reselect_item_id = f"connectivity:wifi:{networks[0].ssid}" if networks else "connectivity:wifi:empty"
     return False, None
 
 
@@ -1133,8 +1383,7 @@ def handle_bt_header(ctx, item, cfg):
     """Same reasoning as handle_wifi_header above, for Bluetooth."""
     start_browsing("bluetooth")
     devices = ctx.status.get("bluetooth") or []
-    if devices:
-        ctx.reselect_item_id = f"connectivity:bt:{devices[0].id}"
+    ctx.reselect_item_id = f"connectivity:bt:{devices[0].id}" if devices else "connectivity:bt:empty"
     return False, None
 
 

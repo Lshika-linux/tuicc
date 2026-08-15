@@ -64,19 +64,27 @@ class NavItem:
     # (the default) draws nothing extra — preview.py behaves exactly as
     # it did before this field existed.
     preview_footer: list[tuple[str, int]] | None = None
-    # A THIRD separate, boxed-off area — a bordered table (title +
-    # one header row + one value row, e.g. connectivity.py's WiFi
-    # device info: Name/Mode/Powered/State/...) drawn above preview_text,
-    # modeled on impala's own bordered "Device" panel rather than
-    # dumped as plain preview_text lines, the same "this needs its own
-    # visual box, not just more centered text" reasoning preview_footer
-    # already established. preview_table is [(column_label, value), ...]
-    # — a single row's worth of columns; preview_table_title is the
-    # box's own title (draw_box_outline's title=). Both None (the
-    # default) draws nothing extra, same "behaves exactly as before"
-    # tolerance preview_footer's own None default already has.
-    preview_table_title: str | None = None
-    preview_table: list[tuple[str, str]] | None = None
+    # A THIRD kind of separate, boxed-off area — zero or more bordered
+    # tables (title + one-or-more header+value row pairs each, e.g.
+    # connectivity.py's WiFi "Device" info: Name/Mode/Powered/State/...,
+    # stacked above a second "Connection" table of live diagnostics for
+    # whichever row is actually connected: Frequency/Channel/Live
+    # Security/RSSI/Cipher/Tx Rate/Rx Rate/IP Address, all on one row)
+    # drawn above preview_text, modeled on impala's own bordered panels
+    # rather than dumped as plain preview_text lines, the same "this
+    # needs its own visual box, not just more centered text" reasoning
+    # preview_footer already established. preview_tables is
+    # [(title, [[(column_label, value), ...], ...]), ...] — each outer
+    # tuple is one box's own title + a list of rows, each row its own
+    # list of columns; preview.py stacks however many boxes are given,
+    # top to bottom, in list order, and draw_table_box() stacks however
+    # many rows fit inside each one (in practice always exactly one row
+    # per table today, but the shape stays general — see
+    # draw_table_box()'s own docstring for why it was briefly two).
+    # None/empty (the default) draws nothing extra, same "behaves
+    # exactly as before" tolerance preview_footer's own None default
+    # already has.
+    preview_tables: list[tuple[str, list[list[tuple[str, str]]]]] | None = None
 
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:

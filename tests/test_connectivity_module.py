@@ -9,13 +9,18 @@ themselves need a real curses screen, left untested here same as every
 other module.
 """
 
+import re
 from types import SimpleNamespace
 
-from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo
+from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics
 from tuicc.modules.connectivity import (
     _action_progress_line,
+    _power_progress_line,
     _adapter_info_table,
+    _connection_diagnostics_table,
+    _wifi_preview_tables,
     _browsing_hint_footer,
+    _empty_browsing_nav_item,
     _build_rows,
     _bt_discover_preview_text,
     _bt_preview_text,
@@ -448,23 +453,23 @@ def _text_of(lines):
 def test_wifi_preview_text_includes_core_fields():
     network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    texts = _text_of(_wifi_preview_text(network, _theme(), None))
 
-    assert "Home" in lines
-    assert "Signal: 80%" in lines
-    assert "Security: WPA/WPA2-Personal" in lines
-    assert "Known: yes" in lines
-    assert "Connected: yes" in lines
+    assert "Home" in texts
+    assert any(text.startswith("Signal:") and text.endswith("80%") for text in texts)
+    assert any(text.startswith("Security:") and text.endswith("WPA/WPA2-Personal") for text in texts)
+    assert any(text.startswith("Known:") and text.endswith("yes") for text in texts)
+    assert any(text.startswith("Connected:") and text.endswith("yes") for text in texts)
 
 
 def test_wifi_preview_text_omits_known_network_fields_when_unknown():
     network = WifiNetwork(ssid="Stranger", connected=False, signal=40, known=False, security="open")
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    texts = _text_of(_wifi_preview_text(network, _theme(), None))
 
-    assert not any(line.startswith("Auto-connect:") for line in lines)
-    assert not any(line.startswith("Hidden:") for line in lines)
-    assert not any(line.startswith("Last connected:") for line in lines)
+    assert not any(text.startswith("Auto-connect:") for text in texts)
+    assert not any(text.startswith("Hidden:") for text in texts)
+    assert not any(text.startswith("Last connected:") for text in texts)
 
 
 def test_wifi_preview_text_includes_known_network_fields_when_known():
@@ -473,19 +478,41 @@ def test_wifi_preview_text_includes_known_network_fields_when_known():
         auto_connect=True, hidden=False, last_connected="2026-08-10T05:35:00Z",
     )
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    texts = _text_of(_wifi_preview_text(network, _theme(), None))
 
-    assert "Auto-connect: yes" in lines
-    assert "Hidden: no" in lines
-    assert any(line.startswith("Last connected: ") for line in lines)
+    assert any(text.startswith("Auto-connect:") and text.endswith("yes") for text in texts)
+    assert any(text.startswith("Hidden:") and text.endswith("no") for text in texts)
+    assert any(text.startswith("Last connected:") for text in texts)
 
 
 def test_wifi_preview_text_signal_unknown_when_none():
     network = WifiNetwork(ssid="Home", connected=False, signal=None, known=True)
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), None))
+    texts = _text_of(_wifi_preview_text(network, _theme(), None))
 
-    assert "Signal: unknown" in lines
+    assert any(text.startswith("Signal:") and text.endswith("unknown") for text in texts)
+
+
+def test_wifi_preview_text_has_a_blank_line_between_every_row():
+    # "give it breathing room" — Rafi's own call, 2026-08-15.
+    network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
+
+    texts = _text_of(_wifi_preview_text(network, _theme(), None))
+
+    assert texts[0] == "Home"
+    assert texts[1] == ""
+    assert texts[2] != ""
+
+
+def test_wifi_preview_text_labels_are_padded_to_a_shared_width():
+    # The whole point: every value should start in the same column
+    # regardless of its own label's length ("Signal:" vs "Connected:").
+    network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
+
+    texts = [text for text in _text_of(_wifi_preview_text(network, _theme(), None)) if text]
+    value_columns = {m.start(1) for text in texts if (m := re.match(r"\S+:\s+(\S)", text))}
+
+    assert len(value_columns) == 1
 
 
 def test_bt_preview_text_includes_core_fields():
@@ -603,9 +630,9 @@ def test_wifi_preview_text_includes_progress_line_when_pending():
     network = WifiNetwork(ssid="Home", connected=False, signal=50, known=True, security="psk")
     status = _FakeStatus(pending_keys={("wifi", "Home")})
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), status))
+    lines = _wifi_preview_text(network, _theme(), status)
 
-    assert "Connecting…" in lines
+    assert "Connecting…" in _text_of(lines)
 
 
 def test_bt_preview_text_includes_error_when_settled_and_failed():
@@ -617,15 +644,74 @@ def test_bt_preview_text_includes_error_when_settled_and_failed():
     assert "⚠ org.bluez.Error.Failed" in lines
 
 
-def test_preview_text_progress_scoped_to_the_right_key_only():
+def test_wifi_preview_text_progress_scoped_to_the_right_key_only():
     # The exact bug get_action_error_for() exists to prevent — a
     # DIFFERENT network's stale error must never bleed onto this one.
     network = WifiNetwork(ssid="Home", connected=False, signal=50, known=True, security="psk")
     status = _FakeStatus(errors_for={("wifi", "Office"): "some other network's error"})
 
-    lines = _text_of(_wifi_preview_text(network, _theme(), status))
+    lines = _wifi_preview_text(network, _theme(), status)
 
-    assert not any(line.startswith("⚠") for line in lines)
+    assert not any(line.startswith("⚠") for line in _text_of(lines))
+
+
+# ---------- _power_progress_line: live radio power-toggle feedback ----------
+# Rafi's own follow-up ask, once the toggle itself was confirmed
+# working live: nothing on screen said "Powering on…" while the
+# request was actually in flight.
+
+def test_power_progress_line_none_when_nothing_happening():
+    status = _FakeStatus()
+
+    assert _power_progress_line(status, AdapterInfo(powered=True), _theme()) is None
+
+
+def test_power_progress_line_none_when_status_is_none():
+    assert _power_progress_line(None, AdapterInfo(powered=True), _theme()) is None
+
+
+def test_power_progress_line_powering_on_when_last_known_state_was_off():
+    status = _FakeStatus(pending_keys={("wifi", "power")})
+
+    text, _color = _power_progress_line(status, AdapterInfo(powered=False), _theme())
+
+    assert text == "Powering on…"
+
+
+def test_power_progress_line_powering_off_when_last_known_state_was_on():
+    status = _FakeStatus(pending_keys={("wifi", "power")})
+
+    text, _color = _power_progress_line(status, AdapterInfo(powered=True), _theme())
+
+    assert text == "Powering off…"
+
+
+def test_power_progress_line_powering_on_when_adapter_info_missing():
+    # No last-known state to go on at all — defaults to the more
+    # common "was off, turning on" guess rather than crashing.
+    status = _FakeStatus(pending_keys={("wifi", "power")})
+
+    text, _color = _power_progress_line(status, None, _theme())
+
+    assert text == "Powering on…"
+
+
+def test_power_progress_line_shows_the_real_error_once_settled():
+    status = _FakeStatus(errors_for={("wifi", "power"): "Operation not permitted"})
+
+    text, color = _power_progress_line(status, AdapterInfo(powered=True), _theme())
+
+    assert text == "⚠ Operation not permitted"
+    assert color == _theme()["urgent"]
+
+
+def test_power_progress_line_only_checks_its_own_fixed_key():
+    # Not scoped by ssid/device id like _action_progress_line — a
+    # connect attempt pending for some unrelated key must not be
+    # mistaken for a power toggle in flight.
+    status = _FakeStatus(pending_keys={("wifi", "Home")})
+
+    assert _power_progress_line(status, AdapterInfo(powered=True), _theme()) is None
 
 
 # ---------- _wifi_scan_preview_text / _bt_discover_preview_text ----------
@@ -635,24 +721,54 @@ def test_preview_text_progress_scoped_to_the_right_key_only():
 # shows. The "[Enter] Browse ..." discoverability hint lives in a
 # SEPARATE preview_footer now (see NavItem.preview_footer's own
 # docstring and _header_enter_hint_footer's own tests below), not
-# appended into this list — so these go back to exact equality.
+# appended into this list.
 
 def test_wifi_scan_preview_lists_every_network_not_just_the_window():
     networks = [WifiNetwork(ssid=f"AP{i}", connected=False, signal=50) for i in range(10)]
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
+    texts = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
 
-    assert "Available networks [10]" in lines
-    assert any("AP0" in line for line in lines)
-    assert any("AP9" in line for line in lines)
+    assert "Available networks [10]" in texts
+    assert any("AP0" in text for text in texts)
+    assert any("AP9" in text for text in texts)
 
 
 def test_wifi_scan_preview_marks_new_networks():
     networks = [WifiNetwork(ssid="Stranger", connected=False, signal=40, known=False)]
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
+    texts = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
 
-    assert any("[new] Stranger" in line for line in lines)
+    assert any("[new] Stranger" in text for text in texts)
+
+
+def test_wifi_scan_preview_has_a_blank_line_between_every_row():
+    networks = [WifiNetwork(ssid="Home", connected=False, signal=50)]
+
+    texts = _text_of(_wifi_scan_preview_text(networks, None, _theme()))
+
+    assert texts[0] == "Available networks [1]"
+    assert texts[1] == ""
+    assert texts[2] != ""
+
+
+def test_wifi_scan_preview_signal_lands_in_a_shared_column():
+    networks = [
+        WifiNetwork(ssid="A", connected=False, signal=50),
+        WifiNetwork(ssid="LongerNetworkName", connected=False, signal=90),
+    ]
+
+    texts = [text for text in _text_of(_wifi_scan_preview_text(networks, None, _theme())) if text and "[" not in text]
+
+    assert len({text.rindex(" ") for text in texts}) == 1
+
+
+def test_wifi_scan_preview_includes_power_progress_row():
+    networks = [WifiNetwork(ssid="Home", connected=False, signal=50)]
+    status = _FakeStatus(pending_keys={("wifi", "power")})
+
+    texts = _text_of(_wifi_scan_preview_text(networks, None, _theme(), status, AdapterInfo(powered=True)))
+
+    assert "Powering off…" in texts
 
 
 def test_wifi_scan_preview_empty_list_says_so():
@@ -731,28 +847,52 @@ def test_browsing_hint_footer_bluetooth_says_disconnect_when_already_connected()
 
 
 def test_browsing_hint_footer_wifi_lists_every_active_wifi_only_key_when_known():
-    # Regression: forget/connect-hidden shipped with no discoverability
-    # hint at all until this was added — found live.
+    # Regression: forget/connect-hidden/power-toggle shipped with no
+    # discoverability hint at all until this was added — found live.
     footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True)
     text = _text_of(footer)
 
     assert any("Connect" in line and "[Enter]" in line for line in text)
     assert any("Forget" in line and "[D]" in line for line in text)
     assert any("Hidden" in line and "[N]" in line for line in text)
+    assert any("Power" in line and "[O]" in line for line in text)
     assert any("Scan" in line for line in text)
     assert any("Esc" in line for line in text)
     assert all(color == _theme()["urgent"] for _line, color in footer)
 
 
-def test_browsing_hint_footer_wifi_never_mentions_power():
-    # wifi_power_toggle's own key dispatch is disabled (main.py) after
-    # it broke real networking live — see CLAUDE/NOTES/
-    # known-limitations.md#wifi-power-toggle-disabled. Advertising a
-    # key that does nothing would be worse than not mentioning it.
-    footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True)
+def test_browsing_hint_footer_has_item_false_omits_connect_and_forget():
+    # The synthetic placeholder shown while browsing an empty section
+    # (_empty_browsing_nav_item) has no selected network/device for
+    # either to act on.
+    footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True, has_item=False)
     text = _text_of(footer)
 
-    assert not any("Power" in line for line in text)
+    assert not any("Connect" in line for line in text)
+    assert not any("Forget" in line for line in text)
+    # Everything that doesn't need a selected item stays.
+    assert any("Scan" in line for line in text)
+    assert any("Hidden" in line for line in text)
+    assert any("Power" in line for line in text)
+    assert any("Esc" in line for line in text)
+
+
+def test_browsing_hint_footer_wifi_narrows_to_just_power_when_radio_off():
+    # Found live, Rafi's own report: with the radio off, Scan/Hidden/
+    # Forget genuinely can't do anything (nothing to scan, no radio to
+    # connect a hidden network on) — offering them was confusing, not
+    # just unhelpful clutter.
+    footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True, powered=False)
+
+    assert footer == [("[O] Power   [Esc] Back", _theme()["urgent"])]
+
+
+def test_browsing_hint_footer_bluetooth_ignores_powered():
+    # Bluetooth has no radio-power concept in this feature — powered=
+    # False must not affect it.
+    footer = _browsing_hint_footer(_theme(), _cfg(), "bluetooth", connected=False, powered=False)
+
+    assert footer == [("[Enter] Connect   [S] Scan   [Esc] Back", _theme()["urgent"])]
 
 
 def test_browsing_hint_footer_wifi_omits_forget_when_not_known():
@@ -775,6 +915,91 @@ def test_browsing_hint_footer_wifi_says_disconnect_when_already_connected():
 
     assert any("Disconnect" in line for line in text)
     assert not any(line == "Connect" for line in text)
+
+
+# ---------- _empty_browsing_nav_item ----------
+# The synthetic placeholder browsing returns when the section has zero
+# real items — found live, the missing piece behind an apparent
+# "freeze" that turned out to be a stale-selection loop, not a hang.
+
+def test_empty_browsing_nav_item_wifi_id_and_target_kind():
+    item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=None, scanning=False)
+
+    assert item.id == "connectivity:wifi:empty"
+    assert item.target_kind == "wifi_empty"
+
+
+def test_empty_browsing_nav_item_bluetooth_id_and_target_kind():
+    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=None, scanning=False)
+
+    assert item.id == "connectivity:bt:empty"
+    assert item.target_kind == "bt_empty"
+
+
+def test_empty_browsing_nav_item_says_nothing_in_range():
+    wifi_item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                          adapter_info=None, scanning=False)
+    bt_item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                        adapter_info=None, scanning=False)
+
+    assert _text_of(wifi_item.preview_text) == ["No networks in range"]
+    assert _text_of(bt_item.preview_text) == ["No devices in range"]
+
+
+def test_empty_browsing_nav_item_footer_has_no_connect_or_forget():
+    item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=None, scanning=False)
+    text = _text_of(item.preview_footer)
+
+    assert not any("Connect" in line or "Forget" in line for line in text)
+    assert any("Power" in line for line in text)
+
+
+def test_empty_browsing_nav_item_wifi_carries_the_device_table():
+    adapter = AdapterInfo(name="wlan0", powered=False)
+
+    item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=adapter, scanning=False)
+
+    assert [title for title, _rows in item.preview_tables] == ["Device"]
+    assert dict(item.preview_tables[0][1][0])["Powered"] == "no"
+
+
+def test_empty_browsing_nav_item_bluetooth_has_no_device_table():
+    # AdapterInfo is a wifi-only concept.
+    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=None, scanning=False)
+
+    assert item.preview_tables is None
+
+
+def test_empty_browsing_nav_item_shows_power_progress_when_pending():
+    status = _FakeStatus(pending_keys={("wifi", "power")})
+
+    item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=status,
+                                     adapter_info=AdapterInfo(powered=False), scanning=False)
+
+    assert "Powering on…" in _text_of(item.preview_text)
+
+
+def test_empty_browsing_nav_item_bluetooth_never_shows_power_progress():
+    # Bluetooth has no power-toggle concept — even a coincidentally
+    # matching pending key must not leak a wifi-only message onto it.
+    status = _FakeStatus(pending_keys={("wifi", "power")})
+
+    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=status,
+                                     adapter_info=None, scanning=False)
+
+    assert _text_of(item.preview_text) == ["No devices in range"]
+
+
+def test_empty_browsing_nav_item_footer_narrows_when_radio_off():
+    item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=AdapterInfo(powered=False), scanning=False)
+
+    assert item.preview_footer == [("[O] Power   [Esc] Back", _theme()["urgent"])]
 
 
 # ---------- _adapter_info_table ----------
@@ -835,6 +1060,112 @@ def test_wifi_scan_preview_no_longer_carries_adapter_info():
     lines = _text_of(_wifi_scan_preview_text([], None, _theme()))
 
     assert lines == ["No networks found"]
+
+
+# ---------- _connection_diagnostics_table / _wifi_preview_tables ----------
+# The second, stacked "Connection" table — live, negotiated details for
+# whichever row is actually connected. Found live: a real AP in WPA2/
+# WPA3 transition mode reports security="psk" on WifiNetwork (iwd's own
+# Network.Type) but "WPA3-Personal" here (what actually got negotiated
+# this session) — genuinely different information, not a duplicate.
+
+def _flatten_table_rows(rows):
+    return dict(item for row in rows for item in row)
+
+
+def test_connection_diagnostics_table_includes_every_present_field():
+    diagnostics = ConnectionDiagnostics(
+        frequency=2427, channel=4, security="WPA3-Personal", rssi=-67, cipher="CCMP-128",
+        tx_bitrate=144.4, rx_bitrate=130.0, ip_address="192.168.0.2",
+    )
+
+    columns = _flatten_table_rows(_connection_diagnostics_table(diagnostics))
+
+    assert columns["Frequency"] == "2.43 GHz"
+    assert columns["Channel"] == "4"
+    assert columns["Live Security"] == "WPA3-Personal"
+    assert columns["RSSI"] == "-67 dBm"
+    assert columns["Cipher"] == "CCMP-128"
+    assert columns["Tx Rate ↑"] == "144.4 Mb/s"
+    assert columns["Rx Rate ↓"] == "130.0 Mb/s"
+    assert columns["IP Address"] == "192.168.0.2"
+
+
+def test_connection_diagnostics_table_is_a_single_row():
+    diagnostics = ConnectionDiagnostics(frequency=2427, tx_bitrate=144.4, ip_address="192.168.0.2")
+
+    rows = _connection_diagnostics_table(diagnostics)
+
+    assert len(rows) == 1
+    assert [label for label, _value in rows[0]] == ["Frequency", "Tx Rate ↑", "IP Address"]
+
+
+def test_connection_diagnostics_table_normalizes_a_raw_backend_security_token():
+    # NetworkManager's own get_connection_diagnostics() reports the
+    # short classify_security() token ("sae"), not iwd's already-human
+    # "WPA3-Personal" — both must read the same once displayed.
+    diagnostics = ConnectionDiagnostics(security="sae")
+
+    columns = _flatten_table_rows(_connection_diagnostics_table(diagnostics))
+
+    assert columns["Live Security"] == "WPA3-Personal (SAE)"
+
+
+def test_connection_diagnostics_table_omits_absent_fields():
+    diagnostics = ConnectionDiagnostics(frequency=2427)
+
+    rows = _connection_diagnostics_table(diagnostics)
+
+    assert [label for row in rows for label, _value in row] == ["Frequency"]
+
+
+def test_connection_diagnostics_table_omits_the_row_entirely_when_nothing_available():
+    rows = _connection_diagnostics_table(ConnectionDiagnostics())
+
+    assert rows == []
+
+
+def test_wifi_preview_tables_always_includes_device():
+    tables = _wifi_preview_tables(AdapterInfo(name="wlan0"), scanning=False)
+
+    assert [title for title, _columns in tables] == ["Device"]
+
+
+def test_wifi_preview_tables_adds_connection_when_connected_and_available():
+    diagnostics = ConnectionDiagnostics(frequency=2427)
+
+    tables = _wifi_preview_tables(AdapterInfo(name="wlan0"), scanning=False, diagnostics=diagnostics, connected=True)
+
+    assert [title for title, _columns in tables] == ["Device", "Connection"]
+
+
+def test_wifi_preview_tables_connection_title_names_the_ssid():
+    # Found live, Rafi's own report: "Connection" alone, directly under
+    # "Device", read as more device info at a glance rather than "here's
+    # what's happening on THIS specific network."
+    diagnostics = ConnectionDiagnostics(frequency=2427)
+
+    tables = _wifi_preview_tables(
+        AdapterInfo(name="wlan0"), scanning=False, diagnostics=diagnostics, connected=True, ssid="LSHK-WLAN",
+    )
+
+    assert tables[1][0] == "Connection - LSHK-WLAN"
+
+
+def test_wifi_preview_tables_omits_connection_when_not_connected():
+    # diagnostics is Station-wide, not per-network — only meaningful on
+    # the row that's ACTUALLY connected, even if diagnostics data exists.
+    diagnostics = ConnectionDiagnostics(frequency=2427)
+
+    tables = _wifi_preview_tables(AdapterInfo(name="wlan0"), scanning=False, diagnostics=diagnostics, connected=False)
+
+    assert [title for title, _columns in tables] == ["Device"]
+
+
+def test_wifi_preview_tables_omits_connection_when_diagnostics_unavailable():
+    tables = _wifi_preview_tables(AdapterInfo(name="wlan0"), scanning=False, diagnostics=None, connected=True)
+
+    assert [title for title, _columns in tables] == ["Device"]
 
 
 # ---------- forget-confirm: a Y/N sub-state of browsing, not its own mode_stack tier ----------

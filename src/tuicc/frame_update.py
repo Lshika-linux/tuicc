@@ -266,6 +266,37 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
     if connectivity_mode.is_browsing() and status_worker.get_error(connectivity_mode.browsing_section()):
         connectivity_mode.stop_browsing()
 
+    # Keeps loop_state.selected_id in sync with nav_items()'s own
+    # empty-vs-real-items decision for the browsed section, proactively,
+    # every frame — not just on entry (handle_wifi_header/
+    # handle_bt_header already do that part). Found live: pressing the
+    # (still being tested) wifi_power_toggle key while a REAL network
+    # was selected didn't go through either header's entry path at
+    # all — the list just emptied out from under an already-valid
+    # selection mid-browse — so selected_id kept pointing at a ssid
+    # that had just vanished from nav_items()'s own output, and the
+    # generic stale-selection recovery below (unaware this module is
+    # mid-claimed-browse) reassigned it to an unrelated module
+    # (sidebar) while mode_stack kept every key trapped here regardless
+    # — the exact same "looks frozen, never actually hung" shape
+    # documented on _empty_browsing_nav_item()'s own docstring, just
+    # triggered by a mid-browse transition instead of on entry. Handles
+    # both directions symmetrically: items emptying (jump to the
+    # placeholder) and items reappearing while still on the placeholder
+    # (jump to the first real one) — without the second half, refilling
+    # the list would just re-trigger the identical problem in reverse.
+    if connectivity_mode.is_browsing():
+        browsing_section_name = connectivity_mode.browsing_section()
+        id_prefix = "wifi" if browsing_section_name == "wifi" else "bt"
+        empty_id = f"connectivity:{id_prefix}:empty"
+        browsing_items = status_worker.get(browsing_section_name) or []
+        if not browsing_items:
+            if loop_state.selected_id != empty_id:
+                loop_state.selected_id = empty_id
+        elif loop_state.selected_id == empty_id:
+            first_key = browsing_items[0].ssid if browsing_section_name == "wifi" else browsing_items[0].id
+            loop_state.selected_id = f"connectivity:{id_prefix}:{first_key}"
+
     ctx = RenderContext(
         state=state,
         selected_id=loop_state.selected_id,

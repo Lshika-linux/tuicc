@@ -146,17 +146,24 @@ def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
         pass
 
 
-def draw_table_box(stdscr, y, x, h, w, title, columns, header_color=0, value_color=0, border_color=0):
+def draw_table_box(stdscr, y, x, h, w, title, rows, header_color=0, value_color=0, border_color=0):
     """A bordered box (draw_box_outline, with `title` cut into the top
-    border) holding one header row + one value row, column-aligned —
-    for a single-row "info panel" table (modules/connectivity.py's own
-    WiFi device info is the first consumer, modeled on impala's own
-    bordered "Device" panel rather than plain stacked preview_text
-    lines). `columns` is [(label, value), ...]; each column's own
-    width is max(len(label), len(value)), columns separated by a
-    fixed gap, the whole two-row block centered as one unit within the
-    box. Degrades gracefully (wc_truncate) rather than overflowing if
-    it doesn't fit — same tolerance every other primitive here has.
+    border) holding one or more header+value row pairs, column-aligned
+    within each row — for a boxed "info panel" table (modules/
+    connectivity.py's own WiFi device/connection info is the first
+    consumer, modeled on impala's own bordered "Device" panel rather
+    than plain stacked preview_text lines). `rows` is
+    [[(label, value), ...], ...] — a list of rows, each row itself a
+    list of columns drawn side by side; each column's own width is
+    max(len(label), len(value)), columns separated by a fixed gap,
+    each row's two-line block centered as its own unit within the box,
+    rows stacked top to bottom. Originally single-row only; generalized
+    (2026-08-15) once the WiFi "Connection" table grew past one row's
+    comfortable width — a single-row table is just rows=[columns], the
+    only shape every caller used before that. A row that doesn't fit
+    the box's own height is skipped entirely, not partially drawn —
+    same "degrade, don't corrupt" tolerance every other primitive here
+    has for a too-small box.
 
     Padding uses plain str.ljust (character count, not display_width)
     deliberately, unlike wc_truncate elsewhere in this codebase: every
@@ -167,20 +174,27 @@ def draw_table_box(stdscr, y, x, h, w, title, columns, header_color=0, value_col
     here.
     """
     draw_box_outline(stdscr, y, x, h, w, border_color, title=title)
-    if h < 3 or w < 3 or not columns:
+    if h < 3 or w < 3 or not rows:
         return
     inner_w = max(w - 2, 0)
     gap = "   "
-    col_widths = [max(len(label), len(value)) for label, value in columns]
-    header_line = gap.join(label.ljust(width) for (label, _value), width in zip(columns, col_widths)).rstrip()
-    value_line = gap.join(value.ljust(width) for (_label, value), width in zip(columns, col_widths)).rstrip()
-    header_line = wc_truncate(header_line, inner_w)
-    value_line = wc_truncate(value_line, inner_w)
-    try:
-        stdscr.addstr(y + 1, centered_x(x + 1, inner_w, header_line), header_line, header_color | curses.A_BOLD)
-        stdscr.addstr(y + 2, centered_x(x + 1, inner_w, value_line), value_line, value_color)
-    except curses.error:
-        pass
+    for i, columns in enumerate(rows):
+        if not columns:
+            continue
+        header_y = y + 1 + i * 2
+        value_y = y + 2 + i * 2
+        if value_y > y + h - 2:
+            break
+        col_widths = [max(len(label), len(value)) for label, value in columns]
+        header_line = gap.join(label.ljust(width) for (label, _value), width in zip(columns, col_widths)).rstrip()
+        value_line = gap.join(value.ljust(width) for (_label, value), width in zip(columns, col_widths)).rstrip()
+        header_line = wc_truncate(header_line, inner_w)
+        value_line = wc_truncate(value_line, inner_w)
+        try:
+            stdscr.addstr(header_y, centered_x(x + 1, inner_w, header_line), header_line, header_color | curses.A_BOLD)
+            stdscr.addstr(value_y, centered_x(x + 1, inner_w, value_line), value_line, value_color)
+        except curses.error:
+            pass
 
 
 def draw_corner_marks(stdscr, y, x, h, w, color_pair=0, arm=1):

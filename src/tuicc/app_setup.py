@@ -142,6 +142,17 @@ def build_app(preset_override: int | None = None) -> AppContext:
             poll=wifi_backend.get_adapter_info,
             actions={},
         ),
+        # Single-object poll, same shape as "wifi_adapter" above — the
+        # live, negotiated details of whichever network is CURRENTLY
+        # connected (frequency, real negotiated security...), genuinely
+        # different information from WifiNetwork.security itself — see
+        # ConnectionDiagnostics' own docstring for why the two answers
+        # can differ for a real access point.
+        Domain(
+            name="wifi_diagnostics",
+            poll=wifi_backend.get_connection_diagnostics,
+            actions={},
+        ),
         Domain(
             name="bluetooth",
             poll=bluetooth_backend.get_devices,

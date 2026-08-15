@@ -47,9 +47,14 @@ class AdapterInfo:
     the three, so networkmanager.py's own get_adapter_info() leaves
     them None, same "degrade honestly, don't guess" precedent
     WifiNetwork.security's unknown-value fallback already sets.
-    Frequency/security of the CURRENT connection are deliberately not
-    duplicated here — they already live on the connected WifiNetwork
-    object, no need for a second copy.
+    Frequency/live-negotiated-security of the CURRENT connection are
+    NOT here — see ConnectionDiagnostics below instead. (An earlier
+    version of this docstring claimed they already lived on the
+    connected WifiNetwork object — wrong, checked live: WifiNetwork has
+    no frequency field at all, and its own `security` is the network's
+    generically-configured type, not what actually got negotiated this
+    session — see ConnectionDiagnostics' own docstring for why those
+    two can genuinely differ.)
     """
     name: str | None = None  # iwd Device.Name / NM's own interface name, e.g. "wlan0"
     address: str | None = None  # MAC
@@ -59,6 +64,57 @@ class AdapterInfo:
     mode: str | None = None  # "station"/"ap"/"ad-hoc"
     powered: bool | None = None
     state: str | None = None  # raw backend string ("connected"/"disconnected"/...), not normalized
+
+
+@dataclass
+class ConnectionDiagnostics:
+    """Live, negotiated details of the CURRENTLY connected network —
+    genuinely different information from WifiNetwork.security, not a
+    duplicate. Found live (2026-08-15): a real access point in WPA2/
+    WPA3 "transition mode" (supporting both at once, common for
+    backward compatibility) shows up as `security="psk"` on WifiNetwork
+    (iwd's own Network.Type — and networkmanager.py's classify_security()
+    deliberately makes the identical simplification for the same
+    transition-mode case) while iwd's own net.connman.iwd.
+    StationDiagnostic.GetDiagnostics() reports `"WPA3-Personal"` for
+    that exact same live session — what actually got negotiated during
+    the handshake, not the network's own generic configured type. impala
+    shows this live value in its own "Device" panel; tuicc shows it as
+    a separate "Connection" preview_table instead (see modules/
+    connectivity.py's own _connection_diagnostics_table()) — only ever
+    meaningful for whichever row is actually connected right now, so
+    unlike AdapterInfo this isn't device-wide.
+
+    Still deliberately narrower than iwd's own GetDiagnostics() reply
+    (RxMode/TxMode/RxMCS/TxMCS/InactiveTime/ConnectedTime stay out) —
+    those fields' exact units/formatting weren't confirmed live, and
+    showing a wrong unit as fact would be worse than not showing the
+    field at all (same "degrade honestly" instinct as everywhere else
+    here). frequency/channel/rssi/cipher/tx_bitrate/rx_bitrate are all
+    standard, unambiguous units once confirmed.
+
+    tx_bitrate/rx_bitrate: confirmed live (2026-08-15) against this
+    session's own machine — GetDiagnostics' TxBitrate/RxBitrate are
+    u32 in nl80211's own standard "100kbit/s units" convention (e.g.
+    TxBitrate=1444 → 144.4 Mb/s), not raw Mb/s or bytes — cross-checked
+    against the same reply's own RxMode/RxMCS ("802.11n"/14) for a
+    plausibility match, not just trusted blind. NetworkManager's own
+    Device.Wireless.Bitrate is a single value (already Kb/s, no TX/RX
+    split) — rx_bitrate stays None there, an honest gap, not a guess.
+
+    ip_address: NOT reachable from either backend's own D-Bus tree at
+    all (see netinfo.py's own docstring) — both backends fetch it the
+    identical way, via the OS itself, keyed off whichever interface
+    name that backend already resolved for get_adapter_info().
+    """
+    frequency: int | None = None  # MHz
+    channel: int | None = None
+    security: str | None = None  # raw backend string ("WPA3-Personal", ...) — NOT normalized onto WifiNetwork.security's own "psk"/"sae"/... vocabulary, deliberately: this is the live daemon's own label, shown as-is
+    rssi: int | None = None  # signed dBm
+    cipher: str | None = None  # e.g. "CCMP-128" — NetworkManager backend leaves this None, see get_connection_diagnostics()'s own docstring there
+    tx_bitrate: float | None = None  # Mb/s
+    rx_bitrate: float | None = None  # Mb/s — NetworkManager backend leaves this None, no TX/RX split in its own Bitrate property
+    ip_address: str | None = None  # IPv4, dotted-quad — see netinfo.get_ipv4_address()
 
 
 @dataclass

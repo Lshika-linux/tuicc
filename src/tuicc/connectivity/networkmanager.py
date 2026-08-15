@@ -19,8 +19,9 @@ from datetime import datetime, timezone
 
 from jeepney.io.blocking import open_dbus_connection
 
+from tuicc import netinfo
 from tuicc.connectivity.base import WifiBackend
-from tuicc.connectivity.model import WifiNetwork, AdapterInfo
+from tuicc.connectivity.model import WifiNetwork, AdapterInfo, ConnectionDiagnostics
 from tuicc.connectivity.util import dbus_call, decode_ssid
 
 BUS_NAME = "org.freedesktop.NetworkManager"
@@ -633,6 +634,61 @@ class NetworkManagerBackend(WifiBackend):
             _call(
                 connection, ROOT_PATH, IFACE_PROPERTIES, "Set",
                 "ssv", (IFACE_ROOT, "WirelessEnabled", ("b", powered)),
+            )
+        finally:
+            connection.close()
+
+    def get_connection_diagnostics(self) -> ConnectionDiagnostics | None:
+        """Best-effort — narrower than iwd's own StationDiagnostic-
+        backed version (see ConnectionDiagnostics' own docstring for
+        the full field-by-field reasoning). NetworkManager's own
+        AccessPoint object exposes Frequency directly, and the same
+        Flags/WpaFlags/RsnFlags this backend's own classify_security()
+        already reads for every OTHER access point — the active AP's
+        real, currently-negotiated security, not a separately-cached
+        "network type" the way iwd's own Network.Type is; unlike iwd,
+        this backend genuinely has no second, potentially-different
+        answer to reconcile for a transition-mode AP, classify_security()
+        already makes the identical "psk wins" simplification either
+        way. rssi/cipher stay None — no directly equivalent
+        NetworkManager property for either without deeper Active
+        Connection/802.1X introspection this pass didn't build; an
+        honest gap, not a silently wrong guess.
+
+        tx_bitrate: Device.Wireless's own "Bitrate" property, already
+        Kb/s (divided by 1000 here for ConnectionDiagnostics' Mb/s
+        unit) — a single value, no TX/RX split the way iwd's
+        GetDiagnostics has, so rx_bitrate stays None, same honest-gap
+        treatment as rssi/cipher above. ip_address: resolved the exact
+        same way iwd.py's own get_connection_diagnostics() does, via
+        netinfo.get_ipv4_address() keyed off this device's own
+        "Interface" property.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            device_path = self._find_wifi_device(connection)
+            if device_path is None:
+                return None
+            active_ap_path = _call(
+                connection, device_path, IFACE_PROPERTIES, "Get", "ss", (IFACE_WIRELESS, "ActiveAccessPoint"),
+            )[0][1]
+            if active_ap_path in (None, "/"):
+                return None
+            ap_props = _call(connection, active_ap_path, IFACE_PROPERTIES, "GetAll", "s", (IFACE_AP,))[0]
+            wireless_props = _call(connection, device_path, IFACE_PROPERTIES, "GetAll", "s", (IFACE_WIRELESS,))[0]
+            iface_name = _call(
+                connection, device_path, IFACE_PROPERTIES, "Get", "ss", (IFACE_DEVICE, "Interface"),
+            )[0][1]
+            bitrate_kbps = wireless_props.get("Bitrate", (None, None))[1]
+            return ConnectionDiagnostics(
+                frequency=ap_props.get("Frequency", (None, None))[1],
+                security=classify_security(
+                    ap_props.get("Flags", (None, 0))[1],
+                    ap_props.get("WpaFlags", (None, 0))[1],
+                    ap_props.get("RsnFlags", (None, 0))[1],
+                ),
+                tx_bitrate=bitrate_kbps / 1000 if bitrate_kbps else None,
+                ip_address=netinfo.get_ipv4_address(iface_name) if iface_name else None,
             )
         finally:
             connection.close()

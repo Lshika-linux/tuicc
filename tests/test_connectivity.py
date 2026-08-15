@@ -11,7 +11,9 @@ import tuicc.connectivity.iwd as iwd_module
 import tuicc.connectivity.networkmanager as nm_module
 from tuicc.connectivity.iwd import (
     IwdBackend, find_station_path_in_objects, find_adapter_path_in_objects as iwd_find_adapter_path_in_objects,
+    find_device_path_in_objects as iwd_find_device_path_in_objects,
     _signal_to_percent, _connect_succeeded, _build_adapter_info as iwd_build_adapter_info,
+    _build_connection_diagnostics as iwd_build_connection_diagnostics,
 )
 from tuicc.connectivity.networkmanager import (
     NetworkManagerBackend, _nm_wifi_mode_label, _nm_device_state_label,
@@ -102,6 +104,44 @@ def test_connect_succeeded_false_when_connected_network_absent():
     assert _connect_succeeded(station_props, "/net/connman/iwd/0/4/target_psk") is False
 
 
+# ---------- iwd: find_device_path_in_objects ----------
+# NOT the same as find_station_path_in_objects — net.connman.iwd.Device
+# persists on a powered-down device even after iwd removes its
+# net.connman.iwd.Station interface, so set_powered()/get_adapter_info()
+# need this one specifically to keep reaching a device that's OFF.
+
+def test_find_device_path_finds_matching_object():
+    objects = {
+        "/net/connman/iwd/0": {"net.connman.iwd.Adapter": {}},
+        "/net/connman/iwd/0/4": {
+            "net.connman.iwd.Device": {},
+            "net.connman.iwd.Station": {},
+        },
+    }
+
+    assert iwd_find_device_path_in_objects(objects) == "/net/connman/iwd/0/4"
+
+
+def test_find_device_path_survives_station_interface_being_gone():
+    # The exact live-confirmed scenario: radio powered off, iwd removed
+    # Station from the device's own interface set, Device itself
+    # stays. find_station_path_in_objects would return None here;
+    # find_device_path_in_objects must not.
+    objects = {
+        "/net/connman/iwd/0": {"net.connman.iwd.Adapter": {}},
+        "/net/connman/iwd/0/4": {"net.connman.iwd.Device": {}},
+    }
+
+    assert iwd_find_device_path_in_objects(objects) == "/net/connman/iwd/0/4"
+    assert find_station_path_in_objects(objects) is None
+
+
+def test_find_device_path_no_device_returns_none():
+    objects = {"/net/connman/iwd/0": {"net.connman.iwd.Adapter": {}}}
+
+    assert iwd_find_device_path_in_objects(objects) is None
+
+
 # ---------- iwd: find_adapter_path_in_objects ----------
 
 def test_iwd_find_adapter_path_finds_matching_object():
@@ -171,6 +211,52 @@ def test_iwd_build_adapter_info_missing_props_are_none():
     assert info.mode is None
     assert info.powered is None
     assert info.state is None
+
+
+# ---------- iwd: _build_connection_diagnostics ----------
+# net.connman.iwd.StationDiagnostic.GetDiagnostics()'s own reply —
+# same (type_code, value) shape as every GetAll() reply, confirmed
+# live against a real AP in WPA2/WPA3 transition mode (this exact
+# fixture, trimmed to the fields this module actually keeps).
+
+def test_iwd_build_connection_diagnostics_reads_every_field():
+    # TxBitrate/RxBitrate: real values captured live off this session's
+    # own machine (2026-08-15) — 100kbit/s units, so 1444/1300 divide
+    # down to 144.4/130.0 Mb/s.
+    diagnostics_props = {
+        "ConnectedBss": ("s", "50:91:e3:3d:7a:cc"),
+        "Frequency": ("u", 2427),
+        "Channel": ("q", 4),
+        "Security": ("s", "WPA3-Personal"),
+        "PairwiseCipher": ("s", "CCMP-128"),
+        "RSSI": ("n", -67),
+        "TxBitrate": ("u", 1444),
+        "RxBitrate": ("u", 1300),
+    }
+
+    info = iwd_build_connection_diagnostics(diagnostics_props, ip_address="192.168.0.2")
+
+    assert info.frequency == 2427
+    assert info.channel == 4
+    assert info.security == "WPA3-Personal"
+    assert info.rssi == -67
+    assert info.cipher == "CCMP-128"
+    assert info.tx_bitrate == 144.4
+    assert info.rx_bitrate == 130.0
+    assert info.ip_address == "192.168.0.2"
+
+
+def test_iwd_build_connection_diagnostics_missing_props_are_none():
+    info = iwd_build_connection_diagnostics({})
+
+    assert info.frequency is None
+    assert info.channel is None
+    assert info.security is None
+    assert info.rssi is None
+    assert info.cipher is None
+    assert info.tx_bitrate is None
+    assert info.rx_bitrate is None
+    assert info.ip_address is None
 
 
 # ---------- networkmanager: _nm_wifi_mode_label / _nm_device_state_label ----------
@@ -529,3 +615,23 @@ def test_nm_set_powered_propagates_dbus_connection_failure(monkeypatch):
 
     with pytest.raises(ConnectionError):
         NetworkManagerBackend().set_powered(True)
+
+
+def test_iwd_get_connection_diagnostics_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(iwd_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        IwdBackend().get_connection_diagnostics()
+
+
+def test_nm_get_connection_diagnostics_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(nm_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        NetworkManagerBackend().get_connection_diagnostics()

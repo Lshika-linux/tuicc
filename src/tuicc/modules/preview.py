@@ -21,7 +21,10 @@ def draw(stdscr, box, ctx, module_name):
     theme = ctx.theme or {}
 
     is_active = module_name == ctx.active_module
-    showing_preview = ctx.selected_item is not None and ctx.selected_item.preview_text is not None
+    showing_preview = ctx.selected_item is not None and (
+        ctx.selected_item.preview_text is not None
+        or ctx.selected_item.preview_tables is not None
+    )
 
     # Unconditionally re-blank this box's whole inner area with real
     # space characters, every frame, before EITHER branch below draws
@@ -61,25 +64,34 @@ def draw(stdscr, box, ctx, module_name):
     draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:
-        table = ctx.selected_item.preview_table
+        tables = ctx.selected_item.preview_tables or []
         footer = ctx.selected_item.preview_footer
 
-        # Three stacked areas, top to bottom: an optional bordered
-        # table (NavItem.preview_table — "info panel" content that
-        # wants its own box, e.g. connectivity.py's WiFi device info),
-        # the normal centered preview_text in whatever's left, then an
-        # optional boxed-off footer (NavItem.preview_footer — "how do
-        # I interact with this" hints) at the very bottom. Each is only
-        # given real height when actually present, so a NavItem using
-        # none/one/two/all three of preview_table/preview_text/
-        # preview_footer just gets exactly that, no reserved blank gaps.
+        # Three kinds of stacked areas, top to bottom: zero or more
+        # bordered tables (NavItem.preview_tables — "info panel"
+        # content that wants its own box, e.g. connectivity.py's WiFi
+        # "Device" info, plus a second "Connection" one for whichever
+        # row is actually connected), the normal centered preview_text
+        # in whatever's left, then an optional boxed-off footer
+        # (NavItem.preview_footer — "how do I interact with this"
+        # hints) at the very bottom. Each is only given real height
+        # when actually present/fits, so a NavItem using none/some/all
+        # of preview_tables/preview_text/preview_footer just gets
+        # exactly that, no reserved blank gaps. A table that doesn't
+        # fit in whatever height is left is simply skipped, not
+        # partially drawn — same "degrade, don't corrupt" tolerance
+        # every other primitive here has for a too-small box.
         content_y = y
         content_h = h
-        if table:
-            table_h = min(4, h)  # top border + header row + value row + bottom border
+        for table_title, table_rows in tables:
+            needed_h = 2 + 2 * len(table_rows)  # top+bottom border + a header+value pair per row
+            table_h = min(needed_h, content_h)
+            if table_h < needed_h:
+                break
             draw_table_box(
-                stdscr, y, x, table_h, w, ctx.selected_item.preview_table_title, table,
-                header_color=theme.get("accent", 0), value_color=theme.get("text", 0), border_color=theme.get("accent", 0),
+                stdscr, content_y, x, table_h, w, table_title, table_rows,
+                header_color=theme.get("text", 0), value_color=theme.get("text", 0) | curses.A_DIM,
+                border_color=theme.get("text", 0),
             )
             content_y += table_h
             content_h -= table_h

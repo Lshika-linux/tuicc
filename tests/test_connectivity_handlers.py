@@ -57,7 +57,14 @@ def test_handle_wifi_header_reselects_the_first_network():
     assert ctx.reselect_item_id == "connectivity:wifi:Home"
 
 
-def test_handle_wifi_header_leaves_reselect_unset_when_no_networks():
+def test_handle_wifi_header_reselects_the_empty_placeholder_when_no_networks():
+    # Found live: leaving reselect_item_id unset here used to point
+    # selection at the now-unreachable header id the instant browsing
+    # started, which frame_update.py's stale-selection recovery reacted
+    # to by silently reassigning selection to an unrelated module —
+    # see _empty_browsing_nav_item()'s own docstring for the full
+    # incident. The placeholder id gives it something real to point at
+    # instead.
     stop_browsing()
     connectivity = _FakeConnectivity(wifi_networks=[])
     ctx = ActionContext(provider=None, status=connectivity)
@@ -66,7 +73,7 @@ def test_handle_wifi_header_leaves_reselect_unset_when_no_networks():
     handle_wifi_header(ctx, item, cfg=None)
 
     assert is_browsing() is True  # still enters browsing — e.g. to press the scan key
-    assert ctx.reselect_item_id is None
+    assert ctx.reselect_item_id == "connectivity:wifi:empty"
 
 
 # ---------- handle_bt_header ----------
@@ -97,7 +104,7 @@ def test_handle_bt_header_reselects_the_first_device():
     assert ctx.reselect_item_id == "connectivity:bt:AA"
 
 
-def test_handle_bt_header_leaves_reselect_unset_when_no_devices():
+def test_handle_bt_header_reselects_the_empty_placeholder_when_no_devices():
     stop_browsing()
     connectivity = _FakeConnectivity(bluetooth_devices=[])
     ctx = ActionContext(provider=None, status=connectivity)
@@ -106,4 +113,4 @@ def test_handle_bt_header_leaves_reselect_unset_when_no_devices():
     handle_bt_header(ctx, item, cfg=None)
 
     assert is_browsing() is True
-    assert ctx.reselect_item_id is None
+    assert ctx.reselect_item_id == "connectivity:bt:empty"

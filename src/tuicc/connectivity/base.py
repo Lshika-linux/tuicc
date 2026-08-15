@@ -11,7 +11,7 @@ count.
 
 from abc import ABC, abstractmethod
 
-from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo
+from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics
 
 
 class WifiBackend(ABC):
@@ -74,6 +74,16 @@ class WifiBackend(ABC):
     def set_powered(self, powered: bool) -> None:
         """Turns the wifi radio on/off. Raises on failure, same
         convention as every other action method here."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_connection_diagnostics(self) -> ConnectionDiagnostics | None:
+        """Live, negotiated details of whichever network is CURRENTLY
+        connected — None when nothing is connected right now (a real
+        "genuinely nothing there" case, not a failure). See
+        ConnectionDiagnostics' own docstring for why this is genuinely
+        different information from WifiNetwork.security, not a
+        duplicate poll of the same thing."""
         raise NotImplementedError
 
 

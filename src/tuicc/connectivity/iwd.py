@@ -7,8 +7,9 @@ available this way, via Station.GetOrderedNetworks().
 
 from jeepney.io.blocking import open_dbus_connection
 
+from tuicc import netinfo
 from tuicc.connectivity.base import WifiBackend
-from tuicc.connectivity.model import WifiNetwork, AdapterInfo
+from tuicc.connectivity.model import WifiNetwork, AdapterInfo, ConnectionDiagnostics
 from tuicc.connectivity.util import dbus_call
 
 BUS_NAME = "net.connman.iwd"
@@ -58,6 +59,38 @@ def _find_station_path(connection):
     return find_station_path_in_objects(objects)
 
 
+def find_device_path_in_objects(objects):
+    """Same shape as find_station_path_in_objects above, but for
+    net.connman.iwd.Device specifically — NOT the same thing as
+    "station path" despite normally living on the identical object
+    path. Confirmed against a real reference implementation (impala's
+    own iwdrs crate: its is_powered()/set_power() both target exactly
+    this interface, and its session cache has to handle
+    InterfacesAdded/InterfacesRemoved as a matter of course): iwd
+    removes the net.connman.iwd.Station interface from a device when
+    it powers down (nothing to run a station on with the radio off),
+    but the net.connman.iwd.Device interface itself — Powered, Name,
+    Address, Adapter, Mode — stays on that same path regardless.
+    set_powered()/get_adapter_info() both need this one specifically,
+    since they have to keep reaching the device while it's OFF — every
+    other method here (get_networks/connect/disconnect/scan/
+    is_scanning/forget/connect_hidden) genuinely has nothing to do
+    without a live Station and is correctly degraded-empty by
+    _find_station_path alone.
+    """
+    for path, interfaces in objects.items():
+        if "net.connman.iwd.Device" in interfaces:
+            return path
+    return None
+
+
+def _find_device_path(connection):
+    objects = _call(
+        connection, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"
+    )[0]
+    return find_device_path_in_objects(objects)
+
+
 def find_adapter_path_in_objects(objects):
     """Same shape as find_station_path_in_objects above, for the
     PARENT net.connman.iwd.Adapter object (the physical radio, e.g.
@@ -94,13 +127,13 @@ def _build_adapter_info(adapter_props, device_props, station_props):
     D-Bus connection. Combines all three objects' own property sets
     into one flat AdapterInfo, same "modules/connectivity.py doesn't
     need to know these are 3 separate D-Bus objects" reasoning
-    AdapterInfo's own docstring gives. Device's own Powered (if
-    present) wins over Adapter's — NOT YET LIVE-CONFIRMED which of the
-    two actually carries it on a real machine (this whole Adapter-vs-
-    Device property split needs a `busctl introspect` check against a
-    real iwd, see get_adapter_info()'s own docstring below); checking
-    Device first costs nothing if it turns out to only ever live on
-    Adapter.
+    AdapterInfo's own docstring gives. Device's own Powered wins over
+    Adapter's when both are present — confirmed live (`busctl
+    introspect`, see get_adapter_info()'s own docstring) these are two
+    genuinely SEPARATE writable booleans, not the same property seen
+    from two objects; Device's is the narrower, station-scoped one,
+    the more useful one to *display* here regardless of which one
+    set_powered() itself targets for writing.
     """
     return AdapterInfo(
         name=_prop(device_props, "Name"),
@@ -111,6 +144,38 @@ def _build_adapter_info(adapter_props, device_props, station_props):
         mode=_prop(device_props, "Mode"),
         powered=_prop(device_props, "Powered") if _prop(device_props, "Powered") is not None else _prop(adapter_props, "Powered"),
         state=_prop(station_props, "State"),
+    )
+
+
+def _build_connection_diagnostics(diagnostics_props, ip_address=None):
+    """Pure logic half of get_connection_diagnostics() — testable
+    without a real D-Bus connection. `diagnostics_props` is
+    net.connman.iwd.StationDiagnostic.GetDiagnostics()'s own a{sv}
+    reply — same (type_code, value) shape as every GetAll() reply
+    already parsed in this module, so the existing _prop() helper
+    works unchanged even though this came from a method call, not a
+    property read. Deliberately narrower than the full real reply —
+    see ConnectionDiagnostics' own docstring for which fields were left
+    out and why. `ip_address` is passed in rather than looked up here
+    (this function stays pure/D-Bus-free) — the caller resolves it via
+    netinfo.get_ipv4_address(), a real subprocess call.
+
+    TxBitrate/RxBitrate arrive as u32 in nl80211's own 100kbit/s units
+    (see ConnectionDiagnostics' own docstring for the live confirmation)
+    — divided by 10 here to land in ConnectionDiagnostics' documented
+    Mb/s unit.
+    """
+    tx_bitrate = _prop(diagnostics_props, "TxBitrate")
+    rx_bitrate = _prop(diagnostics_props, "RxBitrate")
+    return ConnectionDiagnostics(
+        frequency=_prop(diagnostics_props, "Frequency"),
+        channel=_prop(diagnostics_props, "Channel"),
+        security=_prop(diagnostics_props, "Security"),
+        rssi=_prop(diagnostics_props, "RSSI"),
+        cipher=_prop(diagnostics_props, "PairwiseCipher"),
+        tx_bitrate=tx_bitrate / 10 if tx_bitrate is not None else None,
+        rx_bitrate=rx_bitrate / 10 if rx_bitrate is not None else None,
+        ip_address=ip_address,
     )
 
 
@@ -373,32 +438,62 @@ class IwdBackend(WifiBackend):
             connection.close()
 
     def get_adapter_info(self) -> AdapterInfo | None:
-        """None only when no adapter/station could be found at all —
+        """None only when no adapter/device could be found at all —
         see this method's own "genuinely nothing there" contract on
-        WifiBackend. The exact Adapter-vs-Device property split below
-        (_build_adapter_info's own docstring) is modeled on a real
-        impala screenshot, not yet independently confirmed against
-        `busctl introspect net.connman.iwd <path>` on a real machine —
-        do that once while this is still being tested live, per this
-        repo's own "empirical debugging" discipline.
+        WifiBackend. The Adapter-vs-Device property split is confirmed
+        for real via `busctl introspect net.connman.iwd <path>` (Rafi's
+        own machine, 2026-08-15) — Adapter carries Model/Name("phy0")/
+        Powered/SupportedModes/Vendor; Device carries Address/Mode/
+        Name("wlan0")/Powered (a SEPARATE writable bool from Adapter's
+        own — see set_powered()'s own docstring for why that
+        distinction turned out to matter a lot).
+
+        Uses _find_device_path (net.connman.iwd.Device), NOT
+        _find_station_path (net.connman.iwd.Station), to locate the
+        device itself — see find_device_path_in_objects()'s own
+        docstring for why: Station gets removed from a powered-down
+        device, Device doesn't, and this method's whole point is
+        showing accurate info (Powered: no, in particular) exactly
+        while the radio is off. Station properties (State/Scanning)
+        are still read separately when a Station happens to exist —
+        legitimately absent (empty station_props) when it doesn't,
+        which _build_adapter_info() already tolerates field-by-field.
+
+        Reuses the Device's own "Adapter" property (its parent
+        adapter's object path, present in the same GetAll reply) to
+        find the adapter, instead of a second independent
+        GetManagedObjects() tree walk — found live: an earlier version
+        did two full tree walks per poll, needlessly doubling D-Bus
+        round trips on every "wifi_adapter" domain poll. Falls back to
+        the tree walk only when there's no device to read "Adapter"
+        off of (device_path is None) or it's unexpectedly absent.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:
-            station_path = _find_station_path(connection)
-            adapter_path = _find_adapter_path(connection)
-            if station_path is None and adapter_path is None:
-                return None
+            device_path = _find_device_path(connection)
             device_props = {}
             station_props = {}
-            if station_path is not None:
+            adapter_path = None
+            if device_path is not None:
                 device_props = _call(
-                    connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
+                    connection, device_path, "org.freedesktop.DBus.Properties", "GetAll",
                     "s", ("net.connman.iwd.Device",),
                 )[0]
-                station_props = _call(
-                    connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
-                    "s", ("net.connman.iwd.Station",),
-                )[0]
+                adapter_prop = device_props.get("Adapter")
+                adapter_path = adapter_prop[1] if adapter_prop is not None else None
+                # Station may legitimately not exist right now (radio
+                # off) — a separate lookup, not assumed to share
+                # device_path's own liveness.
+                station_path = _find_station_path(connection)
+                if station_path is not None:
+                    station_props = _call(
+                        connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
+                        "s", ("net.connman.iwd.Station",),
+                    )[0]
+            if adapter_path is None:
+                adapter_path = _find_adapter_path(connection)
+            if device_path is None and adapter_path is None:
+                return None
             adapter_props = {}
             if adapter_path is not None:
                 adapter_props = _call(
@@ -410,19 +505,80 @@ class IwdBackend(WifiBackend):
             connection.close()
 
     def set_powered(self, powered: bool) -> None:
-        """Properties.Set on the Adapter's own Powered property — the
-        whole radio, not just this one station/device (iwd models
-        power at the Adapter level; see get_adapter_info()'s own
-        Device-vs-Adapter Powered fallback for the same ambiguity,
-        still needing live confirmation)."""
+        """Properties.Set on the DEVICE's own Powered property
+        (net.connman.iwd.Device, the wlan0 station object), NOT the
+        Adapter's — confirmed live via `busctl introspect` that these
+        are two SEPARATE writable booleans, not one property visible
+        from two angles, and confirmed against a real reference
+        implementation too (impala's own iwdrs crate: is_powered()/
+        set_power() both target exactly net.connman.iwd.Device). This
+        targets Device deliberately, after an earlier version targeted
+        Adapter.Powered and, live-confirmed on Rafi's own machine, took
+        the whole physical radio down hard enough that nothing (no
+        rescan, no re-init, silence in both the kernel and iwd's own
+        log for 2.5 minutes) brought it back without a reboot — see
+        CLAUDE/NOTES/known-limitations.md#wifi-power-toggle-disabled
+        for the full incident.
+
+        Uses _find_device_path, NOT _find_station_path — the bug that
+        made turning the radio back ON silently do nothing in the
+        first live retest: iwd removes the Station interface from a
+        device once it's powered off (see find_device_path_in_objects()'s
+        own docstring), so _find_station_path() returned None the
+        moment the radio went off, and set_powered(True) — meant to
+        turn it back on — silently no-opped for exactly the same
+        reason. net.connman.iwd.Device itself persists regardless of
+        power state, which is the whole reason this method needs it
+        specifically instead.
+        """
         connection = open_dbus_connection(bus="SYSTEM")
         try:
-            adapter_path = _find_adapter_path(connection)
-            if adapter_path is None:
+            device_path = _find_device_path(connection)
+            if device_path is None:
                 return
             _call(
-                connection, adapter_path, "org.freedesktop.DBus.Properties", "Set",
-                "ssv", ("net.connman.iwd.Adapter", "Powered", ("b", powered)),
+                connection, device_path, "org.freedesktop.DBus.Properties", "Set",
+                "ssv", ("net.connman.iwd.Device", "Powered", ("b", powered)),
             )
+        finally:
+            connection.close()
+
+    def get_connection_diagnostics(self) -> ConnectionDiagnostics | None:
+        """None when nothing is currently connected — checked via
+        Station.ConnectedNetwork (the same property _connect_succeeded()
+        already relies on as trustworthy) BEFORE calling
+        StationDiagnostic.GetDiagnostics() at all, rather than calling
+        it unconditionally and hoping it degrades gracefully with
+        nothing connected — not verified live whether it does. A real
+        failure once actually connected still propagates normally,
+        same "no internal try/except" discipline every other method in
+        this class has; "not connected" is the only case this method
+        treats as expected rather than a failure.
+        """
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            station_path = _find_station_path(connection)
+            if station_path is None:
+                return None
+            station_props = _call(
+                connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
+                "s", ("net.connman.iwd.Station",),
+            )[0]
+            if station_props.get("ConnectedNetwork") is None:
+                return None
+            diagnostics_props = _call(
+                connection, station_path, "net.connman.iwd.StationDiagnostic", "GetDiagnostics",
+            )[0]
+            # station_path IS the device's own object path in iwd
+            # (Device and Station live on the same object — confirmed
+            # live via busctl introspect) — no second path lookup
+            # needed to read the interface name off it.
+            device_props = _call(
+                connection, station_path, "org.freedesktop.DBus.Properties", "GetAll",
+                "s", ("net.connman.iwd.Device",),
+            )[0]
+            iface_name = _prop(device_props, "Name")
+            ip_address = netinfo.get_ipv4_address(iface_name) if iface_name else None
+            return _build_connection_diagnostics(diagnostics_props, ip_address=ip_address)
         finally:
             connection.close()
