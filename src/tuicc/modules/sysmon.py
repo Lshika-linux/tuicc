@@ -447,15 +447,6 @@ def _format_stats_grid(sysinfo_data: dict | None, sensors_data: dict | None,
 
 # ---------- bottom diagnostics line ----------
 
-# _diagnostics_preview_text() always appends exactly these two trailing
-# lines (blank spacer + the "[key] copy to clipboard" hint) whenever
-# diag is not None — UI chrome for the preview panel, not real
-# diagnostic content. handle_diagnostics() strips exactly this many
-# lines back off before copying, so the hint text itself never ends up
-# pasted alongside the real breakdown. Keep in sync if that function's
-# own trailing lines ever change shape.
-_DIAGNOSTICS_HINT_LINE_COUNT = 2
-
 def _diagnostics_has_issues(diag: dict | None) -> bool:
     """Shared by draw()'s own status dot and nav_items()'s
     NavItem.preview_urgent — one definition of "this is actually a
@@ -471,22 +462,13 @@ def _diagnostics_summary_text(diag: dict | None) -> str:
     return diag["summary"]
 
 
-def _diagnostics_preview_text(diag: dict | None, theme, confirm_key: int) -> list[tuple[str, int]] | None:
+def _diagnostics_preview_text(diag: dict | None, theme) -> list[tuple[str, int]] | None:
     """The hover-preview breakdown shown in preview.py when the
     diagnostics summary row is selected (see NavItem.preview_text's own
     docstring for the mechanism this reuses, unchanged, from every
     other module's hover-preview). None only when the poll hasn't
     completed at all yet — draw()'s own summary text already covers
     that case ("checking...").
-
-    The trailing "[Enter] copy to clipboard" line is the discoverability
-    fix for handle_diagnostics() below — Enter on this row has always
-    copied its own breakdown, but nothing told the user that until this
-    line was added (found live: a real user had no way to know the
-    action existed at all). confirm_key is the actual resolved keycode
-    (cfg.keybinds["confirm"]), not a hardcoded "Enter" string, so a
-    rebound key still shows correctly — same key_label() convention
-    draw()'s own Y/N confirm-dialog hint already uses.
     """
     if diag is None:
         return None
@@ -505,8 +487,6 @@ def _diagnostics_preview_text(diag: dict | None, theme, confirm_key: int) -> lis
         lines.append((text[:100], theme.get("text", 0)))
     if not lines:
         lines = [("No issues found", theme.get("text", 0))]
-    lines.append(("", theme.get("text", 0)))
-    lines.append((f"[{key_label(confirm_key)}] copy to clipboard", theme.get("text", 0) | curses.A_DIM))
     return lines
 
 
@@ -635,7 +615,15 @@ def draw(stdscr, box, ctx, module_name):
 
             text_color = theme.get("selected", 0) if is_row_selected else theme.get("text", 0)
             attr = curses.A_BOLD if is_row_selected else 0
-            rest = wc_truncate(f" {_diagnostics_summary_text(diag)}", max(inner_w - 1, 0))
+            summary = _diagnostics_summary_text(diag)
+            # Discoverability for handle_diagnostics()'s copy action —
+            # right on the row itself, not tucked away in the hover
+            # preview, so it's visible without selecting the row first.
+            # Only once diag is real (not the pre-poll "checking..."
+            # state, which nothing can be copied from yet).
+            if diag is not None:
+                summary = f"{summary} ({key_label(ctx.config.keybinds['confirm'])}=copy)"
+            rest = wc_truncate(f" {summary}", max(inner_w - 1, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, rest, text_color | attr)
@@ -723,7 +711,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
                 rect=(x + 1, row, w - 2, 1),
                 focus_target=None,
                 target_kind="sysmon_diagnostics",
-                preview_text=_diagnostics_preview_text(diag, theme, ctx.config.keybinds["confirm"]),
+                preview_text=_diagnostics_preview_text(diag, theme),
                 preview_urgent=_diagnostics_has_issues(diag),
             ))
 
@@ -803,11 +791,6 @@ def handle_diagnostics(ctx, item, cfg):
     dismiss — same "state action, stays visible" category as a toggle
     (VISION.md section 2), not a focus/power action.
 
-    The trailing hint line _diagnostics_preview_text() appends (see
-    _DIAGNOSTICS_HINT_LINE_COUNT above it) is UI chrome, not real
-    diagnostic content — stripped back off before joining, so it never
-    ends up pasted alongside the actual breakdown.
-
     item.preview_text is None only when nothing's selected here at all
     (shouldn't happen — this handler only runs because the row WAS
     selected — but checked anyway rather than assumed, matching this
@@ -821,8 +804,7 @@ def handle_diagnostics(ctx, item, cfg):
     """
     if item.preview_text is None:
         return False, None
-    content_lines = item.preview_text[:-_DIAGNOSTICS_HINT_LINE_COUNT]
-    text = "\n".join(line for line, _color in content_lines)
+    text = "\n".join(line for line, _color in item.preview_text)
     if ctx.provider.copy_to_clipboard(text):
         ctx.toast_message = "Copied to clipboard"
     else:
