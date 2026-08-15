@@ -138,11 +138,13 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         connectivity_mode.start_hidden_ssid_entry()
         loop_state.mode_stack.append("connectivity_hidden_ssid")
         return True
-    if section == "wifi" and key == cfg.keybinds["wifi_power_toggle"]:
-        adapter = status_worker.get("wifi_adapter")
-        if adapter is not None and adapter.powered is not None:
-            status_worker.request_action("wifi", "set_powered", not adapter.powered)
-        return True
+## this was disabled because it was a bit too easy to fucking kill networking with a single keypress,
+## don't know what the issue is yet, to be worked on!! 
+#    if section == "wifi" and key == cfg.keybinds["wifi_power_toggle"]:
+#        adapter = status_worker.get("wifi_adapter")
+#        if adapter is not None and adapter.powered is not None:
+#            status_worker.request_action("wifi", "set_powered", not adapter.powered)
+#        return True
     items = status_worker.get(section) or []
     if key == cfg.keybinds["confirm"] and items and loop_state.selected_id:
         current_key = loop_state.selected_id.split(":", 2)[2]
