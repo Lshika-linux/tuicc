@@ -905,24 +905,35 @@ def _bt_discover_preview_text(devices, error, theme):
     return lines
 
 
-def _browsing_hint_footer(theme, cfg, section):
+def _browsing_hint_footer(theme, cfg, section, connected, known=True):
     """The red "available keys" footer for a network/device's own
     preview — a separate boxed-off preview_footer (see NavItem.
     preview_footer's own docstring), not just another line of
     preview_text. Individual rows are only ever selectable while
     browsing (see this module's own "level-2 browsing" section), so
     this is always relevant whenever it's reached, no is_browsing()
-    check needed. wifi_forget/wifi_connect_hidden/wifi_power_toggle
-    only ever DO anything while section == "wifi" (see main.py's
-    handle_connectivity_browsing — bluetooth rows have no equivalent),
-    so they're only listed there; bluetooth keeps the plain scan/back
-    hint it always had.
+    check needed.
+
+    [Enter] Connect/Disconnect is always shown, both sections, worded
+    from `connected` — it's what toggle_wifi()/toggle_bluetooth()
+    actually do on Enter, and the hint should say so unconditionally
+    rather than only for the wifi-only extra keys below it.
+
+    wifi_forget/wifi_connect_hidden/wifi_power_toggle only ever DO
+    anything while section == "wifi" (see main.py's handle_
+    connectivity_browsing — bluetooth rows have no equivalent), so
+    they're only listed there. [D] Forget specifically is further
+    narrowed to `known` networks only — forgetting an unknown network
+    (never actually saved, nothing to delete) isn't a real action, so
+    offering the key there would be misleading, not just redundant.
     """
     urgent = theme.get("urgent", 0)
+    connect_hint = f"[{key_label(cfg.keybinds['confirm'])}] {'Disconnect' if connected else 'Connect'}"
     if section != "wifi":
-        return [(f"[{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", urgent)]
+        return [(f"{connect_hint}   [{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", urgent)]
+    forget_hint = f"   [{key_label(cfg.keybinds['wifi_forget'])}] Forget" if known else ""
     return [
-        (f"[{key_label(cfg.keybinds['scan'])}] Scan   [{key_label(cfg.keybinds['wifi_forget'])}] Forget", urgent),
+        (f"{connect_hint}   [{key_label(cfg.keybinds['scan'])}] Scan{forget_hint}", urgent),
         (f"[{key_label(cfg.keybinds['wifi_connect_hidden'])}] Hidden   [{key_label(cfg.keybinds['wifi_power_toggle'])}] Power   [Esc] Back", urgent),
     ]
 
@@ -974,7 +985,7 @@ def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scan
         focus_target=network.ssid,
         target_kind="wifi_network",
         preview_text=_wifi_preview_text(network, theme, status),
-        preview_footer=_browsing_hint_footer(theme, cfg, "wifi"),
+        preview_footer=_browsing_hint_footer(theme, cfg, "wifi", network.connected, network.known),
         # Same Device table the header shows at level 1 — d/n/o
         # (forget/hidden/power) are only ever usable from INSIDE
         # browsing (see this module's own "level-2 browsing" section),
@@ -994,7 +1005,7 @@ def _bt_row_nav_item(device, box, row, theme, status, cfg) -> NavItem:
         focus_target=device.id,
         target_kind="bluetooth_device",
         preview_text=_bt_preview_text(device, theme, status),
-        preview_footer=_browsing_hint_footer(theme, cfg, "bluetooth"),
+        preview_footer=_browsing_hint_footer(theme, cfg, "bluetooth", device.connected),
     )
 
 
