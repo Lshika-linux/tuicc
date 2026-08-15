@@ -6,10 +6,19 @@ values, including a real pair captured off real T480 hardware
 (BAT0+BAT1) — see CLAUDE/NOTES/design-decisions.md
 #battery-energy-weighted-percent for why energy-weighted vs plain-
 average genuinely disagree on real hardware, not just in a contrived
-fixture. watch()'s "no packs" branch is a plain fake-tree test like the
-rest of this file; its real select.poll() behavior can only be
-verified against a real /sys tree (see its own test's skipif and
-CLAUDE/NOTES/known-limitations.md#battery-push-unreliable).
+fixture.
+
+watch() is pyudev-backed (see CLAUDE/NOTES/design-decisions.md
+#battery-push-pyudev) — tested against a fake pyudev.Context/Monitor
+(monkeypatched onto the battery module, same "fake the boundary, not
+the internals" style providers/sway.py's own FakeConnection tests
+use) rather than the real library, since real pyudev needs a real
+netlink socket AND a real libudev.so ctypes can actually dlopen() —
+neither guaranteed in a test environment (confirmed live: this exact
+project's own NixOS dev venv can't load libudev at all, see
+CLAUDE/NOTES/known-limitations.md#pyudev-libudev-nixos). This also
+makes burst-draining and fallback timing deterministic in a way real
+hardware events never could be.
 """
 
 import threading
@@ -17,7 +26,8 @@ import time
 
 import pytest
 
-from tuicc.battery import BatteryPack, aggregate, get_ac_online, get_packs, watch
+import tuicc.battery as battery_module
+from tuicc.battery import BatteryPack, aggregate, get_ac_online, get_packs, read_status, watch
 
 
 # ---------- get_packs ----------
@@ -252,43 +262,113 @@ def test_aggregate_percent_is_clamped_0_to_100():
 
 # ---------- watch ----------
 
-def test_watch_with_no_packs_returns_immediately_without_yielding(tmp_path):
+class _FakeMonitor:
+    """poll_results: a queue of return values for successive poll()
+    calls — a non-None entry stands in for a real pyudev Device object
+    (watch() never inspects it, just checks "is this None or not"), so
+    any truthy placeholder works.
+    """
+    def __init__(self, poll_results):
+        self._poll_results = list(poll_results)
+        self.filter_by_calls = []
+        self.started = False
+
+    def filter_by(self, subsystem):
+        self.filter_by_calls.append(subsystem)
+
+    def start(self):
+        self.started = True
+
+    def poll(self, timeout=None):
+        if self._poll_results:
+            return self._poll_results.pop(0)
+        return None
+
+
+class _FakeMonitorNamespace:
+    def __init__(self, monitor):
+        self._monitor = monitor
+
+    def from_netlink(self, context):
+        return self._monitor
+
+
+class _FakePyudev:
+    def __init__(self, monitor):
+        self.Context = lambda: object()
+        self.Monitor = _FakeMonitorNamespace(monitor)
+
+
+def _patch_fake_pyudev(monkeypatch, poll_results):
+    monitor = _FakeMonitor(poll_results)
+    monkeypatch.setattr(battery_module, "pyudev", _FakePyudev(monitor))
+    monkeypatch.setattr(battery_module, "PYUDEV_AVAILABLE", True)
+    return monitor
+
+
+def test_watch_raises_immediately_when_pyudev_unavailable(monkeypatch):
+    monkeypatch.setattr(battery_module, "PYUDEV_AVAILABLE", False)
     stop_event = threading.Event()
-    gen = watch(stop_event, base_path=str(tmp_path))
-    with pytest.raises(StopIteration):
+    gen = watch(stop_event)
+    with pytest.raises(ImportError):
         next(gen)
 
 
-def test_watch_stops_promptly_once_stop_event_is_set_before_starting(tmp_path):
-    # no packs at all -> same "return immediately" path as above, but
-    # explicitly with stop_event already set going in, guarding against
-    # a version of watch() that would try to block first and check
-    # stop_event only afterward.
-    (tmp_path / "BAT0").mkdir()
-    (tmp_path / "BAT0" / "capacity").write_text("50\n")
-    (tmp_path / "BAT0" / "uevent").write_text("POWER_SUPPLY_CAPACITY=50\n")  # real BAT0 dirs always have this
+def test_watch_filters_to_power_supply_subsystem(monkeypatch):
+    monitor = _patch_fake_pyudev(monkeypatch, poll_results=[])
     stop_event = threading.Event()
     stop_event.set()
-    gen = watch(stop_event, base_path=str(tmp_path), poll_timeout=0.05)
+    gen = watch(stop_event)
+    with pytest.raises(StopIteration):
+        next(gen)
+    assert monitor.filter_by_calls == ["power_supply"]
+    assert monitor.started is True
+
+
+def test_watch_stops_promptly_once_stop_event_is_set_before_starting(monkeypatch):
+    _patch_fake_pyudev(monkeypatch, poll_results=[])
+    stop_event = threading.Event()
+    stop_event.set()
+    gen = watch(stop_event, poll_timeout=0.05)
     with pytest.raises(StopIteration):
         next(gen)
 
 
-def test_watch_falls_back_to_yielding_even_without_a_real_kernel_event(tmp_path):
-    # A plain regular file (not real sysfs) registered for POLLPRI|
-    # POLLERR reliably just times out — confirmed — so every yield
-    # seen here MUST come from the fallback path, not a spurious "first
-    # poll" fire the way real sysfs has (see watch()'s own docstring).
-    # This is exactly what makes the fallback deterministically
-    # testable without real hardware: it guards "charging start went
-    # undetected even after a long wait" by never depending solely on a
-    # kernel notification that might just never come on some
-    # driver/kernel.
-    (tmp_path / "BAT0").mkdir()
-    (tmp_path / "BAT0" / "capacity").write_text("50\n")
-    (tmp_path / "BAT0" / "uevent").write_text("POWER_SUPPLY_CAPACITY=50\n")
+def test_watch_yields_once_per_real_event(monkeypatch):
+    # A single "device changed" poll() result should produce exactly
+    # one yield — the caller re-runs read_status() itself for the
+    # fresh value, this generator only signals "something changed".
+    _patch_fake_pyudev(monkeypatch, poll_results=["device"])
     stop_event = threading.Event()
-    gen = watch(stop_event, base_path=str(tmp_path), poll_timeout=0.05, fallback_seconds=0.1)
+    gen = watch(stop_event, poll_timeout=0.05, fallback_seconds=10.0)
+    next(gen)  # the real event
+    stop_event.set()
+
+
+def test_watch_drains_a_burst_of_events_into_one_yield(monkeypatch):
+    # A real physical plug/unplug commonly fires several devices'
+    # worth of uevents within milliseconds (AC, BAT0, BAT1, a USB-C PD
+    # source — confirmed live via udevadm monitor, see
+    # CLAUDE/NOTES/design-decisions.md#battery-push-pyudev). One
+    # burst should still be exactly one yield, not four.
+    monitor = _patch_fake_pyudev(monkeypatch, poll_results=["ac", "bat0", "bat1", "usbc"])
+    stop_event = threading.Event()
+    gen = watch(stop_event, poll_timeout=0.05, fallback_seconds=10.0)
+    next(gen)
+    # The whole burst was consumed by this one yield — nothing left
+    # queued for the fake monitor to hand back.
+    assert monitor._poll_results == []
+    stop_event.set()
+
+
+def test_watch_falls_back_to_yielding_even_without_a_real_event(monkeypatch):
+    # No real events queued at all — every yield here MUST come from
+    # the fallback path. This is what guards "charging start went
+    # undetected even after a long wait" without depending solely on a
+    # kernel notification that might just never come.
+    _patch_fake_pyudev(monkeypatch, poll_results=[])
+    stop_event = threading.Event()
+    gen = watch(stop_event, poll_timeout=0.05, fallback_seconds=0.1)
 
     start = time.monotonic()
     next(gen)  # first fallback yield
@@ -297,33 +377,55 @@ def test_watch_falls_back_to_yielding_even_without_a_real_kernel_event(tmp_path)
     assert elapsed < 1.0  # generous upper bound — real target is ~0.1s, just guarding against "never"
 
 
-@pytest.mark.skipif(not get_packs(), reason="needs real battery hardware (BAT*) present in /sys")
-def test_watch_real_hardware_setup_does_not_crash_and_stop_event_terminates_it():
-    """Live/integration check, not a full behavior test — a real
-    sandbox happens to have real battery hardware (BAT0+BAT1), see
-    this file's own module docstring for what was verified manually
-    against it (the spurious-first-poll() quirk watch()'s own docstring
-    describes). Can't simulate a real AC plug/unplug in a test, so this
-    only confirms the select.poll() setup against the REAL /sys tree
-    doesn't raise, and that stop_event reliably ends the generator
-    within a bounded time even with nothing having actually changed.
-    """
-    stop_event = threading.Event()
-    gen = watch(stop_event, poll_timeout=0.05)
-    result = {}
+# ---------- PYUDEV_AVAILABLE probe ----------
+# battery.PYUDEV_AVAILABLE is set once at import time by actually
+# constructing a throwaway pyudev.Context() — not just checking
+# whether the bare `import pyudev` succeeded. See
+# CLAUDE/NOTES/design-decisions.md#battery-push-pyudev and
+# known-limitations.md#pyudev-libudev-nixos for why that distinction
+# is real, not defensive overkill: this project's own NixOS dev venv
+# has pyudev import cleanly but fail at Context() construction time.
 
-    def run():
-        try:
-            next(gen)
-            result["outcome"] = "yielded"
-        except StopIteration:
-            result["outcome"] = "stopped"
-        except Exception as e:
-            result["outcome"] = e
+def test_probe_false_when_pyudev_did_not_import_at_all(monkeypatch):
+    monkeypatch.setattr(battery_module, "pyudev", None)
+    assert battery_module._probe_pyudev_available() is False
 
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    stop_event.set()
-    thread.join(timeout=2.0)
-    assert not thread.is_alive()
-    assert result.get("outcome") == "stopped"  # nothing real changed during the test
+
+def test_probe_false_when_context_construction_raises(monkeypatch):
+    class _FailingPyudev:
+        def Context(self):
+            raise ImportError("No library named udev")
+    monkeypatch.setattr(battery_module, "pyudev", _FailingPyudev())
+    assert battery_module._probe_pyudev_available() is False
+
+
+def test_probe_true_when_context_constructs_cleanly(monkeypatch):
+    class _WorkingPyudev:
+        def Context(self):
+            return object()
+    monkeypatch.setattr(battery_module, "pyudev", _WorkingPyudev())
+    assert battery_module._probe_pyudev_available() is True
+
+
+# ---------- read_status ----------
+# The shared refresh/poll target both app_setup.py wiring branches use
+# (see build_app()) — thin wiring, but worth a smoke test that it
+# actually calls through to aggregate()/get_packs()/get_ac_online()
+# correctly rather than each branch having its own inline lambda that
+# could drift apart.
+
+def test_read_status_no_packs_returns_none(tmp_path):
+    assert read_status(base_path=str(tmp_path)) is None
+
+
+def test_read_status_wires_packs_and_ac_online_together(tmp_path):
+    (tmp_path / "BAT0").mkdir()
+    (tmp_path / "BAT0" / "capacity").write_text("77\n")
+    (tmp_path / "BAT0" / "status").write_text("Charging\n")
+    (tmp_path / "AC").mkdir()
+    (tmp_path / "AC" / "type").write_text("Mains\n")
+    (tmp_path / "AC" / "online").write_text("1\n")
+
+    result = read_status(base_path=str(tmp_path))
+
+    assert result == {"percent": 77, "status": "Charging", "ac_online": True}

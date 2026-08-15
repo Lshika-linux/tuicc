@@ -13,15 +13,52 @@ there must propagate, not vanish into a wrong number. Only "no BAT*
 directories at all" comes back as an empty list (see get_packs()).
 
 watch() (below) is a second, independent, push-based way of noticing a
-change, for latency polling can't match — see
-CLAUDE/NOTES/known-limitations.md#battery-push-unreliable for its
-current (not wired in) status.
+change, for latency polling can't match — pyudev-backed (netlink
+`power_supply` subsystem monitoring), after a sysfs select.poll()-based
+first attempt was confirmed live to never fire on a real charger
+plug/unplug. See CLAUDE/NOTES/design-decisions.md
+#battery-push-pyudev for the live udevadm confirmation this is built
+on, and CLAUDE/NOTES/known-limitations.md#battery-push-unreliable for
+the sysfs attempt this replaced. app_setup.py checks PYUDEV_AVAILABLE
+before wiring watch() in at all — if pyudev somehow isn't installed,
+battery falls back to being a plain StatusWorker poll Domain exactly
+like before this existed, not a silent battery-reading blackout.
 """
 
 import os
-import select
 import time
 from dataclasses import dataclass
+
+try:
+    import pyudev
+except ImportError:
+    pyudev = None
+
+
+def _probe_pyudev_available() -> bool:
+    """PYUDEV_AVAILABLE isn't just "did the pyudev package import" —
+    pyudev.Context() lazily dlopen()s the real libudev.so via ctypes
+    the first time it's actually constructed, which can fail even when
+    the Python package itself installed fine. Confirmed live in this
+    exact codebase's own NixOS dev environment: pip-installed pyudev
+    imports cleanly, but Context() raises ImportError("No library
+    named udev") — NixOS doesn't expose libraries at the standard FHS
+    paths ctypes.util.find_library() searches, unlike most other
+    distros. Probed once, here, at import time, rather than only
+    failing later inside watch() itself — app_setup.py's own push-vs-
+    pull wiring decision needs to know this UP FRONT, not discover it
+    only once a PushWorker thread is already running.
+    """
+    if pyudev is None:
+        return False
+    try:
+        pyudev.Context()
+        return True
+    except Exception:
+        return False
+
+
+PYUDEV_AVAILABLE = _probe_pyudev_available()
 
 POWER_SUPPLY_PATH = "/sys/class/power_supply"
 
@@ -147,57 +184,58 @@ def aggregate(packs: list[BatteryPack], ac_online: bool | None = None) -> dict |
     return {"percent": percent, "status": status, "ac_online": ac_online}
 
 
-def watch(stop_event, base_path: str = POWER_SUPPLY_PATH, poll_timeout: float = 1.0,
-          fallback_seconds: float = 2.0):
-    """Generator: blocks on the kernel's own change notification for
-    every BAT* pack (select.poll() on each `uevent` attribute), yielding
-    once per detected change or every fallback_seconds regardless — the
-    caller re-runs get_packs()/aggregate() itself for the fresh value.
-
-    NOT currently wired in — confirmed empirically unreliable on real
-    hardware. See CLAUDE/NOTES/known-limitations.md
-    #battery-push-unreliable for what was tested, the sysfs poll()-
-    arming quirk this depends on, and what poll_timeout/fallback_seconds
-    each actually bound.
+def read_status(base_path: str = POWER_SUPPLY_PATH) -> dict | None:
+    """The one-call combined reading — aggregate(get_packs(),
+    get_ac_online()) — pulled out as its own function since it's now
+    used as both a plain StatusWorker poll target (the PYUDEV_AVAILABLE
+    fallback) and a PushWorker refresh target (app_setup.py wires
+    whichever applies), rather than duplicating the same lambda twice.
     """
-    packs = get_packs(base_path)
-    if not packs:
-        return
+    return aggregate(get_packs(base_path), get_ac_online(base_path))
+
+
+def watch(stop_event, poll_timeout: float = 1.0, fallback_seconds: float = 2.0):
+    """Generator: blocks on pyudev's netlink monitor for `power_supply`
+    subsystem uevents (AC/BAT* change events), yielding once per
+    detected event — draining any already-queued burst first, since a
+    single physical plug/unplug commonly fires several devices' worth
+    of events within milliseconds (AC, BAT0, BAT1, a USB-C PD source,
+    ... all at once — confirmed live via `udevadm monitor
+    --subsystem-match=power_supply`, see CLAUDE/NOTES/
+    design-decisions.md#battery-push-pyudev) — or every fallback_seconds
+    regardless, same "never silently stale" ceiling the earlier sysfs
+    attempt had. The caller still re-runs read_status() itself for the
+    fresh value either way; this only signals "something changed."
+
+    Raises ImportError immediately if pyudev isn't actually installed
+    (PYUDEV_AVAILABLE is False) rather than silently doing nothing —
+    app_setup.py checks that flag BEFORE ever wiring this in as a
+    PushDomain, so reaching here with pyudev missing would be a real
+    wiring bug, not a runtime condition to degrade from quietly.
+    """
+    if not PYUDEV_AVAILABLE:
+        raise ImportError("pyudev is not installed — battery.watch() requires it")
+
+    context = pyudev.Context()
+    monitor = pyudev.Monitor.from_netlink(context)
+    monitor.filter_by(subsystem="power_supply")
+    monitor.start()
 
     poll_timeout = min(poll_timeout, fallback_seconds)
-    poller = select.poll()
-    files = {}  # fd -> open file, so a fired fd can be re-armed by exact identity
-    try:
-        for pack in packs:
-            f = open(os.path.join(base_path, pack.name, "uevent"))
-            files[f.fileno()] = f
-            poller.register(f.fileno(), select.POLLPRI | select.POLLERR)
-
-        # Drain the spurious first-call fire on every fd (see docstring)
-        # before entering the real wait loop.
-        poller.poll(0)
-        for f in files.values():
-            f.seek(0)
-            f.read()
-
-        last_yield = time.monotonic()
-        while not stop_event.is_set():
-            events = poller.poll(poll_timeout * 1000)
-            if stop_event.is_set():
-                break
-            now = time.monotonic()
-            if events:
-                for fd, _flags in events:
-                    files[fd].seek(0)
-                    files[fd].read()  # re-arm THIS fd before the next poll() call
-                last_yield = now
-                yield
-            elif now - last_yield >= fallback_seconds:
-                # No real kernel event, but it's been long enough that
-                # this generator's own contract (never silently stale
-                # past fallback_seconds) takes over — re-check anyway.
-                last_yield = now
-                yield
-    finally:
-        for f in files.values():
-            f.close()
+    last_yield = time.monotonic()
+    while not stop_event.is_set():
+        device = monitor.poll(timeout=poll_timeout)
+        if stop_event.is_set():
+            break
+        now = time.monotonic()
+        if device is not None:
+            # Drain the rest of this burst without blocking further —
+            # one refresh covers whatever just happened, no need to
+            # yield once per device in the same physical event.
+            while monitor.poll(timeout=0) is not None:
+                pass
+            last_yield = now
+            yield
+        elif now - last_yield >= fallback_seconds:
+            last_yield = now
+            yield

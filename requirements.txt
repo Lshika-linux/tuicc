@@ -4,3 +4,4 @@ six==1.17.0
 jeepney
 tomli_w
 wcwidth
+pyudev

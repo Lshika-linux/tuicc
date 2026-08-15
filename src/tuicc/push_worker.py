@@ -52,6 +52,7 @@ class PushWorker:
         self._snapshots = {name: None for name in self._domains}
         self._errors = {name: None for name in self._domains}
         self._action_errors = {name: None for name in self._domains}
+        self._action_error_keys = {name: None for name in self._domains}
         self._pending = set()
         self._stop = threading.Event()
         self._paused = threading.Event()
@@ -121,6 +122,21 @@ class PushWorker:
         with self._lock:
             return self._action_errors.get(domain_name)
 
+    def get_action_error_for(self, domain_name, key):
+        """Same as StatusWorker's own get_action_error_for() — None
+        unless the error actually belongs to THIS specific key, not
+        just this domain. No current push domain has more than one
+        action target sharing a domain the way wifi/bluetooth do on
+        StatusWorker, but CombinedStatus forwards to whichever worker
+        actually owns a domain, so this has to exist here too or a
+        caller that doesn't know/care which worker backs a domain
+        would get an AttributeError depending on wiring.
+        """
+        with self._lock:
+            if self._action_error_keys.get(domain_name) != key:
+                return None
+            return self._action_errors.get(domain_name)
+
     def is_pending(self, domain_name, key):
         with self._lock:
             return (domain_name, key) in self._pending
@@ -145,6 +161,7 @@ class PushWorker:
         domain = self._domains.get(domain_name)
         with self._lock:
             self._action_errors[domain_name] = None
+            self._action_error_keys[domain_name] = pending_key
             self._pending.add((domain_name, pending_key))
 
         def run():

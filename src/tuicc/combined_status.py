@@ -70,6 +70,9 @@ class CombinedStatus:
     def get_action_error(self, domain_name):
         return self._worker_for(domain_name).get_action_error(domain_name)
 
+    def get_action_error_for(self, domain_name, key):
+        return self._worker_for(domain_name).get_action_error_for(domain_name, key)
+
     def is_pending(self, domain_name, key):
         return self._worker_for(domain_name).is_pending(domain_name, key)
 

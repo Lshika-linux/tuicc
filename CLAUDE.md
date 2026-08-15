@@ -19,7 +19,7 @@ pytest tests/test_layout_engine.py -v
 pytest tests/test_layout_engine.py::test_name -v
 
 # Same, via nix instead of a venv
-nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney ps.wcwidth])' --run 'pytest tests/ -v'
+nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney ps.wcwidth ps.pyudev ps.tomli-w])' --run 'pytest tests/ -v'
 ```
 
 No live WM connection is needed to test: providers are tested against recorded JSON trees (`tests/fixtures/`), and WM commands are tested via a `FakeConnection` that just records `.command()` calls — see `tests/test_provider_commands.py`.

@@ -26,6 +26,8 @@ from tuicc.audio.registry import build_audio_backend
 from tuicc.media.mpris import MprisBackend
 from tuicc.media.cava import CavaReader
 from tuicc.status_worker import StatusWorker, Domain
+from tuicc.push_worker import PushWorker, PushDomain
+from tuicc.combined_status import CombinedStatus
 from tuicc import control
 from tuicc import battery
 from tuicc import brightness
@@ -56,7 +58,12 @@ class AppContext:
     wifi_agent: WifiAgent
     bluez_agent: BluezAgent | None
     pid_feed: procmon.PidFeed
-    status_worker: StatusWorker
+    # Always a CombinedStatus now (see build_app()) — routes every
+    # domain to the shared StatusWorker except battery, which becomes a
+    # PushWorker PushDomain when battery.PYUDEV_AVAILABLE. An empty
+    # PushWorker (nothing pushed) is a harmless, valid CombinedStatus
+    # too, so this stays one type regardless of which case applies.
+    status_worker: CombinedStatus
     cava_reader: CavaReader
     action_ctx: ActionContext
 
@@ -170,14 +177,6 @@ def build_app(preset_override: int | None = None) -> AppContext:
             },
             poll_interval=1,  # same reasoning as "audio" above
         ),
-        # Tried as a push domain (battery.watch()) — reverted. See
-        # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable.
-        Domain(
-            name="battery",
-            poll=lambda: battery.aggregate(battery.get_packs(), battery.get_ac_online()),
-            actions={},
-            poll_interval=0.3,
-        ),
         Domain(
             name="brightness",
             poll=brightness.get_percent,
@@ -231,9 +230,22 @@ def build_app(preset_override: int | None = None) -> AppContext:
     # docstring.
     if cfg.weather_lat is not None or cfg.weather_geoclue or cfg.weather_ip_approx:
         domains.append(Domain(name="weather", poll=lambda: weather.get_conditions(cfg), poll_interval=900))
-    # push_worker.py/combined_status.py exist, tested, unused — see
-    # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable.
-    status_worker = StatusWorker(domains)
+
+    # battery is a PushDomain (event-driven, pyudev-backed) when
+    # actually available, a plain poll Domain otherwise — same
+    # read_status() function either way, just a different worker
+    # noticing when to call it. See CLAUDE/NOTES/design-decisions.md
+    # #battery-push-pyudev for why pyudev specifically, and why this
+    # check has to be a real runtime probe (battery.PYUDEV_AVAILABLE),
+    # not just "did the package import" — no manual setup either way,
+    # this falls back silently and automatically.
+    if battery.PYUDEV_AVAILABLE:
+        push_domains = [PushDomain(name="battery", watch=battery.watch, refresh=battery.read_status)]
+    else:
+        domains.append(Domain(name="battery", poll=battery.read_status, poll_interval=0.3))
+        push_domains = []
+
+    status_worker = CombinedStatus(StatusWorker(domains), PushWorker(push_domains))
     status_worker.start()
 
     # Unconditional, unlike cava_reader below — an agent must register

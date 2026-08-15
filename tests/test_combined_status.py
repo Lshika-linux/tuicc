@@ -49,6 +49,10 @@ class _FakeWorker:
         self.calls.append(("get_action_error", name))
         return f"action_error:{name}"
 
+    def get_action_error_for(self, name, key):
+        self.calls.append(("get_action_error_for", name, key))
+        return f"action_error:{name}:{key}"
+
     def is_pending(self, name, key):
         self.calls.append(("is_pending", name, key))
         return True
@@ -101,6 +105,16 @@ def test_get_action_error_routes_to_the_owning_worker():
     combined, pull, push = _combined()
     assert combined.get_action_error("wifi") == "action_error:wifi"
     assert ("get_action_error", "wifi") in pull.calls
+
+
+def test_get_action_error_for_routes_to_the_owning_worker():
+    # battery.py's pyudev push domain has no actions, so this never
+    # fires in practice today — but CombinedStatus's own contract has
+    # to hold for every domain regardless of which worker owns it, not
+    # just the ones that happen to exercise it yet.
+    combined, pull, push = _combined()
+    assert combined.get_action_error_for("battery", "x") == "action_error:battery:x"
+    assert ("get_action_error_for", "battery", "x") in push.calls
 
 
 def test_is_pending_routes_to_the_owning_worker():

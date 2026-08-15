@@ -182,6 +182,24 @@ def test_request_action_error_surfaces_in_get_action_error():
     assert _wait_until(lambda: worker.get_action_error("battery") == "action failed")
 
 
+def test_get_action_error_for_scoped_to_the_matching_key():
+    # Same reasoning as StatusWorker's own get_action_error_for():
+    # get_action_error() alone is domain-wide, which is wrong once
+    # more than one key can share a domain — added here once
+    # CombinedStatus started actually routing calls through PushWorker
+    # for real (battery.py's pyudev push domain), surfacing a real gap
+    # (PushWorker had no equivalent at all before that).
+    def _raise(arg):
+        raise RuntimeError("boom")
+
+    domain = PushDomain(name="wifi", watch=_triggerable_watch(threading.Event()),
+                         refresh=lambda: None, actions={"connect": _raise})
+    worker = PushWorker([domain])
+    worker.request_action("wifi", "connect", "network-a", pending_key="network-a")
+    assert _wait_until(lambda: worker.get_action_error_for("wifi", "network-a") == "boom")
+    assert worker.get_action_error_for("wifi", "network-b") is None
+
+
 def test_request_action_refreshes_afterward():
     call_count = {"n": 0}
 
