@@ -178,7 +178,7 @@ def test_marquee_text_fits_check_uses_display_width_not_char_count():
 
 
 def test_marquee_text_result_never_exceeds_width_in_columns_for_cjk_text():
-    from tuicc.text_width import display_width
+    from tuicc.render_utils import display_width
     text = "スペシャルウィーク（CV. 和氣あず未）"
     for now in (0.0, 1.0, 5.0, 12.3):
         result = marquee_text(text, width=10, now=now)
@@ -186,7 +186,7 @@ def test_marquee_text_result_never_exceeds_width_in_columns_for_cjk_text():
 
 
 def test_marquee_text_never_splits_a_wide_character():
-    from tuicc.text_width import display_width
+    from tuicc.render_utils import display_width
     text = "和氣あず未" * 3
     result = marquee_text(text, width=7, now=2.0)
     # Every character in a valid result must be one of the source

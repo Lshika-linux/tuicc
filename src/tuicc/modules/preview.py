@@ -12,7 +12,7 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x
+from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate
 from tuicc.title_condense import condense_title
 
 
@@ -153,14 +153,19 @@ def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, cfg, fill
     # color the way full-brightness text would) survive tight overlap
     # between windows; the full label below, shown once in the center,
     # is where the real detail (what's actually running) lives.
-    corner_label = _corner_label(window)[:max(win_w - 2, 0)]
-    for row, col in _corner_positions(win_y, win_x, win_h, win_w, len(corner_label)):
+    corner_label = wc_truncate(_corner_label(window), max(win_w - 2, 0))
+    for row, col in _corner_positions(win_y, win_x, win_h, win_w, display_width(corner_label)):
         try:
             stdscr.addstr(row, col, corner_label, text_color | curses.A_DIM)
         except curses.error:
             pass
 
-    full_label = _window_label(window, cfg)[:max(win_w - 2, 0)]
+    # window.title (via _window_label -> condense_title) is real,
+    # uncontrolled window-title text — a browser tab, a document name —
+    # genuinely can contain wide/CJK characters or emoji, the exact
+    # class of content this whole codebase's width-awareness pass
+    # exists for.
+    full_label = wc_truncate(_window_label(window, cfg), max(win_w - 2, 0))
     try:
         center_row = win_y + win_h // 2
         center_col = centered_x(win_x + 1, max(win_w - 2, 0), full_label)

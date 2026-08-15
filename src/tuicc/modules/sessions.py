@@ -35,7 +35,7 @@ import curses
 import shlex
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_centered_lines
+from tuicc.render_utils import draw_box_outline, draw_centered_lines, wc_truncate
 from tuicc.keybinds import key_label
 from tuicc.session import capture_session, save_session, load_session, SESSIONS_DIR
 
@@ -203,7 +203,10 @@ def draw(stdscr, box, ctx, module_name):
 
         if slot == _naming_slot:
             try:
-                stdscr.addstr(row, x + 3, f"{_name_input}_"[:max(inner_w - 2, 0)], selected_color)
+                # _name_input is live, user-typed text — genuinely can
+                # contain wide/CJK characters, not just defensive
+                # hygiene against a hypothetical.
+                stdscr.addstr(row, x + 3, wc_truncate(f"{_name_input}_", max(inner_w - 2, 0)), selected_color)
             except curses.error:
                 pass
             continue
@@ -216,7 +219,7 @@ def draw(stdscr, box, ctx, module_name):
         # so the name itself goes back to plain text color.
         name_color = selected_color if (is_row_selected and not is_this_expanded) else text_color
         try:
-            stdscr.addstr(row, x + 3, name[:max(NAME_COL_WIDTH - 1, 0)], name_color)
+            stdscr.addstr(row, x + 3, wc_truncate(name, max(NAME_COL_WIDTH - 1, 0)), name_color)
         except curses.error:
             pass
 

@@ -30,7 +30,7 @@ import time
 from datetime import datetime
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_centered_lines
+from tuicc.render_utils import draw_box_outline, draw_centered_lines, display_width, wc_truncate
 from tuicc.keybinds import key_label
 from tuicc.windowed_list import section_nav_indices as _section_nav_indices
 from tuicc.windowed_list import section_rows as _section_rows
@@ -401,7 +401,7 @@ def draw(stdscr, box, ctx, module_name):
                 trigger_attr = curses.A_BOLD if is_selected else curses.A_DIM
                 trigger_label = "↻ Scan" if is_wifi else "↻ Discover"
             try:
-                stdscr.addstr(row, x + 2, header_text[:max(inner_w, 0)], theme.get("accent", 0) | curses.A_BOLD)
+                stdscr.addstr(row, x + 2, wc_truncate(header_text, max(inner_w, 0)), theme.get("accent", 0) | curses.A_BOLD)
                 # Right-aligned within the box's own inner width — only
                 # drawn if there's room left after the header text, so
                 # a long SSID-count header ("WiFi [143]") on a narrow
@@ -419,7 +419,7 @@ def draw(stdscr, box, ctx, module_name):
             # backend couldn't be reached at all, not "genuinely
             # nothing there".
             try:
-                stdscr.addstr(row, x + 2, f"⚠ {payload}"[:max(inner_w, 0)], theme.get("urgent", 0))
+                stdscr.addstr(row, x + 2, wc_truncate(f"⚠ {payload}", max(inner_w, 0)), theme.get("urgent", 0))
             except curses.error:
                 pass
 
@@ -428,7 +428,7 @@ def draw(stdscr, box, ctx, module_name):
             # (see windowed_list.section_rows) — same dim styling
             # media.py's own "empty_slot" handling uses.
             try:
-                stdscr.addstr(row, x + 2, payload[:max(inner_w, 0)], theme.get("text", 0) | curses.A_DIM)
+                stdscr.addstr(row, x + 2, wc_truncate(payload, max(inner_w, 0)), theme.get("text", 0) | curses.A_DIM)
             except curses.error:
                 pass
 
@@ -440,7 +440,15 @@ def draw(stdscr, box, ctx, module_name):
             # CLAUDE/NOTES/design-decisions.md#connectivity-module-design.
             display_name = ("[new] " if not network.known else "") + network.ssid
             name_width = max(inner_w - 3 - len(bars), 0)
-            name = display_name[:name_width].ljust(name_width)
+            # network.ssid is real, uncontrolled external data — people
+            # genuinely do put emoji in WiFi network names. A plain
+            # str.ljust() pads by CHARACTER count, not display width, so
+            # a wide/VS16 SSID would under-pad and throw off the signal
+            # bars' position below (drawn past name_part's own real
+            # rendered width, not its len()) — truncate width-aware,
+            # then pad the remainder manually instead.
+            truncated_name = wc_truncate(display_name, name_width)
+            name = truncated_name + " " * max(name_width - display_width(truncated_name), 0)
 
             pending = ctx.status is not None and ctx.status.is_pending("wifi", network.ssid)
             if pending:
@@ -463,7 +471,7 @@ def draw(stdscr, box, ctx, module_name):
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, name_part, text_color | attr)
-                stdscr.addstr(row, x + 3 + len(name_part), bars, bars_color)
+                stdscr.addstr(row, x + 3 + display_width(name_part), bars, bars_color)
             except curses.error:
                 pass
 
@@ -488,7 +496,10 @@ def draw(stdscr, box, ctx, module_name):
                     text_color = theme.get("text", 0)
                     attr = curses.A_BOLD if is_selected else curses.A_DIM
 
-            rest = f" {display_name}{battery}"[:max(inner_w - 1, 0)]
+            # device.name is real, uncontrolled external data too (a
+            # real Bluetooth device's advertised name) — same risk as
+            # network.ssid above.
+            rest = wc_truncate(f" {display_name}{battery}", max(inner_w - 1, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, rest, text_color | attr)

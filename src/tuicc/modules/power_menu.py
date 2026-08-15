@@ -15,7 +15,7 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, format_shortcut, draw_centered_lines
+from tuicc.render_utils import draw_box_outline, format_shortcut, draw_centered_lines, wc_truncate
 from tuicc.keybinds import key_label
 from tuicc.actions import spawn_detached
 
@@ -56,9 +56,11 @@ def draw(stdscr, box, ctx, module_name):
         if is_selected:
             text_color = theme.get("selected", 0)
 
+        # action["label"] is user-configured (config.toml), not
+        # guaranteed ASCII the way the packaged defaults are.
         label = _row_label(action)
         try:
-            stdscr.addstr(row, x + 2, label[:inner_w], text_color | (curses.A_BOLD if is_selected else 0))
+            stdscr.addstr(row, x + 2, wc_truncate(label, inner_w), text_color | (curses.A_BOLD if is_selected else 0))
         except curses.error:
             pass
 

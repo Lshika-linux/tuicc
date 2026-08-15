@@ -21,7 +21,7 @@ import os
 from tuicc.keybinds import key_label
 from tuicc.modules import launcher as launcher_mode
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_centered_lines
+from tuicc.render_utils import draw_box_outline, draw_centered_lines, display_width, wc_truncate
 from tuicc.sensors import describe_sensor
 from tuicc.windowed_list import VISIBLE_SLOTS, header_with_count, section_nav_indices, section_rows, window_start
 
@@ -252,11 +252,14 @@ def _format_window_label(win_stat, available_w: int) -> str:
     cpu_str = f"{win_stat.cpu_percent:.0f}%" if win_stat.cpu_percent is not None else "?%"
     ram_str = f"{win_stat.rss_kb / 1024:.0f}M" if win_stat.rss_kb is not None else "?M"
     stats_str = f"[{cpu_str} {ram_str}]"
+    # app_id-derived, typically ASCII in practice, but not guaranteed —
+    # a misbehaving app can set anything, so this stays width-aware
+    # rather than assuming.
     name = _friendly_app_name(win_stat.app_id)
 
     name_w = max(available_w - len(stats_str) - 1, 0)  # -1 for the space between stats and name
-    if len(name) > name_w:
-        name = (name[:max(name_w - 1, 0)] + "…") if name_w > 0 else ""
+    if display_width(name) > name_w:
+        name = (wc_truncate(name, max(name_w - 1, 0)) + "…") if name_w > 0 else ""
 
     return f"{stats_str} {name}" if name else stats_str
 
@@ -540,19 +543,19 @@ def draw(stdscr, box, ctx, module_name):
 
         if kind == "header":
             try:
-                stdscr.addstr(row, x + 2, payload[:max(inner_w, 0)], theme.get("accent", 0) | curses.A_BOLD)
+                stdscr.addstr(row, x + 2, wc_truncate(payload, max(inner_w, 0)), theme.get("accent", 0) | curses.A_BOLD)
             except curses.error:
                 pass
 
         elif kind == "error":
             try:
-                stdscr.addstr(row, x + 2, f"⚠ {payload}"[:max(inner_w, 0)], theme.get("urgent", 0))
+                stdscr.addstr(row, x + 2, wc_truncate(f"⚠ {payload}", max(inner_w, 0)), theme.get("urgent", 0))
             except curses.error:
                 pass
 
         elif kind == "empty_slot":
             try:
-                stdscr.addstr(row, x + 2, payload[:max(inner_w, 0)], theme.get("text", 0) | curses.A_DIM)
+                stdscr.addstr(row, x + 2, wc_truncate(payload, max(inner_w, 0)), theme.get("text", 0) | curses.A_DIM)
             except curses.error:
                 pass
 
@@ -580,10 +583,17 @@ def draw(stdscr, box, ctx, module_name):
                 for text, role in payload:
                     if remaining <= 0:
                         break
-                    clipped = text[:remaining]
+                    # Most segments here are internally-formatted ASCII
+                    # numbers, but HOT's own describe_sensor() label is
+                    # real hardware-reported text (lm-sensors) — always
+                    # ASCII in practice, but not a guarantee worth
+                    # baking in when the width-safe version costs
+                    # nothing extra.
+                    clipped = wc_truncate(text, remaining)
                     stdscr.addstr(row, col_x, clipped, role_colors.get(role, theme.get("text", 0)))
-                    col_x += len(clipped)
-                    remaining -= len(clipped)
+                    clipped_w = display_width(clipped)
+                    col_x += clipped_w
+                    remaining -= clipped_w
             except curses.error:
                 pass
 
@@ -605,7 +615,7 @@ def draw(stdscr, box, ctx, module_name):
 
             text_color = theme.get("selected", 0) if is_row_selected else theme.get("text", 0)
             attr = curses.A_BOLD if is_row_selected else 0
-            rest = f" {_diagnostics_summary_text(diag)}"[:max(inner_w - 1, 0)]
+            rest = wc_truncate(f" {_diagnostics_summary_text(diag)}", max(inner_w - 1, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, rest, text_color | attr)
@@ -631,7 +641,7 @@ def draw(stdscr, box, ctx, module_name):
             label = _format_window_label(win_stat, available_w)
 
             try:
-                stdscr.addstr(row, x + 2, label[:available_w], text_color | attr)
+                stdscr.addstr(row, x + 2, wc_truncate(label, available_w), text_color | attr)
             except curses.error:
                 pass
 

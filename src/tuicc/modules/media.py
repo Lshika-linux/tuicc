@@ -23,8 +23,7 @@ from urllib.parse import urlparse
 
 from tuicc.media.cava import ASCII_MAX_RANGE
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, eighth_block_level
-from tuicc.text_width import display_width, truncate_to_width
+from tuicc.render_utils import draw_box_outline, eighth_block_level, display_width, wc_truncate
 from tuicc.windowed_list import section_nav_indices as _section_nav_indices
 from tuicc.windowed_list import section_rows as _section_rows
 from tuicc.windowed_list import header_with_count as _header_with_count
@@ -126,7 +125,7 @@ def _player_label(player) -> str:
 
 def marquee_text(text: str, width: int, now: float) -> str:
     """text as-is if it already fits width (measured in terminal
-    COLUMNS, see text_width.py — a CJK title can be well over `width`
+    COLUMNS, see render_utils.py's display_width() — a CJK title can be well over `width`
     columns wide despite having few enough characters to pass a plain
     len() check). Otherwise a width-wide sliding window into "text +
     gap" repeated, advancing one character every MARQUEE_STEP_SECONDS
@@ -144,7 +143,7 @@ def marquee_text(text: str, width: int, now: float) -> str:
     looped = text + gap
     offset = int(now / MARQUEE_STEP_SECONDS) % len(looped)
     doubled = looped + looped  # a character-index slice never runs off the end
-    return truncate_to_width(doubled[offset:], width)
+    return wc_truncate(doubled[offset:], width)
 
 
 # A rough "this body text probably won't fit a typical box, so it's
@@ -349,13 +348,13 @@ def draw(stdscr, box, ctx, module_name):
 
         if kind == "header":
             try:
-                stdscr.addstr(row, x + 2, payload[:max(inner_w, 0)], theme.get("accent", 0) | curses.A_BOLD)
+                stdscr.addstr(row, x + 2, wc_truncate(payload, max(inner_w, 0)), theme.get("accent", 0) | curses.A_BOLD)
             except curses.error:
                 pass
 
         elif kind == "error":
             try:
-                stdscr.addstr(row, x + 2, f"⚠ {payload}"[:max(inner_w, 0)], theme.get("urgent", 0))
+                stdscr.addstr(row, x + 2, wc_truncate(f"⚠ {payload}", max(inner_w, 0)), theme.get("urgent", 0))
             except curses.error:
                 pass
 
@@ -374,7 +373,7 @@ def draw(stdscr, box, ctx, module_name):
             is_output_slot = "output" in payload
             reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if (is_output_slot and has_cava) else 0
             try:
-                stdscr.addstr(row, x + 2, payload[:max(inner_w - reserved_w, 0)], theme.get("text", 0) | curses.A_DIM)
+                stdscr.addstr(row, x + 2, wc_truncate(payload, max(inner_w - reserved_w, 0)), theme.get("text", 0) | curses.A_DIM)
             except curses.error:
                 pass
             if is_output_slot and has_cava:
@@ -423,7 +422,7 @@ def draw(stdscr, box, ctx, module_name):
             else:
                 source = _source_label(player)
                 prefix = f"[{source}] " if source else ""
-            prefix = truncate_to_width(prefix, available_w)  # degrade gracefully if even the prefix alone can't fit
+            prefix = wc_truncate(prefix, available_w)  # degrade gracefully if even the prefix alone can't fit
             body_w = max(available_w - display_width(prefix), 0)
             label = f"{prefix}{marquee_text(body, body_w, now)}"
             try:
@@ -484,7 +483,7 @@ def draw(stdscr, box, ctx, module_name):
             # has_cava is computed once, above the main loop — see its
             # own docstring for why it no longer depends on THIS row.
             reserved_w = (CAVA_VIS_WIDTH + CAVA_RIGHT_GAP) if has_cava else 0
-            rest = truncate_to_width(f" {sink.name}", max(inner_w - 1 - reserved_w, 0))
+            rest = wc_truncate(f" {sink.name}", max(inner_w - 1 - reserved_w, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, rest, text_color | attr)

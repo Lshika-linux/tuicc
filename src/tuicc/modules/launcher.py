@@ -20,7 +20,7 @@ import subprocess
 from dataclasses import dataclass
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline
+from tuicc.render_utils import draw_box_outline, display_width, wc_truncate
 
 
 DESKTOP_DIRS = [
@@ -248,7 +248,11 @@ def _build_window(results, sel, avail_w):
     offset to track between frames).
     """
     def item_width(name):
-        return 4 + len(name[:14]) + 2
+        # Matches draw()'s own label/cx computation below exactly — a
+        # wide/CJK app name has to be measured the same way in both
+        # places, or this window-fit decision and what actually gets
+        # drawn could disagree.
+        return 4 + display_width(wc_truncate(name, 14)) + 2
 
     def build(start):
         cx, shown = 0, []
@@ -279,7 +283,7 @@ def draw(stdscr, box, ctx, module_name):
         hint_x = x + 1 + max((w - 2 - len(hint)) // 2, 0)
         hint_y = y + h // 2
         try:
-            stdscr.addstr(hint_y, hint_x, hint[:max(w - 2, 0)], theme.get("text", 0) | curses.A_DIM)
+            stdscr.addstr(hint_y, hint_x, wc_truncate(hint, max(w - 2, 0)), theme.get("text", 0) | curses.A_DIM)
         except curses.error:
             pass
         return
@@ -290,7 +294,11 @@ def draw(stdscr, box, ctx, module_name):
 
     query_text = f"> {ctx.search_query}"
     try:
-        stdscr.addstr(query_row, x + 2, query_text[:avail_w], theme.get("accent", 0) | curses.A_BOLD)
+        # search_query is real, user-typed text — unlike most other
+        # payloads in this codebase, it can genuinely contain wide/CJK
+        # characters (a non-Latin-script app search), so this one isn't
+        # just defensive hygiene the way the static-label sites are.
+        stdscr.addstr(query_row, x + 2, wc_truncate(query_text, avail_w), theme.get("accent", 0) | curses.A_BOLD)
     except curses.error:
         pass
 
@@ -309,7 +317,11 @@ def draw(stdscr, box, ctx, module_name):
     for i in shown:
         name, _cmd, _app_id = results[i]
         letter = (name.strip()[:1] or "?").upper()
-        label = name[:14]
+        # .desktop app names can genuinely contain wide/CJK characters
+        # or emoji — a 14-CODEPOINT slice could measure well past 14
+        # real columns, throwing off every following item's position on
+        # this row (see cx's own advance below).
+        label = wc_truncate(name, 14)
         is_sel = (i == sel)
         badge_color = theme.get("selected", 0) if is_sel else theme.get("accent", 0)
         text_color = theme.get("selected", 0) if is_sel else theme.get("text", 0)
@@ -318,7 +330,7 @@ def draw(stdscr, box, ctx, module_name):
             stdscr.addstr(items_row, cx + 4, label, text_color)
         except curses.error:
             pass
-        cx += 4 + len(label) + 2
+        cx += 4 + display_width(label) + 2
 
     if shown and shown[-1] < len(results) - 1:
         remaining = len(results) - 1 - shown[-1]

@@ -173,6 +173,23 @@ def test_display_width_empty_string():
     assert display_width("") == 0
 
 
+# CJK/fullwidth cases — ported from the now-retired text_width.py
+# (unicodedata.east_asian_width()-based; see CLAUDE/NOTES/
+# design-decisions.md#text-width-consolidation) once display_width()/
+# wc_truncate() here were confirmed to be a strict superset: wcswidth()
+# correctly classifies East Asian Wide/Fullwidth characters as 2
+# columns too, not just VS16 sequences, so nothing was lost by
+# consolidating onto one implementation.
+
+def test_display_width_counts_cjk_chars_as_two():
+    assert display_width("和氣") == 4
+
+
+def test_display_width_mixed_ascii_and_cjk():
+    # "CV. " (4 narrow, 4 cols) + "和氣あず未" (5 wide chars, 10 cols)
+    assert display_width("CV. 和氣あず未") == 14
+
+
 def test_wc_truncate_plain_ascii_same_as_slicing():
     assert wc_truncate("hello world", 5) == "hello"
 
@@ -187,8 +204,24 @@ def test_wc_truncate_never_splits_a_base_char_from_its_vs16():
     assert wc_truncate("☀️", 2) == "☀️"
 
 
+def test_wc_truncate_never_splits_a_cjk_char():
+    # "和" is 2 columns; a budget of 1 can't fit it at all.
+    assert wc_truncate("和x", 1) == ""
+    assert wc_truncate("和x", 2) == "和"
+    assert wc_truncate("和x", 3) == "和x"
+
+
+def test_wc_truncate_stops_at_exact_cjk_char_boundary():
+    # Each of these two chars is 2 columns; budget of 4 fits both exactly.
+    assert wc_truncate("和氣あ", 4) == "和氣"
+
+
 def test_wc_truncate_budget_zero_returns_empty():
     assert wc_truncate("hello", 0) == ""
+
+
+def test_wc_truncate_negative_budget_returns_empty():
+    assert wc_truncate("anything", -5) == ""
 
 
 def test_wc_truncate_fits_whole_string_returns_it_unchanged():
