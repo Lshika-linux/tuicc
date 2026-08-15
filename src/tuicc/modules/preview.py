@@ -23,6 +23,22 @@ def draw(stdscr, box, ctx, module_name):
     is_active = module_name == ctx.active_module
     showing_preview = ctx.selected_item is not None and ctx.selected_item.preview_text is not None
 
+    # Unconditionally re-blank this box's whole inner area with real
+    # space characters, every frame, before EITHER branch below draws
+    # anything — found live, stdscr.erase() alone (called once per
+    # frame in frame_update.py) does not reliably clear a cell that
+    # previously held a wide/emoji character's continuation: isolated
+    # repro confirmed a stray leftover glyph surviving into a LATER
+    # frame that lands on the sparse workspace-tile branch below
+    # (which only draws where an actual window exists, leaving gaps
+    # that rely entirely on erase() having cleared them) — the
+    # equivalent fix inside draw_centered_lines() only helps when THAT
+    # function runs, which the workspace-tile branch never calls. See
+    # CLAUDE/NOTES/design-decisions.md#rwb-wide-character-corruption
+    # for the fuller story and the two earlier fixes that didn't
+    # reach this specific gap.
+    draw_filled_box(stdscr, y + 1, x + 1, h - 2, w - 2, 0)
+
     # A preview marked urgent (NavItem.preview_urgent — sysmon.py's
     # diagnostics row when it has real issues) colors the whole border
     # urgent, taking priority over the plain active/selected styling

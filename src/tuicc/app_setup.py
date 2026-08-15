@@ -33,6 +33,7 @@ from tuicc import procmon
 from tuicc import sysinfo
 from tuicc import sensors
 from tuicc import diagnostics
+from tuicc import weather
 
 
 @dataclass
@@ -214,6 +215,16 @@ def build_app() -> AppContext:
                 ),
             },
         ))
+    # Only registered when [weather] is actually configured — an
+    # unconfigured feature shouldn't show up as a permanently-erroring
+    # domain. poll_interval=900 (15min) is the first genuinely long
+    # interval in this codebase (everything else is 0.3-5s) — real
+    # weather doesn't change fast, and this is a free API worth being
+    # polite to. Location itself resolves once and caches inside
+    # weather.py, not on this cadence — see resolve_location()'s own
+    # docstring.
+    if cfg.weather_lat is not None or cfg.weather_geoclue or cfg.weather_ip_approx:
+        domains.append(Domain(name="weather", poll=lambda: weather.get_conditions(cfg), poll_interval=900))
     # push_worker.py/combined_status.py exist, tested, unused — see
     # CLAUDE/NOTES/known-limitations.md#battery-push-unreliable.
     status_worker = StatusWorker(domains)

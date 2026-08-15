@@ -75,3 +75,15 @@ class LoopState:
     active_module: str | None = None
     selected_id: str | None = None
     focus_id: str | None = None
+
+    # Line count of the shared preview.py box's last-drawn preview_text
+    # (0 when nothing was showing). See
+    # CLAUDE/NOTES/design-decisions.md#rwb-wide-character-corruption's
+    # final entry: stdscr.clearok(True) fixes a real wide-character
+    # terminal rendering bug, but forcing it EVERY frame flickers
+    # visibly (confirmed live, unacceptable to the user) — this field
+    # lets main.py arm it only on the specific frame the preview box's
+    # line count actually changes (the one transition confirmed to
+    # trigger the corruption), not on every frame regardless of
+    # activity.
+    last_preview_line_count: int = 0

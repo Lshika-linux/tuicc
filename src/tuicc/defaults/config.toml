@@ -160,9 +160,41 @@ selected = "blue"
 warning = "yellow"
 urgent = "red"
 
-[clock]
+[rwb]
+# RWB = "real world box" — time, date, and (see [weather] below) a
+# compact weather readout, with a detailed summary in the preview
+# panel when this box is selected.
 time_format = "%H:%M:%S"
 date_format = "%a %d.%m."
+
+# [weather]
+# Opt-in — commented out by default, same pattern as the control.toggle
+# examples below. Once uncommented, exactly one of these three location
+# sources must resolve, or tuicc fails loudly at startup rather than
+# guessing: lat+lon (most explicit), or geoclue = true, or
+# ip_approx = true — never a silent auto-detect between them. See
+# CLAUDE/NOTES/design-decisions.md#weather-location-sources for why.
+#
+# lat = 50.0755
+# lon = 14.4378
+# name = "Praha"          # optional — overrides whatever the source below resolves
+# code = "PRG"             # optional — a short display badge shown inline in the
+#                            compact box line (e.g. "PRG ☀️ 18°C"). Purely your own
+#                            preference, empty by default — not a real IATA/airport
+#                            code lookup, tuicc doesn't derive or guess one.
+#
+# geoclue = false          # explicit opt-in: ask GeoClue2 (D-Bus, WiFi-based
+#                            precise positioning — the same mechanism
+#                            Windows/macOS use) for your location. Needs
+#                            geoclue2 installed and configured — see
+#                            CLAUDE/NOTES/known-limitations.md, this is
+#                            the same GeoClue2 the Night Light example
+#                            below can also need.
+# ip_approx = false        # explicit opt-in: rough location via your
+#                            public IP address (ip-api.com — free, no
+#                            key). Can be off by a city or more,
+#                            especially on mobile/VPN/corporate
+#                            networks — see design-decisions.md.
 
 [title_condense]
 # Controls the extra detail line the sidebar shows under each window,

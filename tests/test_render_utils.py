@@ -3,7 +3,14 @@ draw_box_outline/draw_filled_box need a real curses screen to test
 meaningfully, so they're left untested here.
 """
 
-from tuicc.render_utils import format_shortcut, centered_x, eighth_block_level, split_lines_into_columns
+from tuicc.render_utils import (
+    format_shortcut,
+    centered_x,
+    eighth_block_level,
+    split_lines_into_columns,
+    display_width,
+    wc_truncate,
+)
 
 
 def test_format_shortcut_ctrl_combo():
@@ -134,3 +141,67 @@ def test_split_lines_into_columns_empty_input():
 
 def test_split_lines_into_columns_zero_max_rows_returns_empty():
     assert split_lines_into_columns(_lines(3), max_rows=0) == ([], [])
+
+
+# ---------- display_width / wc_truncate ----------
+# Real, live-confirmed wcwidth() behavior (this session) — a variation-
+# selector-16 emoji sequence (base char + U+FE0F) reports 2 real
+# columns via wcswidth() on the whole sequence, NOT the sum of each
+# character's own wcwidth() (1 + 0 = 1, wrong — confirmed live this
+# undercounts). See CLAUDE/NOTES/design-decisions.md
+# #rwb-wide-character-corruption for why this class of bug is worse
+# than "looks a bit off".
+
+def test_display_width_plain_ascii_matches_len():
+    assert display_width("hello") == len("hello")
+
+
+def test_display_width_vs16_emoji_sequence_is_2_not_len():
+    # "☀️" is base U+2600 + U+FE0F — len() is 2 (two codepoints) but
+    # that's coincidence, not correctness: per-character wcwidth() sums
+    # to 1 (1 + 0), the real rendered width is 2.
+    assert display_width("☀️") == 2
+
+
+def test_display_width_already_wide_emoji_no_vs16_needed():
+    # "⛅" (U+26C5) is a single codepoint, already default-emoji-width
+    # per Unicode — no VS16 involved, len() == 1 but display width == 2.
+    assert display_width("⛅") == 2
+
+
+def test_display_width_empty_string():
+    assert display_width("") == 0
+
+
+def test_wc_truncate_plain_ascii_same_as_slicing():
+    assert wc_truncate("hello world", 5) == "hello"
+
+
+def test_wc_truncate_never_splits_a_base_char_from_its_vs16():
+    # Budget for 1 column: the base char alone (1 col via its own bare
+    # wcwidth) would "fit", but keeping it without its VS16 would
+    # silently change which presentation form renders — dropped whole
+    # instead, matching how the sequence is measured as one 2-column
+    # unit everywhere else.
+    assert wc_truncate("☀️", 1) == ""
+    assert wc_truncate("☀️", 2) == "☀️"
+
+
+def test_wc_truncate_budget_zero_returns_empty():
+    assert wc_truncate("hello", 0) == ""
+
+
+def test_wc_truncate_fits_whole_string_returns_it_unchanged():
+    assert wc_truncate("hi", 10) == "hi"
+
+
+def test_centered_x_wide_emoji_centers_correctly_not_by_codepoint_count():
+    # "⛅" is 1 codepoint (len()==1) but 2 real columns (display_width,
+    # tested above) — box_w=11 is chosen specifically because it's a
+    # case where the two disagree: len()-based padding (11-1=10, //2=5)
+    # gives a different result than the correct display-width-based
+    # padding (11-2=9, //2=4) — box_w=10 would coincidentally give the
+    # same answer either way (9//2 == 8//2 == 4), which wouldn't have
+    # caught a regression back to len().
+    assert centered_x(0, 11, "⛅") == 4
+

@@ -121,7 +121,7 @@ def test_resize_step_clamps_at_minimum():
 def test_resize_step_clamps_at_terminal_edge():
     # Box starts at x_cells=90 in a 100-wide terminal — can grow at most
     # to fill the remaining 10 cells, since x itself is never touched.
-    box = ModuleBox(name="clock", x=0.9, y=0.0, w=0.09, h=0.5)
+    box = ModuleBox(name="rwb", x=0.9, y=0.0, w=0.09, h=0.5)
 
     resize_step(box, "w", grow=True, term_width=100, term_height=40, x_cells=90, y_cells=0)
 
@@ -242,7 +242,7 @@ def test_enter_box_editing_snapshots_and_activates():
 def test_enter_box_editing_works_standalone_without_prior_browsing():
     # spawn_box/resize both still work directly from full normal
     # navigation, with no enter_edit_mode first.
-    box = ModuleBox(name="clock", x=0.4, y=0.4, w=0.2, h=0.2)
+    box = ModuleBox(name="rwb", x=0.4, y=0.4, w=0.2, h=0.2)
     state = ResizeState()
 
     enter_box_editing(state, box, is_new=True)
@@ -281,7 +281,7 @@ def test_escape_box_editing_reverts_an_existing_box_and_returns_to_browsing():
 
 
 def test_escape_box_editing_removes_a_just_spawned_box():
-    box = ModuleBox(name="clock", x=0.4, y=0.4, w=0.2, h=0.2)
+    box = ModuleBox(name="rwb", x=0.4, y=0.4, w=0.2, h=0.2)
     state = ResizeState()
     enter_box_editing(state, box, is_new=True)
     layout_boxes = [box]
@@ -411,10 +411,10 @@ def test_hint_text_shows_dimension_and_module_when_editing():
 def test_open_picker_activates_with_sorted_choices():
     state = SpawnPickerState()
 
-    open_picker(state, {"sessions", "clock", "connectivity"})
+    open_picker(state, {"sessions", "rwb", "connectivity"})
 
     assert state.active is True
-    assert state.choices == ["clock", "connectivity", "sessions"]
+    assert state.choices == ["connectivity", "rwb", "sessions"]
 
 
 def test_open_picker_no_op_when_nothing_available():
@@ -436,7 +436,7 @@ def test_open_picker_caps_at_nine_choices():
 
 
 def test_choose_valid_digit_returns_the_name_and_closes():
-    state = SpawnPickerState(active=True, choices=["clock", "sessions"])
+    state = SpawnPickerState(active=True, choices=["rwb", "sessions"])
 
     choice = choose(state, ord("2"))
 
@@ -446,7 +446,7 @@ def test_choose_valid_digit_returns_the_name_and_closes():
 
 
 def test_choose_invalid_digit_returns_none_and_still_closes():
-    state = SpawnPickerState(active=True, choices=["clock"])
+    state = SpawnPickerState(active=True, choices=["rwb"])
 
     choice = choose(state, ord("9"))
 
@@ -455,11 +455,11 @@ def test_choose_invalid_digit_returns_none_and_still_closes():
 
 
 def test_spawn_hint_text_lists_numbered_choices():
-    state = SpawnPickerState(active=True, choices=["clock", "sessions"])
+    state = SpawnPickerState(active=True, choices=["rwb", "sessions"])
 
     text = spawn_hint_text(state)
 
-    assert "1 clock" in text
+    assert "1 rwb" in text
     assert "2 sessions" in text
 
 

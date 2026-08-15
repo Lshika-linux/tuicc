@@ -506,6 +506,53 @@ def main(stdscr):
                         loop_state.resize_message = None
                         loop_state.resize_message_urgent = False
 
+                # stdscr.redrawln(beg, num) marks those specific screen
+                # lines as corrupted, forcing curses to fully retransmit
+                # their content on the NEXT refresh() instead of trusting
+                # its own per-cell diff — see
+                # CLAUDE/NOTES/design-decisions.md#rwb-wide-character-corruption's
+                # final entries: a wide/VS16 glyph followed, on a later
+                # frame, by narrower content in the shared preview.py box
+                # left a stray leftover glyph fragment on screen. stdscr.
+                # instr() proved curses' own internal buffer was already
+                # correct — the terminal just never received fresh bytes
+                # for that one cell, because curses' diff believed nothing
+                # had changed there. stdscr.clearok(True) (tried first)
+                # also fixed this, but sends the terminal an actual
+                # clear-screen capability, which visibly flashed blank on
+                # every armed frame — confirmed unacceptable live, twice
+                # over (first armed every frame, then only on this exact
+                # transition — even the occasional flash was rejected).
+                # redrawln() is a materially different, cheaper primitive:
+                # it never sends a clear-screen command, only forces a
+                # normal cursor-positioned rewrite of the affected lines'
+                # full width — the same kind of terminal operation any
+                # ordinary content update already uses without flicker.
+                # touchline() (same "mark dirty" idea, curses' more
+                # general draw-optimization bookkeeping call) was tried
+                # first and did NOT fix the corruption — redrawln() is the
+                # more specific "these lines are corrupted, redraw them
+                # completely" primitive, and only that one actually works.
+                # Scoped to just the preview box's own interior rows (not
+                # the whole terminal, unlike clearok) — still gated on the
+                # box's line count actually changing, since that's the
+                # one confirmed corrupting transition and there's no
+                # reason to force even a cheap resend on frames nothing
+                # relevant changed.
+                current_preview_line_count = (
+                    len(selected_item.preview_text)
+                    if selected_item is not None and selected_item.preview_text is not None
+                    else 0
+                )
+                if current_preview_line_count != loop_state.last_preview_line_count:
+                    preview_box = boxes.get("preview")
+                    if preview_box is not None:
+                        _, preview_y, _, preview_h = preview_box
+                        inner_top, inner_rows = preview_y + 1, preview_h - 2
+                        if inner_rows > 0:
+                            stdscr.redrawln(inner_top, inner_rows)
+                loop_state.last_preview_line_count = current_preview_line_count
+
             stdscr.refresh()
 
             key = stdscr.getch()

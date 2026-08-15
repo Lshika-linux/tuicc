@@ -19,7 +19,7 @@
 # This is tuicc's own "thesis screen" (see CLAUDE/VISION.md's R7
 # section) — captured from live use, F2/F3'd into shape rather than
 # hand-derived: left column stacks sessions/sidebar/control/power_menu,
-# launcher fills the top strip with clock in the corner, preview
+# launcher fills the top strip with rwb in the corner, preview
 # dominates the center, bars runs the full height on the right edge,
 # and connectivity/media/sysmon share the bottom row.
 
@@ -87,7 +87,7 @@ w = 0.302083
 h = 0.215686
 
 [[box]]
-name = "clock"
+name = "rwb"
 x = 0.921875
 y = 0.0
 w = 0.078125

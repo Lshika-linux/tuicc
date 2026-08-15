@@ -53,7 +53,7 @@ confirm = false
 
 {power_menu_block}
 
-[clock]
+[rwb]
 time_format = "%H:%M:%S"
 date_format = "%a"
 

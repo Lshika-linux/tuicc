@@ -68,8 +68,21 @@ class Config:
     theme: dict
     keybinds: dict
     quick_actions: list
-    clock_time_format: str
-    clock_date_format: str
+    rwb_time_format: str
+    rwb_date_format: str
+    weather_lat: float | None
+    weather_lon: float | None
+    weather_name: str | None
+    # A short display badge (e.g. "PRG") for the compact box line —
+    # deliberately NOT auto-derived from weather_name (a real
+    # IATA-style code needs a whole cities database this project isn't
+    # going to embed for a cosmetic detail) and NOT named weather_code:
+    # that name is already Open-Meteo's own JSON field for the WMO
+    # condition code, parsed inside weather.py — a different thing
+    # entirely, kept unambiguous even though they're unrelated.
+    weather_city_code: str | None
+    weather_geoclue: bool
+    weather_ip_approx: bool
     terminal_apps: set
     browser_apps: set
     browser_title_names: set
@@ -369,6 +382,42 @@ def _build_session_names(user_data: dict) -> dict:
     }
 
 
+def _build_weather_config(user_data: dict) -> dict:
+    """[weather] -> {"lat", "lon", "name", "code", "geoclue", "ip_approx"}.
+    .get()-with-default (not direct indexing): [weather] is new and
+    optional, ships commented out by default — a config predating it
+    genuinely lacks the section, and load_config() must not crash on
+    every launch for every config seeded before this landed (same
+    reasoning as [audio]'s own audio_backend_name above). But once the
+    section IS present, it must resolve to a real, usable location —
+    see CLAUDE/NOTES/design-decisions.md#weather-location-sources for
+    why there's deliberately no silent auto-detect fallback between
+    the three explicit sources (CONTRIBUTING.md's no-silent-fallback
+    rule, same style _build_control_toggles below already follows).
+    `code` (the compact box line's optional display badge) has no
+    validation of its own — purely cosmetic, a personal preference the
+    user types themselves (CONTRIBUTING.md's "no hardcoded personal
+    preferences" rule — this project doesn't guess or derive one).
+    """
+    weather_data = user_data.get("weather")
+    if weather_data is None:
+        return {"lat": None, "lon": None, "name": None, "code": None, "geoclue": False, "ip_approx": False}
+    lat = weather_data.get("lat")
+    lon = weather_data.get("lon")
+    name = weather_data.get("name")
+    code = weather_data.get("code")
+    geoclue = weather_data.get("geoclue", False)
+    ip_approx = weather_data.get("ip_approx", False)
+    if (lat is None) != (lon is None):
+        raise ValueError("[weather] lat and lon must both be set together")
+    if lat is None and not geoclue and not ip_approx:
+        raise ValueError(
+            "[weather] is configured but no location source is set — "
+            "set lat and lon, or geoclue = true, or ip_approx = true"
+        )
+    return {"lat": lat, "lon": lon, "name": name, "code": code, "geoclue": geoclue, "ip_approx": ip_approx}
+
+
 def _build_control_toggles(user_data: dict) -> list:
     """[[control.toggle]] -> a list of {"label", "shell_true", "states"}
     dicts. .get()-with-default (not direct indexing): the packaged
@@ -571,8 +620,9 @@ def load_config() -> Config:
 
     session_names = _build_session_names(user_data)
 
-    clock_time_format = user_data["clock"]["time_format"]
-    clock_date_format = user_data["clock"]["date_format"]
+    rwb_time_format = user_data["rwb"]["time_format"]
+    rwb_date_format = user_data["rwb"]["date_format"]
+    weather_config = _build_weather_config(user_data)
     terminal_apps = set(user_data["title_condense"]["terminal_apps"])
     browser_apps = set(user_data["title_condense"]["browser_apps"])
     browser_title_names = set(user_data["title_condense"]["browser_title_names"])
@@ -619,8 +669,14 @@ def load_config() -> Config:
         theme=theme,
         keybinds=keybinds,
         quick_actions=quick_actions,
-        clock_time_format=clock_time_format,
-        clock_date_format=clock_date_format,
+        rwb_time_format=rwb_time_format,
+        rwb_date_format=rwb_date_format,
+        weather_lat=weather_config["lat"],
+        weather_lon=weather_config["lon"],
+        weather_name=weather_config["name"],
+        weather_city_code=weather_config["code"],
+        weather_geoclue=weather_config["geoclue"],
+        weather_ip_approx=weather_config["ip_approx"],
         terminal_apps=terminal_apps,
         browser_apps=browser_apps,
         browser_title_names=browser_title_names,

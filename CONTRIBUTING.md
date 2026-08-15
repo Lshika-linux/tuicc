@@ -52,7 +52,7 @@ python main.py
 ```
 
 ```bash
-nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney])' --run 'PYTHONPATH=src pytest tests/ -v'
+nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney ps.wcwidth])' --run 'PYTHONPATH=src pytest tests/ -v'
 ```
 
 See the [README](README.md) and the [wiki](https://github.com/Lshika-linux/tuicc/wiki) for architecture details.

@@ -8,6 +8,117 @@ the module's own file in modules/, not here.
 
 import curses
 
+from wcwidth import wcswidth
+
+
+def display_width(text: str) -> int:
+    """Real terminal column width of text — NOT len(text), which counts
+    Unicode codepoints, not rendered columns. The two only diverge once
+    a string can contain a genuinely wide character (an emoji, a CJK
+    character), but when it does, len() silently breaks every
+    centering/clipping calculation downstream — and found live, it's
+    worse than "looks a bit off": curses' own refresh() diffs against
+    its internal model of what's already on screen, so a wrongly-
+    positioned/wrongly-clipped write based on a bad width count
+    reproduces the SAME wrong result every single frame, reading as
+    permanent visual corruption, not a one-off glitch (see
+    CLAUDE/NOTES/design-decisions.md#rwb-wide-character-corruption).
+
+    Uses wcwidth's wcswidth() (the POSIX primitive, matching what a
+    real terminal's own column math is based on) rather than Python's
+    stdlib unicodedata.east_asian_width() — that's a known-unreliable
+    proxy specifically for emoji+variation-selector sequences, exactly
+    the case this exists for. wcswidth() genuinely needs the WHOLE
+    string, not a naive per-character sum: confirmed live, wcwidth('☀')
+    reports 1 and wcwidth('️') reports 0, summing to 1 — but
+    wcswidth('☀️') correctly reports 2, the real rendered width,
+    because it understands the variation-selector SEQUENCE as a unit.
+
+    Returns 0 (never a negative) for a string wcswidth() can't measure
+    (embedded control characters) — same "floor at 0, never guess"
+    discipline centered_x() already had before this existed.
+    """
+    width = wcswidth(text)
+    return width if width is not None and width >= 0 else 0
+
+
+def wc_truncate(text: str, max_width: int) -> str:
+    """text, cut down to fit within max_width real terminal columns —
+    the width-aware equivalent of text[:n]. A base character
+    immediately followed by a variation selector (U+FE0F) is kept or
+    dropped as ONE unit (matching display_width()'s own whole-sequence
+    measurement, see its docstring) — never split so the base character
+    survives without its selector, which would silently change which
+    presentation form renders.
+    """
+    if max_width <= 0:
+        return ""
+    result = []
+    used = 0
+    i = 0
+    while i < len(text):
+        unit = text[i:i + 2] if i + 1 < len(text) and text[i + 1] == "️" else text[i]
+        unit_width = display_width(unit)
+        if used + unit_width > max_width:
+            break
+        result.append(unit)
+        used += unit_width
+        i += len(unit)
+    return "".join(result)
+
+
+def draw_width_safe(stdscr, row, col, text, color):
+    """Draws text starting at (row, col) — but any character wider
+    than 1 column (an emoji, a VS16 sequence) gets its OWN isolated
+    addstr() call, with every subsequent segment's start column
+    computed explicitly via display_width(), never inherited from
+    wherever curses itself left the cursor after writing the wide
+    glyph.
+
+    Exists because a single addstr() call spanning a wide character
+    isn't safe on its own even once display_width()'s calculation is
+    correct: confirmed live, ncurses' own internal C-level cursor-
+    advance bookkeeping for a wide/VS16 glyph can disagree with what
+    the real terminal (kitty) actually renders it as — and that
+    mismatch happens one layer below anything a Python-side width
+    calculation can reach or correct (see
+    CLAUDE/NOTES/design-decisions.md#rwb-wide-character-corruption).
+    Every draw call in this codebase already explicitly specifies
+    (row, col) rather than relying on cursor continuity ACROSS calls —
+    this extends the same discipline to WITHIN one line: isolating each
+    wide glyph into its own call, with its neighbors' positions
+    computed independently, means no write's correctness ever depends
+    on curses' own (possibly wrong) idea of how far the previous write
+    advanced the cursor.
+    """
+    x = col
+    run_start = 0
+    i = 0
+    while i < len(text):
+        unit_len = 2 if i + 1 < len(text) and text[i + 1] == "️" else 1
+        unit = text[i:i + unit_len]
+        if display_width(unit) > 1:
+            if i > run_start:
+                run = text[run_start:i]
+                try:
+                    stdscr.addstr(row, x, run, color)
+                except curses.error:
+                    pass
+                x += display_width(run)
+            try:
+                stdscr.addstr(row, x, unit, color)
+            except curses.error:
+                pass
+            x += display_width(unit)
+            run_start = i + unit_len
+        i += unit_len
+    if run_start < len(text):
+        run = text[run_start:]
+        try:
+            stdscr.addstr(row, x, run, color)
+        except curses.error:
+            pass
+
 
 def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
     if h < 1 or w < 1:
@@ -17,11 +128,11 @@ def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
         if title:
             label = f" {title} "
             available = max(w - 2, 0)
-            if len(label) >= available:
+            if display_width(label) >= available:
                 top = "┌" + "─" * (w - 2) + "┐"
             else:
                 left_dashes = 1
-                right_dashes = available - len(label) - left_dashes
+                right_dashes = available - display_width(label) - left_dashes
                 top = "┌" + "─" * left_dashes + label + "─" * right_dashes + "┐"
             stdscr.addstr(y, x, top, color_pair)
         else:
@@ -74,7 +185,7 @@ def draw_filled_box(stdscr, y, x, h, w, color_pair=0):
         pass
 
 def centered_x(box_x, box_w, text):
-    padding = max(box_w - len(text), 0)
+    padding = max(box_w - display_width(text), 0)
     return box_x + padding // 2
 
 
@@ -93,6 +204,22 @@ def draw_centered_lines(stdscr, box, lines):
     max_rows = max(h - 2, 0)  # rows actually inside the border (y+1 .. y+h-2)
     if max_rows <= 0 or not lines:
         return
+
+    # Explicitly blank the whole inner area with plain spaces before
+    # drawing this frame's content — found live, this box gets reused
+    # across frames for wildly different content (whichever NavItem is
+    # currently selected), and stdscr.erase() alone was NOT enough to
+    # reliably clear it once a previous frame's content included a wide
+    # (emoji) character: isolated live repro confirmed the very next
+    # frame after a wide-character line, on totally different (all-
+    # ASCII) content, still showed stray leftover glyphs at the same
+    # position. Root cause not fully understood at the ncurses-internals
+    # level (see CLAUDE/NOTES/design-decisions.md
+    # #rwb-wide-character-corruption for the two prior fixes that did
+    # NOT solve this on their own) — this sidesteps it empirically by
+    # never trusting erase()'s own diffing for this specific box, always
+    # force-writing real space characters here first.
+    draw_filled_box(stdscr, y + 1, x + 1, max_rows, inner_w, 0)
 
     if len(lines) <= max_rows:
         _draw_centered_column(stdscr, x + 1, y + 1, inner_w, max_rows, lines, center_each_line=True)
@@ -135,16 +262,13 @@ def _draw_centered_column(stdscr, col_x, top_row, col_w, max_rows, lines, center
     two-column paths above.
     """
     start_row = top_row + max((max_rows - len(lines)) // 2, 0)
-    try:
-        for i, (text, color) in enumerate(lines):
-            row = start_row + i
-            if row < top_row or row >= top_row + max_rows:
-                continue
-            clipped = text[:col_w]
-            col = centered_x(col_x, col_w, clipped) if center_each_line else col_x
-            stdscr.addstr(row, col, clipped, color)
-    except curses.error:
-        pass
+    for i, (text, color) in enumerate(lines):
+        row = start_row + i
+        if row < top_row or row >= top_row + max_rows:
+            continue
+        clipped = wc_truncate(text, col_w)
+        col = centered_x(col_x, col_w, clipped) if center_each_line else col_x
+        draw_width_safe(stdscr, row, col, clipped, color)
 
 
 def draw_text_panel(stdscr, box, lines, border_color, title=None):
@@ -166,7 +290,7 @@ def draw_text_panel(stdscr, box, lines, border_color, title=None):
             row = y + 1 + i
             if row >= y + h - 1:
                 break
-            stdscr.addstr(row, x + 2, text[:inner_w], color)
+            stdscr.addstr(row, x + 2, wc_truncate(text, inner_w), color)
     except curses.error:
         pass
 
@@ -178,7 +302,7 @@ def draw_status_line(stdscr, term_width, text, color_pair):
     to term_width so it fits rather than raising curses.error.
     """
     try:
-        stdscr.addstr(0, 0, text[:term_width], color_pair)
+        stdscr.addstr(0, 0, wc_truncate(text, term_width), color_pair)
     except curses.error:
         pass
 

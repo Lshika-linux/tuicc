@@ -296,7 +296,7 @@ def test_prev_item_in_module_no_items_returns_none():
 # Regression coverage for a real bug: next_item_in_module
 # returning None (module exhausted) used to trigger exactly one
 # next_module_name + first_item_in_module lookup — if THAT module also
-# had zero items (launcher, preview, and clock all do, in the packaged
+# had zero items (launcher, preview, and rwb all do, in the packaged
 # default preset), the keypress did nothing at all, with no way to
 # advance further. Power Menu -> Launcher (empty) -> Preview (empty)
 # -> Sessions is the exact real sequence that left Tab permanently
@@ -341,7 +341,7 @@ def test_next_item_across_modules_skips_several_consecutive_empty_modules():
 
     result = next_item_across_modules(
         [a, b],
-        ["power_menu", "launcher", "preview", "sessions", "clock"],
+        ["power_menu", "launcher", "preview", "sessions", "rwb"],
         "power_menu",
         "power_menu:shutdown",
     )
@@ -352,13 +352,13 @@ def test_next_item_across_modules_skips_several_consecutive_empty_modules():
 def test_next_item_across_modules_wraps_around_module_list():
     a = NavItem(id="sidebar:1", rect=(0, 0, 1, 1))
 
-    result = next_item_across_modules([a], ["sidebar", "clock"], "clock", None)
+    result = next_item_across_modules([a], ["sidebar", "rwb"], "rwb", None)
 
     assert result.id == "sidebar:1"
 
 
 def test_next_item_across_modules_all_modules_empty_returns_none():
-    result = next_item_across_modules([], ["launcher", "preview", "clock"], "launcher", None)
+    result = next_item_across_modules([], ["launcher", "preview", "rwb"], "launcher", None)
 
     assert result is None
 
@@ -378,7 +378,7 @@ def test_prev_item_across_modules_skips_several_consecutive_empty_modules():
 
     result = prev_item_across_modules(
         [a, b],
-        ["power_menu", "launcher", "preview", "sessions", "clock"],
+        ["power_menu", "launcher", "preview", "sessions", "rwb"],
         "power_menu",
         "power_menu:lock",
     )
@@ -387,7 +387,7 @@ def test_prev_item_across_modules_skips_several_consecutive_empty_modules():
 
 
 def test_prev_item_across_modules_all_modules_empty_returns_none():
-    result = prev_item_across_modules([], ["launcher", "preview", "clock"], "launcher", None)
+    result = prev_item_across_modules([], ["launcher", "preview", "rwb"], "launcher", None)
 
     assert result is None
 
@@ -464,7 +464,7 @@ def test_same_row_neighbor_ignores_items_from_a_different_module():
     # Same y, different module — must NOT treat these as row siblings,
     # even though they're geometrically on the same screen row.
     a = _row_item("sessions", "load", 0.1)
-    other = _row_item("clock", "time", 0.9)
+    other = _row_item("rwb", "time", 0.9)
 
     assert same_row_neighbor([a, other], selected_id="sessions:load", direction=1) is None
 

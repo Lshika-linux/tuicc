@@ -24,6 +24,7 @@ from tuicc.config import (
     get_raw_power_menu_actions,
     _build_session_names,
     _build_control_toggles,
+    _build_weather_config,
     _build_sysmon_blocks,
     DEFAULT_SYSMON_BLOCKS,
 )
@@ -670,6 +671,78 @@ def test_build_control_toggles_rejects_a_missing_status_command_on_a_non_last_st
 
     with pytest.raises(ValueError):
         _build_control_toggles(user_data)
+
+
+# ---------- _build_weather_config ----------
+
+def test_build_weather_config_missing_section_is_off_with_no_crash():
+    # [weather] ships commented out by default — a fresh install's
+    # user_data genuinely has no "weather" key at all.
+    assert _build_weather_config({}) == {
+        "lat": None, "lon": None, "name": None, "code": None, "geoclue": False, "ip_approx": False,
+    }
+
+
+def test_build_weather_config_explicit_lat_lon():
+    user_data = {"weather": {"lat": 50.0755, "lon": 14.4378, "name": "Praha"}}
+
+    result = _build_weather_config(user_data)
+
+    assert result == {
+        "lat": 50.0755, "lon": 14.4378, "name": "Praha", "code": None,
+        "geoclue": False, "ip_approx": False,
+    }
+
+
+def test_build_weather_config_geoclue_only():
+    user_data = {"weather": {"geoclue": True}}
+
+    result = _build_weather_config(user_data)
+
+    assert result == {
+        "lat": None, "lon": None, "name": None, "code": None,
+        "geoclue": True, "ip_approx": False,
+    }
+
+
+def test_build_weather_config_ip_approx_only():
+    user_data = {"weather": {"ip_approx": True}}
+
+    result = _build_weather_config(user_data)
+
+    assert result == {
+        "lat": None, "lon": None, "name": None, "code": None,
+        "geoclue": False, "ip_approx": True,
+    }
+
+
+def test_build_weather_config_code_is_a_plain_passthrough():
+    user_data = {"weather": {"lat": 50.0, "lon": 14.0, "code": "PRG"}}
+
+    result = _build_weather_config(user_data)
+
+    assert result["code"] == "PRG"
+
+
+def test_build_weather_config_rejects_lat_without_lon():
+    user_data = {"weather": {"lat": 50.0}}
+
+    with pytest.raises(ValueError):
+        _build_weather_config(user_data)
+
+
+def test_build_weather_config_rejects_lon_without_lat():
+    user_data = {"weather": {"lon": 14.0}}
+
+    with pytest.raises(ValueError):
+        _build_weather_config(user_data)
+
+
+def test_build_weather_config_rejects_section_present_with_no_source():
+    user_data = {"weather": {"name": "Praha"}}  # a name alone resolves nothing
+
+    with pytest.raises(ValueError):
+        _build_weather_config(user_data)
 
 
 # ---------- _build_sysmon_blocks ----------

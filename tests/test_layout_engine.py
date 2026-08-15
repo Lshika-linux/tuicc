@@ -62,7 +62,7 @@ def test_real_preset_1_loads_and_every_box_is_within_bounds(tmp_path, monkeypatc
     layout = build_layout_from_preset(1)
     boxes = compute_boxes(layout, term_width=100, term_height=40)
     assert set(boxes.keys()) == {
-        "sidebar", "connectivity", "power_menu", "launcher", "sessions", "preview", "clock",
+        "sidebar", "connectivity", "power_menu", "launcher", "sessions", "preview", "rwb",
         "control", "media", "bars", "sysmon",
     }
     for x, y, w, h in boxes.values():
