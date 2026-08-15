@@ -564,7 +564,10 @@ def _ctx(windows=None, windows_error=None, sysinfo_data=None, sensors_data=None,
             errors={"windows": windows_error},
         ),
         theme={}, selected_id=selected_id,
-        config=SimpleNamespace(sysmon_blocks=_DEFAULT_BLOCKS, sysmon_visible_slots=3),
+        config=SimpleNamespace(
+            sysmon_blocks=_DEFAULT_BLOCKS, sysmon_visible_slots=3,
+            keybinds={"confirm": ord("\n")},
+        ),
         pending_confirm=None,
     )
 
@@ -640,6 +643,10 @@ def test_nav_items_includes_diagnostics_row():
     assert len(diag_items) == 1
     assert diag_items[0].preview_text == [("No issues found", 0)]
     assert diag_items[0].preview_urgent is False
+    # "All clear" has nothing worth copying — no footer hint at all,
+    # same reasoning connectivity.py's own hints follow for an inert
+    # state.
+    assert diag_items[0].preview_footer is None
 
 
 def test_nav_items_diagnostics_row_is_urgent_when_there_are_real_issues():
@@ -653,6 +660,11 @@ def test_nav_items_diagnostics_row_is_urgent_when_there_are_real_issues():
 
     diag_item = next(it for it in items if it.target_kind == "sysmon_diagnostics")
     assert diag_item.preview_urgent is True
+    # The old inline "(Enter = copy to clipboard)" row-text hint moved
+    # to its own boxed preview_footer (see NavItem.preview_footer's own
+    # docstring, same pattern connectivity.py's interaction hints use)
+    # — shown once there's actually something worth copying.
+    assert diag_item.preview_footer == [("[Enter] Copy to clipboard", 0)]
 
 
 # ---------- handle_row / handle_action ----------

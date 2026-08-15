@@ -616,14 +616,13 @@ def draw(stdscr, box, ctx, module_name):
             text_color = theme.get("selected", 0) if is_row_selected else theme.get("text", 0)
             attr = curses.A_BOLD if is_row_selected else 0
             summary = _diagnostics_summary_text(diag)
-            # Discoverability for handle_diagnostics()'s copy action —
-            # right on the row itself. Only shown once hovered (selected)
-            # AND only when there's actually something worth copying
-            # (has_issues) — "All clear" needs no copy hint, and showing
-            # it unconditionally on every row made the box noisier than
-            # the hint was worth.
-            if diag is not None and has_issues and is_row_selected:
-                summary = f"{summary} ({key_label(ctx.config.keybinds['confirm'])} = copy to clipboard)"
+            # Discoverability for handle_diagnostics()'s copy action used
+            # to be an inline "(Enter = copy to clipboard)" appended
+            # right here — moved to its own boxed preview_footer (see
+            # nav_items()'s diagnostics NavItem below and NavItem.
+            # preview_footer's own docstring) for the same "controls
+            # visually stand apart from information" reasoning
+            # connectivity.py's own hints were moved there for.
             rest = wc_truncate(f" {summary}", max(inner_w - 1, 0))
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
@@ -707,13 +706,28 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 
         elif kind == "diagnostics":
             diag = payload
+            has_issues = _diagnostics_has_issues(diag)
             items.append(NavItem(
                 id="sysmon:diagnostics",
                 rect=(x + 1, row, w - 2, 1),
                 focus_target=None,
                 target_kind="sysmon_diagnostics",
                 preview_text=_diagnostics_preview_text(diag, theme),
-                preview_urgent=_diagnostics_has_issues(diag),
+                preview_urgent=has_issues,
+                # Discoverability for handle_diagnostics()'s copy action
+                # — a separate boxed preview_footer (see NavItem.
+                # preview_footer's own docstring, same pattern
+                # connectivity.py's interaction hints use), not mixed
+                # into preview_text itself: item.preview_text is what
+                # handle_diagnostics() actually copies to the clipboard
+                # verbatim, so the hint line living anywhere in THAT
+                # list would get copied right along with the real
+                # diagnostics breakdown. Only when there's something
+                # worth copying (has_issues) — "All clear" needs no hint.
+                preview_footer=(
+                    [(f"[{key_label(ctx.config.keybinds['confirm'])}] Copy to clipboard", theme.get("urgent", 0))]
+                    if has_issues else None
+                ),
             ))
 
     # peek items for the scrollable window section, same mechanism
