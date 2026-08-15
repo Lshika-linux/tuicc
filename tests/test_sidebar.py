@@ -7,9 +7,10 @@ drawing code is left untested here.
 from types import SimpleNamespace
 
 from tuicc.model import Region, Window, WMState
+from tuicc.navigation import LAST_ITEM_QUERY
 from tuicc.modules.sidebar import (
     nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
-    _visible_slot_range, _selected_slot_index,
+    _visible_slot_range, _selected_slot_index, _hidden_summary, _windowed_range,
 )
 
 
@@ -131,6 +132,25 @@ def test_selected_slot_index_none_when_nothing_selected():
     assert _selected_slot_index(slots, None) is None
 
 
+def test_selected_slot_index_last_item_query_returns_the_true_last_index():
+    # main.py's Shift+Tab-into-sidebar exception (see LAST_ITEM_QUERY's
+    # own docstring in navigation.py) — must be the true last slot, not
+    # whatever the default top-anchored window would happen to include.
+    slots = [("1", None), ("2", None), ("3", None)]
+    assert _selected_slot_index(slots, LAST_ITEM_QUERY) == 2
+
+
+def test_nav_items_last_item_query_windows_around_the_true_last_slot():
+    # End-to-end: even with a box far too short to show everything from
+    # the top, querying with LAST_ITEM_QUERY must still return the real
+    # final workspace among the results.
+    ctx = _ctx(regions=[], total_workspaces=10, selected_id=LAST_ITEM_QUERY)
+
+    items = nav_items((0, 0, 20, 7), ctx, "sidebar")
+
+    assert items[-1].focus_target == "10"
+
+
 # ---------- nav_items ----------
 
 def test_nav_items_one_per_workspace_slot():
@@ -215,6 +235,65 @@ def test_nav_items_peek_item_reaches_the_next_hidden_slot():
     items = nav_items((0, 0, 20, 7), ctx, "sidebar")
 
     assert any(item.focus_target == "3" for item in items)
+
+
+# ---------- _windowed_range ----------
+# Reserves real content rows for "hidden content" indicators, not a
+# label embedded in the box's own border — found live, adjacent boxes
+# in this codebase's own tightly-packed presets commonly share a
+# border row with zero gap, and whichever draws later in MODULES'
+# iteration order silently overwrites anything the earlier one drew
+# there. See _windowed_range's own docstring for the full story.
+
+def test_windowed_range_no_indicators_needed_when_everything_fits():
+    start, end, needs_above, needs_below = _windowed_range([2, 2, 2], None, 20)
+    assert (start, end, needs_above, needs_below) == (0, 3, False, False)
+
+
+def test_windowed_range_below_only_reserves_exactly_one_row():
+    # Without reservation, budget=6 fits 3 of these 2-row slots exactly
+    # (6/2=3). With one row reserved for the "below" indicator,
+    # available drops to 5, fitting only 2.
+    start, end, needs_above, needs_below = _windowed_range([2, 2, 2, 2, 2], None, 6)
+    assert needs_above is False
+    assert needs_below is True
+    assert (start, end) == (0, 2)
+
+
+def test_windowed_range_above_and_below_both_reserve():
+    # Selection in the middle, budget too small to reach either edge —
+    # both indicators needed, two rows reserved.
+    start, end, needs_above, needs_below = _windowed_range([2, 2, 2, 2, 2], 2, 5)
+    assert needs_above is True
+    assert needs_below is True
+    # 5 - 2 reserved = 3 rows left, fits exactly slot 2 alone (2 rows)
+    # plus 1 leftover row (not enough for a whole neighboring 2-row slot).
+    assert start <= 2 < end
+
+
+# ---------- _hidden_summary ----------
+
+def test_hidden_summary_empty_indices_is_blank():
+    slots = [("1", None, [], 2)]
+    assert _hidden_summary(slots, []) == ""
+
+
+def test_hidden_summary_counts_workspaces_and_windows():
+    region = Region(id="2", name="2", windows=[_window("w1", "a"), _window("w2", "b")])
+    slots = [("1", None, [], 2), ("2", region, [], 4)]
+    assert _hidden_summary(slots, [1]) == "+1 ws, +2 win"
+
+
+def test_hidden_summary_omits_window_count_when_zero():
+    slots = [("1", None, [], 2), ("2", None, [], 2)]
+    assert _hidden_summary(slots, [0, 1]) == "+2 ws"
+
+
+def test_hidden_summary_sums_windows_across_multiple_hidden_workspaces():
+    r1 = Region(id="1", name="1", windows=[_window("w1", "a")])
+    r2 = Region(id="2", name="2", windows=[_window("w2", "b"), _window("w3", "c")])
+    slots = [("1", r1, [], 3), ("2", r2, [], 4)]
+    assert _hidden_summary(slots, [0, 1]) == "+2 ws, +3 win"
 
 
 def test_nav_items_no_peek_items_when_everything_fits():

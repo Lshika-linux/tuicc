@@ -125,6 +125,26 @@ def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | No
     return None
 
 
+# A ctx.selected_id value no real NavItem id can ever collide with
+# (every real id is "module_name:something") — a windowed module (see
+# sidebar.py's own #sidebar-variable-height-windowing docstring)
+# recognizes this and computes its own TRUE last item, ignoring
+# whatever it would normally infer from a real (or absent) selected_id.
+# Exists because last_item_in_module() below only ever scans the
+# single, already-computed items list for THIS frame — for a module
+# whose nav_items() windows its own content around the CURRENT
+# selection, that frame's list commonly doesn't contain the module's
+# real last item at all (e.g. sidebar showing workspaces 1-6 while
+# selection is elsewhere doesn't include workspace 10 anywhere in what
+# it returns) — no amount of scanning that list finds an item that was
+# never in it. main.py re-queries the target module's own nav_items()
+# directly with this sentinel in place of the real selected_id when
+# rolling backward (Shift+Tab) into a module that needs it — see its
+# own "sidebar" branch, mirroring the pre-existing "sessions always
+# rolls in on slot 1" exception right above it in the same dispatch.
+LAST_ITEM_QUERY = "__navigation_query_last_item__"
+
+
 def last_item_in_module(items: list[NavItem], module_name: str) -> NavItem | None:
     """Mirror of first_item_in_module — used to land on a module's LAST
     item when rolling into it backward (Shift+Tab past the first item

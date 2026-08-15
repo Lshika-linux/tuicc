@@ -21,7 +21,7 @@ items are — the core never guesses a module's internal layout.
 
 import curses
 
-from tuicc.navigation import NavItem
+from tuicc.navigation import NavItem, LAST_ITEM_QUERY
 from tuicc.render_utils import draw_box_outline, display_width, wc_truncate
 from tuicc.title_condense import condense_title
 
@@ -64,7 +64,18 @@ def _selected_slot_index(slots, selected_id) -> int | None:
     and consistent, not a gap: nothing case (ctx.selected_id belongs to
     a different module) needs a stale scroll position remembered
     across it).
+
+    navigation.LAST_ITEM_QUERY is a special case, not "not selected":
+    main.py re-queries nav_items() with this in place of a real
+    selected_id specifically when rolling backward (Shift+Tab) into
+    sidebar from another module — see that constant's own docstring
+    for why plain list-scanning can't find the true last item on its
+    own. Returning the true last index here (not None) makes
+    _visible_slot_range anchor its window on it directly, the same way
+    a real selection on that slot would.
     """
+    if selected_id == LAST_ITEM_QUERY:
+        return len(slots) - 1 if slots else None
     for i, (ws_id, _region) in enumerate(slots):
         if f"sidebar:{ws_id}" == selected_id:
             return i
@@ -150,20 +161,79 @@ def _slot_data(ctx):
     return data
 
 
+def _hidden_summary(slots, indices) -> str:
+    """"+N ws, +M win" for the slots at these indices — how many
+    workspaces AND how many real windows inside them are currently
+    scrolled out of view. Window count matters on its own, not just
+    workspace count: "+1 workspace" undersells it when that one hidden
+    workspace happens to hold a dozen windows. "" (falsy, draw() treats
+    it as "nothing to show") when indices is empty.
+    """
+    indices = list(indices)
+    if not indices:
+        return ""
+    ws_count = len(indices)
+    win_count = sum(len(slots[i][1].windows) for i in indices if slots[i][1] is not None)
+    return f"+{ws_count} ws, +{win_count} win" if win_count else f"+{ws_count} ws"
+
+
+def _windowed_range(heights, selected_index, available_rows) -> tuple[int, int, bool, bool]:
+    """(start, end, needs_above, needs_below) — _visible_slot_range's
+    own result, PLUS whether an above/below "hidden content" indicator
+    is needed, with a row actually reserved for each one that is.
+
+    Two-pass, not one: a first pass at the FULL available_rows decides
+    whether either indicator is needed at all; only if at least one is
+    does a second pass re-run with available_rows reduced by however
+    many indicator rows that decision reserves. This can only ever
+    SHRINK the visible range from the first pass, never grow it back
+    past the original need — so the above/below verdicts from the
+    first pass stay valid after the second, no third pass required.
+
+    Reserves real CONTENT rows, not a label embedded in the box's own
+    top/bottom border (tried first, reverted) — found live, this
+    codebase's own tightly-packed presets commonly have one module's
+    box sitting directly below another with NO gap, sharing the exact
+    row where one box's bottom border and the next box's top border
+    would coincide; whichever module draws later in MODULES' own
+    iteration order wins that shared row outright, silently erasing
+    anything the earlier module tried to put there (confirmed live:
+    Control sits directly under Workspaces in the default preset and
+    draws after it, clobbering a bottom-border label every time).
+    Content rows inside the box's own interior have no such conflict.
+    """
+    start, end = _visible_slot_range(heights, selected_index, available_rows)
+    needs_above = start > 0
+    needs_below = end < len(heights)
+    reserved = (1 if needs_above else 0) + (1 if needs_below else 0)
+    if reserved:
+        start, end = _visible_slot_range(heights, selected_index, max(available_rows - reserved, 0))
+    return start, end, needs_above, needs_below
+
+
 def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
 
     is_active = module_name == ctx.active_module
     outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
-    draw_box_outline(stdscr, y, x, h, w, outer_color, title="Workspaces")
 
     slots = _slot_data(ctx)
     heights = [s[3] for s in slots]
     selected_index = _selected_slot_index([(s[0], s[1]) for s in slots], ctx.selected_id)
-    start, end = _visible_slot_range(heights, selected_index, max(h - 2, 0))
+    start, end, needs_above, needs_below = _windowed_range(heights, selected_index, max(h - 2, 0))
+
+    draw_box_outline(stdscr, y, x, h, w, outer_color, title="Workspaces")
 
     item_y = y + 1
+    if needs_above:
+        summary = _hidden_summary(slots, range(0, start))
+        try:
+            stdscr.addstr(item_y, x + 2, wc_truncate(f"↑ {summary}", max(w - 4, 0)), theme.get("text", 0) | curses.A_DIM)
+        except curses.error:
+            pass
+        item_y += 1
+
     for ws_id, region, preview_apps, item_h in slots[start:end]:
         is_selected = f"sidebar:{ws_id}" == ctx.selected_id
         border_color = theme.get("selected", 0) if is_selected else theme.get("border", 0)
@@ -202,9 +272,13 @@ def draw(stdscr, box, ctx, module_name):
                     chunk = wc_truncate(app, available)
                     stdscr.addstr(item_y + 1 + i, x + 2, chunk, text_color | curses.A_BOLD)
                     cx = x + 2 + display_width(chunk)
-                    end = x + 2 + available
-                    if detail and cx + 1 < end:
-                        stdscr.addstr(item_y + 1 + i, cx, wc_truncate(f" {detail}", end - cx), text_color | curses.A_DIM)
+                    # row_end, not end — `end` is this function's own
+                    # outer slot-range boundary (from _windowed_range),
+                    # still needed after this loop for the "below"
+                    # indicator; shadowing it here silently broke that.
+                    row_end = x + 2 + available
+                    if detail and cx + 1 < row_end:
+                        stdscr.addstr(item_y + 1 + i, cx, wc_truncate(f" {detail}", row_end - cx), text_color | curses.A_DIM)
                 except curses.error:
                     pass
             existing_count = len(region.windows)
@@ -222,6 +296,13 @@ def draw(stdscr, box, ctx, module_name):
 
         item_y += item_h
 
+    if needs_below:
+        summary = _hidden_summary(slots, range(end, len(slots)))
+        try:
+            stdscr.addstr(item_y, x + 2, wc_truncate(f"↓ {summary}", max(w - 4, 0)), theme.get("text", 0) | curses.A_DIM)
+        except curses.error:
+            pass
+
 
 def nav_items(box, ctx, module_name) -> list[NavItem]:
     x, y, w, h = box
@@ -229,10 +310,14 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     slots = _slot_data(ctx)
     heights = [s[3] for s in slots]
     selected_index = _selected_slot_index([(s[0], s[1]) for s in slots], ctx.selected_id)
-    start, end = _visible_slot_range(heights, selected_index, max(h - 2, 0))
+    start, end, needs_above, _needs_below = _windowed_range(heights, selected_index, max(h - 2, 0))
 
     items = []
-    item_y = y + 1
+    # +1 when draw() reserves its own "↑ +N ws..." row above the first
+    # visible slot — has to match exactly, or every item's rect (and
+    # the peek items' borrowed rects below) would point one row off
+    # from what's actually drawn there.
+    item_y = y + 1 + (1 if needs_above else 0)
     rects = {}  # ws_id -> rect, so the peek items below can reuse the boundary slots' own
     for ws_id, _region, _preview_apps, item_h in slots[start:end]:
         # Must match draw()'s own height exactly (including any preview

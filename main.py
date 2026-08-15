@@ -6,6 +6,7 @@ CLAUDE/NOTES/*.md files — check there before re-deriving a "why".
 """
 
 import curses
+import dataclasses
 import sys
 import time
 
@@ -44,8 +45,9 @@ from tuicc.navigation import (
     prev_item_across_modules,
     same_row_neighbor,
     module_of_item,
+    LAST_ITEM_QUERY,
 )
-from tuicc.render import draw_all, ACTION_HANDLERS, MODULES
+from tuicc.render import draw_all, ACTION_HANDLERS, MODULES, NAV_PROVIDERS
 from tuicc.render_utils import draw_status_line
 from tuicc.theme_setup import reassign_theme_pairs
 from tuicc import app_setup, frame_update, resize_mode, help_mode, pending_moves
@@ -674,6 +676,33 @@ def main(stdscr):
                         # module's last item — otherwise Shift+Tab-ing in
                         # lands on slot 3, one Tab from rolling back out.
                         prev_item = first_item_in_module(ordered, "sessions")
+                    elif (
+                        prev_item is not None
+                        and loop_state.active_module != "sidebar"
+                        and module_of_item(prev_item) == "sidebar"
+                        and "sidebar" in boxes
+                    ):
+                        # Sidebar exception: prev_item_across_modules()
+                        # picked sidebar's own last item OUT OF `ordered`
+                        # — this frame's already-computed list, built
+                        # with whatever selection was active BEFORE this
+                        # keypress, which usually wasn't sidebar's own.
+                        # sidebar.py's nav_items() windows its own
+                        # content around ctx.selected_id (see
+                        # CLAUDE/NOTES/design-decisions.md
+                        # #sidebar-variable-height-windowing) — with
+                        # selection elsewhere, that window is anchored
+                        # near the top, so the TRUE last workspace
+                        # commonly isn't in `ordered` for sidebar AT ALL,
+                        # and no amount of scanning it finds an item
+                        # that was never there. Re-query sidebar's own
+                        # nav_items() directly with LAST_ITEM_QUERY (see
+                        # that constant's own docstring) instead of
+                        # trusting what `ordered` happened to contain.
+                        query_ctx = dataclasses.replace(ctx, selected_id=LAST_ITEM_QUERY)
+                        sidebar_items = NAV_PROVIDERS["sidebar"](boxes["sidebar"], query_ctx, "sidebar")
+                        if sidebar_items:
+                            prev_item = sidebar_items[-1]
                 if prev_item is not None:
                     loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(prev_item, loop_state.focus_id)
             elif key in module_next_keys:
