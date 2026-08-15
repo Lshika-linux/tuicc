@@ -529,6 +529,12 @@ def draw(stdscr, box, ctx, module_name):
         elif kind == "wifi_item":
             network = payload
             is_selected = f"connectivity:wifi:{network.ssid}" == ctx.selected_id
+            # Level 1 (not browsing this section): these rows aren't
+            # Tab-reachable — Enter the header first (see this module's
+            # own "level-2 browsing" section). Drawn visibly dimmer so
+            # that's obvious at a glance, not just discoverable by
+            # trying to Tab onto one and nothing happening.
+            browsable = _browsing_section == "wifi"
             bars = _signal_bars(network.signal)
             # "[new] " prefix, not a " (new)" suffix \u2014 see
             # CLAUDE/NOTES/design-decisions.md#connectivity-module-design.
@@ -556,12 +562,22 @@ def draw(stdscr, box, ctx, module_name):
                 else:
                     text_color = theme.get("text", 0)
                     attr = curses.A_BOLD if is_selected else curses.A_DIM
+                if not browsable:
+                    # Drop any BOLD and force DIM so the whole row
+                    # reads as inert rather than a normal selectable
+                    # item; connected/disconnected state (the ●/○ dot)
+                    # stays legible at a glance either way — only its
+                    # own color dims, not its shape.
+                    attr = (attr & ~curses.A_BOLD) | curses.A_DIM
+                    dot_color |= curses.A_DIM
 
             # The signal bars get their OWN color, independent of the
             # name's selection/dim styling above — see
             # CLAUDE/NOTES/design-decisions.md#connectivity-module-design.
             name_part = f" {name} "
             bars_color = theme.get("accent", 0) if network.connected else theme.get("text", 0)
+            if not browsable:
+                bars_color |= curses.A_DIM
             try:
                 stdscr.addstr(row, x + 2, dot, dot_color)
                 stdscr.addstr(row, x + 3, name_part, text_color | attr)
@@ -572,6 +588,8 @@ def draw(stdscr, box, ctx, module_name):
         elif kind == "bt_item":
             device = payload
             is_selected = f"connectivity:bt:{device.id}" == ctx.selected_id
+            # See wifi_item's own comment above — same reasoning.
+            browsable = _browsing_section == "bluetooth"
             battery = f" {device.battery}%" if device.battery is not None else ""
             # "[new] " prefix \u2014 same reasoning as wifi_item's own
             # display_name above.
@@ -589,6 +607,9 @@ def draw(stdscr, box, ctx, module_name):
                 else:
                     text_color = theme.get("text", 0)
                     attr = curses.A_BOLD if is_selected else curses.A_DIM
+                if not browsable:
+                    attr = (attr & ~curses.A_BOLD) | curses.A_DIM
+                    dot_color |= curses.A_DIM
 
             # device.name is real, uncontrolled external data too (a
             # real Bluetooth device's advertised name) — same risk as
