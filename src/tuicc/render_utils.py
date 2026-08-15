@@ -146,6 +146,43 @@ def draw_box_outline(stdscr, y, x, h, w, color_pair=0, title=None):
         pass
 
 
+def draw_table_box(stdscr, y, x, h, w, title, columns, header_color=0, value_color=0, border_color=0):
+    """A bordered box (draw_box_outline, with `title` cut into the top
+    border) holding one header row + one value row, column-aligned —
+    for a single-row "info panel" table (modules/connectivity.py's own
+    WiFi device info is the first consumer, modeled on impala's own
+    bordered "Device" panel rather than plain stacked preview_text
+    lines). `columns` is [(label, value), ...]; each column's own
+    width is max(len(label), len(value)), columns separated by a
+    fixed gap, the whole two-row block centered as one unit within the
+    box. Degrades gracefully (wc_truncate) rather than overflowing if
+    it doesn't fit — same tolerance every other primitive here has.
+
+    Padding uses plain str.ljust (character count, not display_width)
+    deliberately, unlike wc_truncate elsewhere in this codebase: every
+    realistic column here (interface name, MAC address, "station",
+    vendor string) is effectively ASCII, not user-typed/uncontrolled
+    text the way an SSID or window title is — the extra wide-character-
+    aware padding machinery those need would be unexercised complexity
+    here.
+    """
+    draw_box_outline(stdscr, y, x, h, w, border_color, title=title)
+    if h < 3 or w < 3 or not columns:
+        return
+    inner_w = max(w - 2, 0)
+    gap = "   "
+    col_widths = [max(len(label), len(value)) for label, value in columns]
+    header_line = gap.join(label.ljust(width) for (label, _value), width in zip(columns, col_widths)).rstrip()
+    value_line = gap.join(value.ljust(width) for (_label, value), width in zip(columns, col_widths)).rstrip()
+    header_line = wc_truncate(header_line, inner_w)
+    value_line = wc_truncate(value_line, inner_w)
+    try:
+        stdscr.addstr(y + 1, centered_x(x + 1, inner_w, header_line), header_line, header_color | curses.A_BOLD)
+        stdscr.addstr(y + 2, centered_x(x + 1, inner_w, value_line), value_line, value_color)
+    except curses.error:
+        pass
+
+
 def draw_corner_marks(stdscr, y, x, h, w, color_pair=0, arm=1):
     """Open corner brackets — a short horizontal + vertical arm at each
     of a box's 4 corners — instead of draw_box_outline()'s full

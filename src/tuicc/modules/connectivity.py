@@ -819,64 +819,66 @@ def _header_enter_hint_footer(theme, cfg, section_label):
     return [(f"[{key_label(cfg.keybinds['confirm'])}] Browse {section_label}", theme.get("urgent", 0))]
 
 
-def _adapter_info_lines(adapter, theme):
-    """The adapter/device info block prepended to the WiFi header's own
-    hover-preview by _wifi_scan_preview_text() below — impala's own
-    separate "Adapter Infos" panel, folded into this module's existing
-    header-preview slot rather than a new mode/key (it's read-only,
-    the same VISION.md "Context" category test every other bounded
-    info readout in this codebase already passes). `adapter` is the
-    raw ctx.status.get("wifi_adapter") value — None (no wifi adapter
-    found at all) shows nothing, same "genuinely nothing there"
-    tolerance WifiBackend.get_adapter_info()'s own contract documents.
-    Every field is independently optional (see AdapterInfo's own
-    docstring for why model/vendor/supported_modes are None on
-    NetworkManager specifically) — each line only shows when that
-    field actually has something to say.
+def _adapter_info_table(adapter, scanning):
+    """The WiFi header's own device-info table (NavItem.preview_table)
+    — impala's own bordered "Device" panel, drawn as a real table box
+    by preview.py rather than dumped as plain preview_text lines (a
+    first pass did exactly that; found live it read as just more text,
+    not the distinct "info panel" impala's own screenshot shows — this
+    replaced it). `adapter` is the raw ctx.status.get("wifi_adapter")
+    value; None (no wifi adapter found at all) means no table at all,
+    same "genuinely nothing there" tolerance WifiBackend.
+    get_adapter_info()'s own contract documents. `scanning` folds in
+    the existing "wifi_scanning" domain (Station.Scanning, real ground
+    truth — see draw()'s own scanning-blink comment) rather than
+    duplicating it as a new AdapterInfo field. Every column is
+    independently optional (see AdapterInfo's own docstring for why
+    model/vendor/supported_modes are None on NetworkManager
+    specifically) — only fields that actually have something to say
+    become a column, so the table narrows to whatever's real instead
+    of showing empty cells.
     """
     if adapter is None:
-        return []
-    lines = []
+        return None
+    columns = []
     if adapter.name:
-        lines.append((f"Adapter: {adapter.name}", theme.get("text", 0)))
-    if adapter.address:
-        lines.append((f"Address: {adapter.address}", theme.get("text", 0)))
-    if adapter.model:
-        lines.append((f"Model: {adapter.model}", theme.get("text", 0)))
-    if adapter.vendor:
-        lines.append((f"Vendor: {adapter.vendor}", theme.get("text", 0)))
-    if adapter.supported_modes:
-        lines.append((f"Modes: {', '.join(adapter.supported_modes)}", theme.get("text", 0)))
+        columns.append(("Name", adapter.name))
     if adapter.mode:
-        lines.append((f"Current mode: {adapter.mode}", theme.get("text", 0)))
-    if adapter.state:
-        lines.append((f"State: {adapter.state}", theme.get("text", 0)))
+        columns.append(("Mode", adapter.mode))
     if adapter.powered is not None:
-        lines.append((f"Powered: {_yes_no(adapter.powered)}", theme.get("accent", 0) if adapter.powered else theme.get("text", 0)))
-    return lines
+        columns.append(("Powered", _yes_no(adapter.powered)))
+    if adapter.state:
+        columns.append(("State", adapter.state))
+    columns.append(("Scanning", _yes_no(scanning)))
+    if adapter.address:
+        columns.append(("Address", adapter.address))
+    if adapter.model:
+        columns.append(("Model", adapter.model))
+    if adapter.vendor:
+        columns.append(("Vendor", adapter.vendor))
+    if adapter.supported_modes:
+        columns.append(("Modes", ", ".join(adapter.supported_modes)))
+    return columns
 
 
-def _wifi_scan_preview_text(networks, error, theme, adapter=None):
+def _wifi_scan_preview_text(networks, error, theme):
     """The hover-preview for the WiFi header row itself (name kept from
     when Enter here triggered a scan directly — it now enters browsing
     instead, see this module's own "level-2 browsing" section) — the
-    adapter/device info block (_adapter_info_lines) followed by the
     FULL list of currently available networks, not just the
     connectivity_visible_slots window the box's scrollable section
-    shows. Adapter info shows regardless of the networks/error branch
-    below — knowing the radio's own state is exactly as useful when the
-    scan errored or came back empty as when it didn't. Same None-vs-[]
-    error handling as _build_rows' own — `networks` is the raw
-    ctx.wifi_networks (may be None), not the "or []"-normalized local
-    nav_items() otherwise uses, so a real poll failure still shows as
-    an error here too, not "no networks".
+    shows. Adapter/device info lives in a separate preview_table now
+    (see _adapter_info_table above), not folded in here. Same
+    None-vs-[] error handling as _build_rows' own — `networks` is the
+    raw ctx.wifi_networks (may be None), not the "or []"-normalized
+    local nav_items() otherwise uses, so a real poll failure still
+    shows as an error here too, not "no networks".
     """
-    lines = _adapter_info_lines(adapter, theme)
     if networks is None and error:
-        return lines + [(f"⚠ {error}", theme.get("urgent", 0))]
+        return [(f"⚠ {error}", theme.get("urgent", 0))]
     if not networks:
-        return lines + [("No networks found", theme.get("text", 0) | curses.A_DIM)]
-    lines = lines + [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
+        return [("No networks found", theme.get("text", 0) | curses.A_DIM)]
+    lines = [(f"Available networks [{len(networks)}]", theme.get("accent", 0))]
     for network in networks:
         dot = "●" if network.connected else "○"
         prefix = "[new] " if not network.known else ""
@@ -903,16 +905,26 @@ def _bt_discover_preview_text(devices, error, theme):
     return lines
 
 
-def _browsing_hint_footer(theme, cfg):
+def _browsing_hint_footer(theme, cfg, section):
     """The red "available keys" footer for a network/device's own
     preview — a separate boxed-off preview_footer (see NavItem.
     preview_footer's own docstring), not just another line of
     preview_text. Individual rows are only ever selectable while
     browsing (see this module's own "level-2 browsing" section), so
     this is always relevant whenever it's reached, no is_browsing()
-    check needed.
+    check needed. wifi_forget/wifi_connect_hidden/wifi_power_toggle
+    only ever DO anything while section == "wifi" (see main.py's
+    handle_connectivity_browsing — bluetooth rows have no equivalent),
+    so they're only listed there; bluetooth keeps the plain scan/back
+    hint it always had.
     """
-    return [(f"[{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", theme.get("urgent", 0))]
+    urgent = theme.get("urgent", 0)
+    if section != "wifi":
+        return [(f"[{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", urgent)]
+    return [
+        (f"[{key_label(cfg.keybinds['scan'])}] Scan   [{key_label(cfg.keybinds['wifi_forget'])}] Forget", urgent),
+        (f"[{key_label(cfg.keybinds['wifi_connect_hidden'])}] Hidden   [{key_label(cfg.keybinds['wifi_power_toggle'])}] Power   [Esc] Back", urgent),
+    ]
 
 
 def _wifi_preview_text(network, theme, status):
@@ -962,7 +974,7 @@ def _wifi_row_nav_item(network, box, row, theme, status, cfg) -> NavItem:
         focus_target=network.ssid,
         target_kind="wifi_network",
         preview_text=_wifi_preview_text(network, theme, status),
-        preview_footer=_browsing_hint_footer(theme, cfg),
+        preview_footer=_browsing_hint_footer(theme, cfg, "wifi"),
     )
 
 
@@ -974,7 +986,7 @@ def _bt_row_nav_item(device, box, row, theme, status, cfg) -> NavItem:
         focus_target=device.id,
         target_kind="bluetooth_device",
         preview_text=_bt_preview_text(device, theme, status),
-        preview_footer=_browsing_hint_footer(theme, cfg),
+        preview_footer=_browsing_hint_footer(theme, cfg, "bluetooth"),
     )
 
 
@@ -1016,10 +1028,13 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 
         if kind == "wifi_header":
             adapter_info = ctx.status.get("wifi_adapter") if ctx.status is not None else None
+            scanning = bool(ctx.status.get("wifi_scanning")) if ctx.status is not None else False
             wifi_header_item = NavItem(
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
-                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme, adapter_info),
+                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "networks"),
+                preview_table_title="Device",
+                preview_table=_adapter_info_table(adapter_info, scanning),
             )
         elif kind == "bt_header":
             bt_header_item = NavItem(

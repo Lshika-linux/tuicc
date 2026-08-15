@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo
 from tuicc.modules.connectivity import (
     _action_progress_line,
-    _adapter_info_lines,
+    _adapter_info_table,
     _browsing_hint_footer,
     _build_rows,
     _bt_discover_preview_text,
@@ -435,7 +435,10 @@ def _theme():
 
 
 def _cfg():
-    return SimpleNamespace(keybinds={"scan": ord("s"), "confirm": ord("\n")})
+    return SimpleNamespace(keybinds={
+        "scan": ord("s"), "confirm": ord("\n"),
+        "wifi_forget": ord("d"), "wifi_connect_hidden": ord("n"), "wifi_power_toggle": ord("o"),
+    })
 
 
 def _text_of(lines):
@@ -712,70 +715,84 @@ def test_header_enter_hint_footer_bluetooth_wording():
     assert footer == [("[Enter] Browse devices", _theme()["urgent"])]
 
 
-def test_browsing_hint_footer_shows_the_configured_scan_key():
-    footer = _browsing_hint_footer(_theme(), _cfg())
+def test_browsing_hint_footer_bluetooth_is_just_scan_and_back():
+    # No forget/hidden/power equivalent was asked for on the bluetooth
+    # side (see connectivity.py's own module docstring on scope) — the
+    # hint must not claim keys that do nothing there.
+    footer = _browsing_hint_footer(_theme(), _cfg(), "bluetooth")
 
     assert footer == [("[S] Scan   [Esc] Back", _theme()["urgent"])]
 
 
-# ---------- _adapter_info_lines / _wifi_scan_preview_text(adapter=...) ----------
-# impala's own separate "Adapter Infos" panel, folded into the WiFi
-# header's existing hover-preview slot — see _adapter_info_lines' own
-# docstring.
+def test_browsing_hint_footer_wifi_lists_every_wifi_only_key():
+    # Regression: forget/connect-hidden/power-toggle shipped with no
+    # discoverability hint at all until this was added — found live.
+    footer = _browsing_hint_footer(_theme(), _cfg(), "wifi")
+    text = _text_of(footer)
 
-def test_adapter_info_lines_none_adapter_is_empty():
-    assert _adapter_info_lines(None, _theme()) == []
+    assert any("Forget" in line and "[D]" in line for line in text)
+    assert any("Hidden" in line and "[N]" in line for line in text)
+    assert any("Power" in line and "[O]" in line for line in text)
+    assert any("Scan" in line for line in text)
+    assert any("Esc" in line for line in text)
+    assert all(color == _theme()["urgent"] for _line, color in footer)
 
 
-def test_adapter_info_lines_includes_every_present_field():
+# ---------- _adapter_info_table ----------
+# impala's own separate, bordered "Device" panel — a NavItem.
+# preview_table now (preview.py draws it as a real table box), not
+# folded into preview_text as plain lines (a first pass did that,
+# replaced after Rafi asked for impala's own boxed look specifically).
+
+def test_adapter_info_table_none_adapter_is_none():
+    assert _adapter_info_table(None, scanning=False) is None
+
+
+def test_adapter_info_table_includes_every_present_field():
     adapter = AdapterInfo(
         name="wlan0", address="D0:C6:37:61:24:D4", model="Wireless 8265",
         vendor="Intel Corporation", supported_modes=["ad-hoc", "station", "ap"],
         mode="station", powered=True, state="connected",
     )
 
-    lines = _text_of(_adapter_info_lines(adapter, _theme()))
+    columns = dict(_adapter_info_table(adapter, scanning=False))
 
-    assert "Adapter: wlan0" in lines
-    assert "Address: D0:C6:37:61:24:D4" in lines
-    assert "Model: Wireless 8265" in lines
-    assert "Vendor: Intel Corporation" in lines
-    assert "Modes: ad-hoc, station, ap" in lines
-    assert "Current mode: station" in lines
-    assert "State: connected" in lines
-    assert "Powered: yes" in lines
+    assert columns["Name"] == "wlan0"
+    assert columns["Address"] == "D0:C6:37:61:24:D4"
+    assert columns["Model"] == "Wireless 8265"
+    assert columns["Vendor"] == "Intel Corporation"
+    assert columns["Modes"] == "ad-hoc, station, ap"
+    assert columns["Mode"] == "station"
+    assert columns["State"] == "connected"
+    assert columns["Powered"] == "yes"
 
 
-def test_adapter_info_lines_omits_absent_fields():
+def test_adapter_info_table_always_includes_scanning():
+    # Scanning isn't a real AdapterInfo field (see AdapterInfo's own
+    # docstring — it's the existing "wifi_scanning" domain, folded in
+    # here rather than duplicated), so it's unconditional, unlike every
+    # other column.
     adapter = AdapterInfo(name="wlan0")
 
-    lines = _text_of(_adapter_info_lines(adapter, _theme()))
+    columns_scanning = dict(_adapter_info_table(adapter, scanning=True))
+    columns_idle = dict(_adapter_info_table(adapter, scanning=False))
 
-    assert lines == ["Adapter: wlan0"]
+    assert columns_scanning["Scanning"] == "yes"
+    assert columns_idle["Scanning"] == "no"
 
 
-def test_wifi_scan_preview_prepends_adapter_info_before_the_network_list():
-    networks = [WifiNetwork(ssid="Home", connected=False)]
+def test_adapter_info_table_omits_absent_fields():
     adapter = AdapterInfo(name="wlan0")
 
-    lines = _text_of(_wifi_scan_preview_text(networks, None, _theme(), adapter))
+    columns = _adapter_info_table(adapter, scanning=False)
+    labels = [label for label, _value in columns]
 
-    assert lines[0] == "Adapter: wlan0"
-    assert "Available networks [1]" in lines
-
-
-def test_wifi_scan_preview_shows_adapter_info_even_when_networks_errored():
-    adapter = AdapterInfo(name="wlan0")
-
-    lines = _text_of(_wifi_scan_preview_text(None, "D-Bus unreachable", _theme(), adapter))
-
-    assert lines[0] == "Adapter: wlan0"
-    assert "⚠ D-Bus unreachable" in lines
+    assert labels == ["Name", "Scanning"]
 
 
-def test_wifi_scan_preview_no_adapter_defaults_to_no_adapter_lines():
-    # Existing 3-arg call sites (adapter defaults to None) must keep
-    # working unchanged.
+def test_wifi_scan_preview_no_longer_carries_adapter_info():
+    # Adapter info moved to its own preview_table (see above) —
+    # preview_text stays plain networks-list content only now.
     lines = _text_of(_wifi_scan_preview_text([], None, _theme()))
 
     assert lines == ["No networks found"]

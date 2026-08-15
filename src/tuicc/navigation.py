@@ -64,6 +64,19 @@ class NavItem:
     # (the default) draws nothing extra — preview.py behaves exactly as
     # it did before this field existed.
     preview_footer: list[tuple[str, int]] | None = None
+    # A THIRD separate, boxed-off area — a bordered table (title +
+    # one header row + one value row, e.g. connectivity.py's WiFi
+    # device info: Name/Mode/Powered/State/...) drawn above preview_text,
+    # modeled on impala's own bordered "Device" panel rather than
+    # dumped as plain preview_text lines, the same "this needs its own
+    # visual box, not just more centered text" reasoning preview_footer
+    # already established. preview_table is [(column_label, value), ...]
+    # — a single row's worth of columns; preview_table_title is the
+    # box's own title (draw_box_outline's title=). Both None (the
+    # default) draws nothing extra, same "behaves exactly as before"
+    # tolerance preview_footer's own None default already has.
+    preview_table_title: str | None = None
+    preview_table: list[tuple[str, str]] | None = None
 
 
 def tab_order(items: list[NavItem], mode: str = "columns_first") -> list[NavItem]:

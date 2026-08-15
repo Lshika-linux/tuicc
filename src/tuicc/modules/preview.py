@@ -12,7 +12,7 @@ items are — the core never guesses a module's internal layout.
 import curses
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate, wrap_text
+from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, draw_table_box, centered_x, display_width, wc_truncate, wrap_text
 from tuicc.title_condense import condense_title
 
 
@@ -61,27 +61,48 @@ def draw(stdscr, box, ctx, module_name):
     draw_corner_marks(stdscr, y, x, h, w, outer_color, arm=2)
 
     if showing_preview:
+        table = ctx.selected_item.preview_table
         footer = ctx.selected_item.preview_footer
+
+        # Three stacked areas, top to bottom: an optional bordered
+        # table (NavItem.preview_table — "info panel" content that
+        # wants its own box, e.g. connectivity.py's WiFi device info),
+        # the normal centered preview_text in whatever's left, then an
+        # optional boxed-off footer (NavItem.preview_footer — "how do
+        # I interact with this" hints) at the very bottom. Each is only
+        # given real height when actually present, so a NavItem using
+        # none/one/two/all three of preview_table/preview_text/
+        # preview_footer just gets exactly that, no reserved blank gaps.
+        content_y = y
+        content_h = h
+        if table:
+            table_h = min(4, h)  # top border + header row + value row + bottom border
+            draw_table_box(
+                stdscr, y, x, table_h, w, ctx.selected_item.preview_table_title, table,
+                header_color=theme.get("accent", 0), value_color=theme.get("text", 0), border_color=theme.get("accent", 0),
+            )
+            content_y += table_h
+            content_h -= table_h
+
         if footer:
-            # A separate, boxed-off strip across the bottom of the
-            # panel for "how do I interact with this" hints (see
-            # NavItem.preview_footer's own docstring) — a real
-            # draw_box_outline(), not just another centered line of
-            # preview_text, specifically so it can't blend into the
-            # informational content above it. Always urgent-colored
+            # A separate, boxed-off strip for "how do I interact with
+            # this" hints (see NavItem.preview_footer's own docstring)
+            # — a real draw_box_outline(), not just another centered
+            # line of preview_text, specifically so it can't blend into
+            # the informational content above it. Always urgent-colored
             # regardless of the footer's own per-line colors (same as
             # preview_urgent's whole-border treatment above) — a module
             # asking for this separate strip at all already means "pay
             # attention here", independent of what the text itself says.
-            footer_h = min(len(footer) + 2, h)
-            content_h = h - footer_h
-            if content_h > 0:
-                draw_centered_lines(stdscr, (x, y, w, content_h), ctx.selected_item.preview_text)
-            footer_y = y + content_h
+            footer_h = min(len(footer) + 2, content_h)
+            text_h = content_h - footer_h
+            if text_h > 0:
+                draw_centered_lines(stdscr, (x, content_y, w, text_h), ctx.selected_item.preview_text)
+            footer_y = content_y + text_h
             draw_box_outline(stdscr, footer_y, x, footer_h, w, theme.get("urgent", 0))
             draw_centered_lines(stdscr, (x, footer_y, w, footer_h), footer)
         else:
-            draw_centered_lines(stdscr, box, ctx.selected_item.preview_text)
+            draw_centered_lines(stdscr, (x, content_y, w, content_h), ctx.selected_item.preview_text)
         return
 
     target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
