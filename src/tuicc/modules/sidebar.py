@@ -259,21 +259,20 @@ def draw(stdscr, box, ctx, module_name):
         item_y += item_h
 
 
-def _fitting_border_text(base: str, indicator: str, w: int) -> str:
-    """The most informative border label that actually fits w columns —
-    matching draw_box_outline's own " label " padding math exactly
-    (`_labeled_border`'s `display_width(f" {text} ") >= available`
-    check), so this never disagrees with what it's about to hand off
-    to. Found live: "Workspaces +7 ws, +11 win" routinely doesn't fit
-    a sidebar-width box, and draw_box_outline's own fallback for a
-    title that doesn't fit is BLANK dashes — no title at all, not even
-    plain "Workspaces" — a real regression from before this indicator
-    existed. Tries, in order: "base indicator" (or bare `indicator`
-    when base is ""), then `indicator` alone (dropping a now-redundant
-    base — "Workspaces" is already obvious from context — since the
-    indicator is the more urgent information once scrolled), finally
-    bare `base` as the last resort: still better than blank dashes,
-    box identity survives even when the extra info doesn't fit at all.
+def _fitting_title(base: str, indicator: str, w: int) -> str:
+    """The most informative TOP-border title that actually fits w
+    columns — "base indicator" combined, else indicator alone
+    (dropping the now-redundant base — "Workspaces" is already obvious
+    from context once scrolled, and the indicator is the more urgent
+    information when both can't fit), else bare base as the last
+    resort (still better than draw_box_outline's own blank-dashes
+    fallback for a title that doesn't fit at all).
+
+    Only ever used for the TOP row: sidebar OWNS that title outright
+    (see draw_hidden_indicators()'s own docstring for why the top and
+    bottom rows need genuinely different treatment) — redrawing it
+    combined is safe because there's no OTHER module's own real
+    content on that row to preserve, just sidebar's own title.
     """
     available = max(w - 2, 0)
     for candidate in (f"{base} {indicator}".strip(), indicator, base):
@@ -282,31 +281,56 @@ def _fitting_border_text(base: str, indicator: str, w: int) -> str:
     return base
 
 
+def _right_aligned_overlay_col(x: int, w: int, text: str, min_left_col: int) -> int | None:
+    """Where text should start to sit right-aligned near the box's own
+    right corner (1 dash of margin before the corner, matching the 1
+    dash draw_box_outline's own title already keeps after the left
+    corner) — or None if it doesn't fit there without colliding with
+    min_left_col (whatever's already occupying the left side of this
+    same row — see draw_hidden_indicators()'s own bottom-row case for
+    why that has to stay a conservative estimate rather than exact
+    knowledge).
+    """
+    col = x + w - 1 - display_width(text) - 1
+    return col if col > min_left_col else None
+
+
 def draw_hidden_indicators(stdscr, box, ctx, module_name):
-    """Redraws JUST the box's own border, a second time, with "+N ws,
-    +M win" folded into the title (above) / bottom_label (below)
-    wherever the scrollable window doesn't already show everything —
-    see draw() above for the plain first pass, and
+    """"+N ws, +M win" wherever the scrollable window doesn't already
+    show everything — TOP row (content hidden above) and/or BOTTOM row
+    (hidden below). See draw() above for the plain first pass, and
     CLAUDE/NOTES/design-decisions.md#sidebar-hidden-content-indicator
     for why this has to be its own separate, LATER call rather than
-    part of draw() itself.
+    part of draw() itself. main.py calls this once, unconditionally,
+    right after draw_all() returns — same "draw directly onto stdscr
+    after/instead of draw_all(), not through the normal per-module
+    pass" idiom this codebase already uses for resize mode's editing
+    highlight and help_mode's panel (see CLAUDE/GUIDE.md's own
+    architecture notes). Being the literal last thing drawn on this
+    box's top/bottom rows for the whole frame is the entire point:
+    this codebase's own tightly-packed presets commonly place another
+    module's box directly adjacent with zero gap, sharing that exact
+    row — whichever module draws LATER in MODULES' own normal
+    iteration order would otherwise win it, silently erasing anything
+    embedded there during the normal per-module pass.
 
-    main.py calls this once, unconditionally, right after draw_all()
-    — same "draw directly onto stdscr after/instead of draw_all(), not
-    through the normal per-module pass" idiom this codebase already
-    uses for resize mode's editing highlight and help_mode's panel
-    (see CLAUDE/GUIDE.md's own architecture notes). Being the literal
-    last thing drawn on this box's top/bottom rows for the whole frame
-    is the entire point: this codebase's own tightly-packed presets
-    commonly place another module's box directly adjacent with zero
-    gap, sharing that exact row — whichever module draws LATER in
-    MODULES' own normal iteration order would otherwise win it,
-    silently erasing a label embedded during the normal per-module
-    pass (confirmed live: Control sits directly under Workspaces in
-    the default preset and draws after it during that normal pass).
-    Calling this again, deliberately after EVERY module's own normal
-    draw() has already run, sidesteps that regardless of which two
-    modules happen to be adjacent or what order MODULES iterates them.
+    TOP and BOTTOM genuinely need DIFFERENT treatment, found live, not
+    a stylistic choice: sidebar's own top row is ALSO shared (with
+    whatever's directly above — Sessions, in the default preset), but
+    Sessions never puts real content there (plain dashes only), so
+    it's safe to fully redraw combined with "Workspaces" via
+    _fitting_title() + draw_box_outline(), degrading gracefully by
+    dropping "Workspaces" if both don't fit (confirmed needed live —
+    "Workspaces +7 ws, +9 win" routinely doesn't fit a sidebar-width
+    box). The BOTTOM row is different: whatever's directly below
+    (Control, in the default preset) has its OWN real title drawn
+    there, which a full redraw would silently clobber (confirmed live:
+    the first version did exactly this, chopping "Control" mid-word) —
+    so the bottom row gets a narrower, OVERLAY-only treatment instead,
+    writing just its own cells, right-aligned, with a conservative
+    left margin standing in for knowledge sidebar can't have about
+    another module's real title width without violating "core never
+    guesses a module's internal layout" in the other direction.
     """
     x, y, w, h = box
     theme = ctx.theme or {}
@@ -323,9 +347,27 @@ def draw_hidden_indicators(stdscr, box, ctx, module_name):
 
     is_active = module_name == ctx.active_module
     outer_color = theme.get("border_selected", 0) if is_active else theme.get("border", 0)
-    title = _fitting_border_text("Workspaces", above_summary, w) if above_summary else "Workspaces"
-    bottom_label = _fitting_border_text("", below_summary, w) if below_summary else None
-    draw_box_outline(stdscr, y, x, h, w, outer_color, title=title, bottom_label=bottom_label)
+
+    if above_summary:
+        title = _fitting_title("Workspaces", above_summary, w)
+        draw_box_outline(stdscr, y, x, h, w, outer_color, title=title)
+
+    if below_summary:
+        text = f" {below_summary} "
+        # Reserving half the box's own width (or 12 columns, whichever
+        # is more) as a left margin is a heuristic, not a proof — it
+        # clears every real title in this codebase's own default
+        # preset (confirmed live against "Control" specifically), but
+        # a sufficiently long custom title on whatever sits below in a
+        # DIFFERENT preset could still collide. See this function's
+        # own docstring for why exact knowledge isn't available here.
+        min_left_col = x + max(w // 2, 12)
+        col = _right_aligned_overlay_col(x, w, text, min_left_col)
+        if col is not None:
+            try:
+                stdscr.addstr(y + h - 1, col, text, outer_color)
+            except curses.error:
+                pass
 
 
 def nav_items(box, ctx, module_name) -> list[NavItem]:

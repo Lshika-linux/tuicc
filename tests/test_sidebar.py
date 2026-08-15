@@ -10,7 +10,8 @@ from tuicc.model import Region, Window, WMState
 from tuicc.navigation import LAST_ITEM_QUERY
 from tuicc.modules.sidebar import (
     nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
-    _visible_slot_range, _selected_slot_index, _hidden_summary, _fitting_border_text,
+    _visible_slot_range, _selected_slot_index, _hidden_summary,
+    _fitting_title, _right_aligned_overlay_col,
 )
 
 
@@ -237,35 +238,54 @@ def test_nav_items_peek_item_reaches_the_next_hidden_slot():
     assert any(item.focus_target == "3" for item in items)
 
 
-# ---------- _fitting_border_text ----------
-# draw_box_outline's own fallback for a title/bottom_label that
-# doesn't fit its box is BLANK dashes — no text at all, not even a
-# shorter version. Found live: "Workspaces +7 ws, +11 win" routinely
-# doesn't fit a sidebar-width box, and the box's own "Workspaces"
-# identity was disappearing entirely as a result — a real regression
-# from before this indicator existed.
+# ---------- _fitting_title (TOP row) ----------
+# Sidebar OWNS the top row's own title outright (Sessions, whatever's
+# above it in the default preset, never puts real content on the
+# shared row) — safe to fully redraw combined with "Workspaces",
+# degrading gracefully by dropping it when both don't fit. Found live:
+# "Workspaces +7 ws, +11 win" routinely doesn't fit a sidebar-width
+# box, and draw_box_outline's own fallback for a title that doesn't
+# fit is BLANK dashes — no title at all, not even bare "Workspaces".
 
-def test_fitting_border_text_uses_full_combo_when_it_fits():
-    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 40) == "Workspaces +7 ws, +11 win"
-
-
-def test_fitting_border_text_drops_base_when_only_indicator_fits():
-    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 20) == "+7 ws, +11 win"
+def test_fitting_title_uses_full_combo_when_it_fits():
+    assert _fitting_title("Workspaces", "+7 ws, +11 win", 40) == "Workspaces +7 ws, +11 win"
 
 
-def test_fitting_border_text_falls_back_to_bare_base_when_only_that_fits():
-    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 15) == "Workspaces"
+def test_fitting_title_drops_base_when_only_indicator_fits():
+    assert _fitting_title("Workspaces", "+7 ws, +11 win", 20) == "+7 ws, +11 win"
 
 
-def test_fitting_border_text_returns_base_even_when_nothing_fits_at_all():
+def test_fitting_title_falls_back_to_bare_base_when_only_that_fits():
+    assert _fitting_title("Workspaces", "+7 ws, +11 win", 15) == "Workspaces"
+
+
+def test_fitting_title_returns_base_even_when_nothing_fits_at_all():
     # Still better than draw_box_outline's own blank-dashes fallback —
     # box identity survives even when the extra info can't.
-    assert _fitting_border_text("Workspaces", "+7 ws, +11 win", 3) == "Workspaces"
+    assert _fitting_title("Workspaces", "+7 ws, +11 win", 3) == "Workspaces"
 
 
-def test_fitting_border_text_empty_base_never_leaves_a_leading_space():
-    # The bottom-border case (no "Workspaces" prefix there at all).
-    assert _fitting_border_text("", "+3 ws", 20) == "+3 ws"
+# ---------- _right_aligned_overlay_col (BOTTOM row) ----------
+# The bottom row is different from the top: whatever's directly below
+# (Control, in the default preset) has its OWN real title there, which
+# a combined redraw would silently clobber (confirmed live: an earlier
+# version chopped "Control" mid-word). This is an OVERLAY instead —
+# writes only its own cells, right-aligned, never touching what's
+# already on that row — so it only ever needs to answer "where does MY
+# OWN text start", given a caller-supplied left margin.
+
+def test_right_aligned_overlay_col_fits_with_room_to_spare():
+    assert _right_aligned_overlay_col(0, 20, " +N ", min_left_col=5) == 14
+
+
+def test_right_aligned_overlay_col_none_when_it_would_collide_with_the_left_side():
+    # min_left_col here stands in for the conservative margin
+    # draw_hidden_indicators() reserves for whatever's below.
+    assert _right_aligned_overlay_col(0, 20, " +N ", min_left_col=15) is None
+
+
+def test_right_aligned_overlay_col_respects_x_offset():
+    assert _right_aligned_overlay_col(100, 20, " +N ", min_left_col=100) == 114
 
 
 # ---------- _hidden_summary ----------
