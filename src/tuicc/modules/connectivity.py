@@ -966,7 +966,7 @@ def _bt_preview_text(device, theme, status):
     return lines
 
 
-def _wifi_row_nav_item(network, box, row, theme, status, cfg) -> NavItem:
+def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scanning) -> NavItem:
     x, y, w, h = box
     return NavItem(
         id=f"connectivity:wifi:{network.ssid}",
@@ -975,6 +975,14 @@ def _wifi_row_nav_item(network, box, row, theme, status, cfg) -> NavItem:
         target_kind="wifi_network",
         preview_text=_wifi_preview_text(network, theme, status),
         preview_footer=_browsing_hint_footer(theme, cfg, "wifi"),
+        # Same Device table the header shows at level 1 — d/n/o
+        # (forget/hidden/power) are only ever usable from INSIDE
+        # browsing (see this module's own "level-2 browsing" section),
+        # so seeing the device's own current state (Powered/Scanning
+        # especially) right where those controls actually live matters
+        # more here than at the header, not less.
+        preview_table_title="Device",
+        preview_table=_adapter_info_table(adapter_info, scanning),
     )
 
 
@@ -1013,6 +1021,12 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     cfg = ctx.config
     wifi_networks = ctx.wifi_networks or []
     bluetooth_devices = ctx.bluetooth_devices or []
+    # Computed once here, not per-row inside the loop below — needed by
+    # BOTH the header (level 1) and every wifi row (level 2, see
+    # _wifi_row_nav_item's own comment on why the Device table needs to
+    # survive into browsing) for the exact same preview_table content.
+    adapter_info = ctx.status.get("wifi_adapter") if ctx.status is not None else None
+    scanning = bool(ctx.status.get("wifi_scanning")) if ctx.status is not None else False
 
     wifi_header_item = None
     bt_header_item = None
@@ -1027,8 +1041,6 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             break
 
         if kind == "wifi_header":
-            adapter_info = ctx.status.get("wifi_adapter") if ctx.status is not None else None
-            scanning = bool(ctx.status.get("wifi_scanning")) if ctx.status is not None else False
             wifi_header_item = NavItem(
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
                 preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme),
@@ -1043,7 +1055,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
                 preview_footer=_header_enter_hint_footer(theme, cfg, "devices"),
             )
         elif kind == "wifi_item":
-            wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg))
+            wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg, adapter_info, scanning))
             wifi_rows.append(row)
         elif kind == "bt_item":
             bt_items.append(_bt_row_nav_item(payload, box, row, theme, ctx.status, cfg))
@@ -1054,9 +1066,9 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     selected_wifi_index = _selected_wifi_index(wifi_networks, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(wifi_networks), selected_wifi_index, visible_slots=visible_slots)
     if before_i is not None and wifi_rows:
-        wifi_items = [_wifi_row_nav_item(wifi_networks[before_i], box, wifi_rows[0], theme, ctx.status, cfg)] + wifi_items
+        wifi_items = [_wifi_row_nav_item(wifi_networks[before_i], box, wifi_rows[0], theme, ctx.status, cfg, adapter_info, scanning)] + wifi_items
     if after_i is not None and wifi_rows:
-        wifi_items = wifi_items + [_wifi_row_nav_item(wifi_networks[after_i], box, wifi_rows[-1], theme, ctx.status, cfg)]
+        wifi_items = wifi_items + [_wifi_row_nav_item(wifi_networks[after_i], box, wifi_rows[-1], theme, ctx.status, cfg, adapter_info, scanning)]
 
     selected_bt_index = _selected_bt_index(bluetooth_devices, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(bluetooth_devices), selected_bt_index, visible_slots=visible_slots)
