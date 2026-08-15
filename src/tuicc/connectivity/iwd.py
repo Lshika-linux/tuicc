@@ -350,6 +350,15 @@ class IwdBackend(WifiBackend):
         same generous CONNECT_TIMEOUT_SECONDS), just addressed by a
         typed name instead of a network object path since a hidden
         network never shows up in GetOrderedNetworks() to begin with.
+
+        KNOWN GAP, deliberately unfixed for now (backlogged, no way to
+        test it live currently — see CLAUDE/NOTES/known-limitations.md
+        #connect-hidden-silent-failure): unlike connect() above, this
+        does NOT verify ConnectedNetwork afterward, so if
+        ConnectHiddenNetwork() shares connect()'s own false-success
+        quirk on a wrong passphrase (unconfirmed but plausible — same
+        Station auth machinery), a wrong passphrase here would silently
+        report success instead of raising.
         """
         connection = open_dbus_connection(bus="SYSTEM")
         try:
