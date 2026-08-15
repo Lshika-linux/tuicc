@@ -138,13 +138,20 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         connectivity_mode.start_hidden_ssid_entry()
         loop_state.mode_stack.append("connectivity_hidden_ssid")
         return True
-## this was disabled because it was a bit too easy to fucking kill networking with a single keypress,
-## don't know what the issue is yet, to be worked on!! 
-#    if section == "wifi" and key == cfg.keybinds["wifi_power_toggle"]:
-#        adapter = status_worker.get("wifi_adapter")
-#        if adapter is not None and adapter.powered is not None:
-#            status_worker.request_action("wifi", "set_powered", not adapter.powered)
-#        return True
+    # wifi_power_toggle deliberately disabled — live-confirmed
+    # (Rafi's own machine) a single press of this key killed networking
+    # badly enough to need a reboot, root cause not yet understood. See
+    # CLAUDE/NOTES/known-limitations.md#wifi-power-toggle-disabled
+    # before re-enabling this — set_powered() itself (WifiBackend,
+    # both backends) stays in place, only this key's dispatch is
+    # switched off, so the fix (whatever it turns out to be) doesn't
+    # need to rebuild the plumbing, just re-add this branch once it's
+    # actually safe.
+    # if section == "wifi" and key == cfg.keybinds["wifi_power_toggle"]:
+    #     adapter = status_worker.get("wifi_adapter")
+    #     if adapter is not None and adapter.powered is not None:
+    #         status_worker.request_action("wifi", "set_powered", not adapter.powered)
+    #     return True
     items = status_worker.get(section) or []
     if key == cfg.keybinds["confirm"] and items and loop_state.selected_id:
         current_key = loop_state.selected_id.split(":", 2)[2]

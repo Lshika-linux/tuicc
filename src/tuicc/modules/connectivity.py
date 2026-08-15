@@ -919,13 +919,22 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True):
     actually do on Enter, and the hint should say so unconditionally
     rather than only for the wifi-only extra keys below it.
 
-    wifi_forget/wifi_connect_hidden/wifi_power_toggle only ever DO
-    anything while section == "wifi" (see main.py's handle_
-    connectivity_browsing — bluetooth rows have no equivalent), so
-    they're only listed there. [D] Forget specifically is further
-    narrowed to `known` networks only — forgetting an unknown network
-    (never actually saved, nothing to delete) isn't a real action, so
-    offering the key there would be misleading, not just redundant.
+    wifi_forget/wifi_connect_hidden only ever DO anything while
+    section == "wifi" (see main.py's handle_connectivity_browsing —
+    bluetooth rows have no equivalent), so they're only listed there.
+    [D] Forget specifically is further narrowed to `known` networks
+    only — forgetting an unknown network (never actually saved,
+    nothing to delete) isn't a real action, so offering the key there
+    would be misleading, not just redundant.
+
+    wifi_power_toggle is deliberately NOT listed here — its key
+    handling in main.py's handle_connectivity_browsing is commented
+    out (found live: a single keypress killed networking hard enough
+    to need a reboot, cause not yet understood — see CLAUDE/NOTES/
+    known-limitations.md#wifi-power-toggle-disabled). Advertising a key
+    that no longer does anything would be worse than not mentioning it
+    at all — re-add this hint in the same commit that re-enables the
+    key, not before.
     """
     urgent = theme.get("urgent", 0)
     connect_hint = f"[{key_label(cfg.keybinds['confirm'])}] {'Disconnect' if connected else 'Connect'}"
@@ -934,7 +943,7 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True):
     forget_hint = f"   [{key_label(cfg.keybinds['wifi_forget'])}] Forget" if known else ""
     return [
         (f"{connect_hint}   [{key_label(cfg.keybinds['scan'])}] Scan{forget_hint}", urgent),
-        (f"[{key_label(cfg.keybinds['wifi_connect_hidden'])}] Hidden   [{key_label(cfg.keybinds['wifi_power_toggle'])}] Power   [Esc] Back", urgent),
+        (f"[{key_label(cfg.keybinds['wifi_connect_hidden'])}] Hidden   [Esc] Back", urgent),
     ]
 
 

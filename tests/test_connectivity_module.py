@@ -730,19 +730,29 @@ def test_browsing_hint_footer_bluetooth_says_disconnect_when_already_connected()
     assert footer == [("[Enter] Disconnect   [S] Scan   [Esc] Back", _theme()["urgent"])]
 
 
-def test_browsing_hint_footer_wifi_lists_every_wifi_only_key_when_known():
-    # Regression: forget/connect-hidden/power-toggle shipped with no
-    # discoverability hint at all until this was added — found live.
+def test_browsing_hint_footer_wifi_lists_every_active_wifi_only_key_when_known():
+    # Regression: forget/connect-hidden shipped with no discoverability
+    # hint at all until this was added — found live.
     footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True)
     text = _text_of(footer)
 
     assert any("Connect" in line and "[Enter]" in line for line in text)
     assert any("Forget" in line and "[D]" in line for line in text)
     assert any("Hidden" in line and "[N]" in line for line in text)
-    assert any("Power" in line and "[O]" in line for line in text)
     assert any("Scan" in line for line in text)
     assert any("Esc" in line for line in text)
     assert all(color == _theme()["urgent"] for _line, color in footer)
+
+
+def test_browsing_hint_footer_wifi_never_mentions_power():
+    # wifi_power_toggle's own key dispatch is disabled (main.py) after
+    # it broke real networking live — see CLAUDE/NOTES/
+    # known-limitations.md#wifi-power-toggle-disabled. Advertising a
+    # key that does nothing would be worse than not mentioning it.
+    footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True)
+    text = _text_of(footer)
+
+    assert not any("Power" in line for line in text)
 
 
 def test_browsing_hint_footer_wifi_omits_forget_when_not_known():
@@ -757,7 +767,6 @@ def test_browsing_hint_footer_wifi_omits_forget_when_not_known():
     assert any("Connect" in line for line in text)
     assert any("Scan" in line for line in text)
     assert any("Hidden" in line for line in text)
-    assert any("Power" in line for line in text)
 
 
 def test_browsing_hint_footer_wifi_says_disconnect_when_already_connected():
