@@ -130,11 +130,39 @@ def draw(stdscr, box, ctx, module_name):
         if region.id == target_id:
             focused_region = region
 
-    if focused_region is None:
-        return
+    # focused_region can be None two different ways that both mean the
+    # same thing to the user: a region that exists but lost all its
+    # windows, or a workspace number sway/i3 has never actually created
+    # a tree node for at all (never visited, never had a window) — the
+    # WM simply doesn't report the latter as a region in ctx.state.regions.
+    # Both collapse to "nothing to show here", so tiled/floating both
+    # stay [] rather than returning early only for the second case.
+    tiled = [win for win in focused_region.windows if not win.floating] if focused_region else []
+    floating = [win for win in focused_region.windows if win.floating] if focused_region else []
 
-    tiled = [win for win in focused_region.windows if not win.floating]
-    floating = [win for win in focused_region.windows if win.floating]
+    if not tiled and not floating:
+        # A genuinely empty workspace — VISION.md's own "preview idle
+        # state" gap (see CLAUDE/NOTES/design-decisions.md
+        # #module-self-sufficiency-vs-preview's own "explicitly
+        # deferred" note, first raised live and parked as a later
+        # design question). A dashed, dim outline standing in for "one
+        # window filling this whole workspace" — deliberately NOT the
+        # same solid border _draw_window's own real windows use, so it
+        # never reads as an actual window, just an absence-shaped
+        # placeholder — plus a small, honest caption. Rafi's own ask,
+        # verbatim wording and all.
+        dim = theme.get("text", 0) | curses.A_DIM
+        # draw_centered_lines() blanks this whole inner area with spaces
+        # before drawing its own text (see its own docstring — the wide-
+        # character corruption fix) — call it FIRST, then draw the
+        # dashed outline on top, or the text wipes the outline out.
+        # target_id doubles as the workspace's own display label —
+        # sidebar.py's own rows use it exactly the same way (" {ws_id} "),
+        # so no separate lookup is needed even when there's no real
+        # Region object to read a name off of (the never-visited case).
+        draw_centered_lines(stdscr, (x, y, w, h), [(f"WS {target_id}", dim), ("empty *crickets*", dim)])
+        _draw_dashed_outline(stdscr, y + 1, x + 1, h - 2, w - 2, dim)
+        return
 
     for window in tiled:
         is_selected = f"preview:{window.id}" == ctx.selected_id
@@ -192,6 +220,41 @@ def _corner_positions(win_y, win_x, win_h, win_w, label_len):
     left = win_x + 1
     right = win_x + win_w - 1 - label_len
     return [(top, left), (top, right), (bottom, left), (bottom, right)]
+
+
+def _draw_dashed_outline(stdscr, y, x, h, w, color):
+    """A dashed variant of render_utils.draw_box_outline — real corner
+    glyphs (┌┐└┘, so the four corners always read as one connected box
+    rather than depending on the dash phase landing on them) with
+    sparse ─/│ ticks along the straight edges (one drawn cell every 3,
+    not every other — found live, every-other read as "basically
+    solid", not meaningfully different from draw_box_outline's own real
+    line). Non-tick cells are left untouched (not overwritten with an
+    explicit space) — the caller already blanked this whole area via
+    draw_centered_lines() first, see the empty-workspace call site's
+    own comment for why the ordering there matters. Used only by that
+    placeholder; kept local rather than promoted to render_utils.py
+    since there's no second consumer yet — same "share once actually
+    reused, not preemptively" discipline this session's own
+    render_utils.py work already applied more than once.
+    """
+    if h < 2 or w < 2:
+        return
+    try:
+        stdscr.addstr(y, x, "┌", color)
+        stdscr.addstr(y, x + w - 1, "┐", color)
+        stdscr.addstr(y + h - 1, x, "└", color)
+        stdscr.addstr(y + h - 1, x + w - 1, "┘", color)
+        for i in range(1, w - 1):
+            if i % 3 == 0:
+                stdscr.addstr(y, x + i, "─", color)
+                stdscr.addstr(y + h - 1, x + i, "─", color)
+        for i in range(1, h - 1):
+            if i % 3 == 0:
+                stdscr.addstr(y + i, x, "│", color)
+                stdscr.addstr(y + i, x + w - 1, "│", color)
+    except curses.error:
+        pass
 
 
 def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, cfg, filled=False):
