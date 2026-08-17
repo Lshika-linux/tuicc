@@ -86,8 +86,13 @@ def build_app(preset_override: int | None = None) -> AppContext:
     cfg = load_config(preset_override=preset_override)
     theme_pairs = setup_theme(cfg.theme)
     # Second curses-pair range, for [[control.toggle]] colors — must
-    # start past theme_pairs' own range or the two collide.
-    control_colors = assign_control_toggle_pairs(cfg.control_toggles, len(theme_pairs) + 1)
+    # start past theme_pairs' own range or the two collide. cfg.theme's
+    # own "background" (already resolved to a curses color number, or
+    # -1 for "inherit") — see assign_control_toggle_pairs' own
+    # docstring for why a toggle color pair needs this too.
+    control_colors = assign_control_toggle_pairs(
+        cfg.control_toggles, len(theme_pairs) + 1, cfg.theme.get("background", -1)
+    )
     provider = build_provider(cfg.provider_name)
     provider.mark_self(cfg.self_app_id)
 

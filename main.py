@@ -25,12 +25,16 @@ from tuicc.config import (
     available_preset_numbers,
     set_active_preset,
     set_theme_color,
+    set_theme_colors,
     set_session_name,
     get_raw_theme_values,
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
     build_layout_from_preset,
     pick_preset_for_size,
+    available_theme_preset_numbers,
+    load_theme_preset,
+    save_new_theme_preset,
 )
 from tuicc.loop_state import LoopState
 from tuicc.actions import spawn_detached, handle_pending_confirm, dispatch_action
@@ -49,7 +53,9 @@ from tuicc.navigation import (
 )
 from tuicc.render import draw_all, ACTION_HANDLERS, MODULES, NAV_PROVIDERS
 from tuicc.render_utils import draw_status_line
-from tuicc.theme_setup import reassign_theme_pairs
+from tuicc.theme import resolve_color
+from tuicc.theme_setup import reassign_theme_pairs, apply_background, assign_control_toggle_pairs
+from tuicc.theme_presets import preset_cycle_list, next_preset
 from tuicc import app_setup, frame_update, resize_mode, help_mode, pending_moves
 from tuicc.modules import launcher as launcher_mode
 from tuicc.modules import sessions as sessions_mode
@@ -306,11 +312,61 @@ def do_enter_help(loop_state, help_state):
     loop_state.mode_stack.append("help")
 
 
+# Called from two places: F1's Colors page (cfg.keybinds["cycle_preset"],
+# reusing that key the same way resize mode's own F4 means "next
+# layout preset" there) AND cfg.keybinds["cycle_theme_preset"] (F7,
+# its own dedicated key — see defaults/config.toml's own comment for
+# why it isn't a third cycle_preset context) firing from anywhere else
+# in the app. Sets BOTH feedback channels every time rather than
+# branching on which caller fired it: help_state.color_message (shown
+# by the Colors page itself, the only place that's visible while
+# help_state.active — see color_role_lines' own docstring) and
+# loop_state.resize_message (the generic status-line toast, shown
+# everywhere else — see its own "generic despite its name" comment at
+# the draw call site). Whichever one the current screen actually
+# renders is the one the user sees; the other just sits unused for
+# that frame. See theme_presets.py's own module docstring for why no
+# "active theme preset" is tracked anywhere — next_preset() re-derives
+# "where am I now" from the live config.toml values on every press.
+def do_cycle_theme_preset(loop_state, cfg, help_state, stdscr, app):
+    user_presets = {n: load_theme_preset(n) for n in available_theme_preset_numbers()}
+    cycle_list = preset_cycle_list(user_presets)
+    result = next_preset(get_raw_theme_values(), cycle_list)
+    if result is None:
+        return
+    name, values = result
+    for role, value in values.items():
+        cfg.theme[role] = resolve_color(value)
+    loop_state.theme_pairs = reassign_theme_pairs(cfg.theme)
+    apply_background(stdscr, loop_state.theme_pairs)
+    # control.toggle state colors (Performance Mode's dot, etc.) are a
+    # SEPARATE curses-pair range, built once at startup (app_setup.py)
+    # and never touched again — found live, reported directly: a
+    # toggle's own colored dot kept the OLD background baked into its
+    # pair after cycling here, the one spot this whole fix missed the
+    # first time. frame_update.py reads app.control_colors fresh every
+    # frame straight off this same `app` object, so reassigning it here
+    # is picked up on the very next frame, no extra plumbing needed.
+    app.control_colors = assign_control_toggle_pairs(
+        cfg.control_toggles, len(loop_state.theme_pairs) + 1, cfg.theme.get("background", -1)
+    )
+    set_theme_colors(values)
+    help_state.color_message = f"Applied {name}"
+    loop_state.resize_message = f"Applied {name}"
+    loop_state.resize_message_until = time.monotonic() + 3.0
+    loop_state.resize_message_urgent = False
+
+
+def do_save_theme_preset(loop_state, cfg, help_state):
+    new_number = save_new_theme_preset(get_raw_theme_values())
+    help_state.color_message = f"Saved as new preset {new_number}"
+
+
 # "help" can push "help_colors" on top of itself; popping lands back on
 # the colors page, not fully closed. help_state.active is depth-agnostic
 # ("panel showing at all") — draw()'s call site and connectivity_wants_input
 # both read it directly; don't touch it here.
-def handle_help(key, loop_state, cfg, help_state):
+def handle_help(key, loop_state, cfg, help_state, stdscr, app):
     if help_state.page is None:
         help_mode.select_page(help_state, key)
         if help_state.page is None and key == 27:  # Escape
@@ -325,6 +381,10 @@ def handle_help(key, loop_state, cfg, help_state):
         elif key == cfg.keybinds["confirm"]:
             help_mode.start_color_edit(help_state, get_raw_theme_values())
             loop_state.mode_stack.append("help_colors")
+        elif key == cfg.keybinds["cycle_preset"]:
+            do_cycle_theme_preset(loop_state, cfg, help_state, stdscr, app)
+        elif key == cfg.keybinds["new_preset"]:
+            do_save_theme_preset(loop_state, cfg, help_state)
         elif key == 27:  # Escape
             help_state.page = None
         return True
@@ -344,7 +404,7 @@ def do_save_layout(loop_state, cfg, resize):
     resize_mode.exit_edit_mode(resize)
 
 
-def handle_help_colors(key, loop_state, cfg, help_state):
+def handle_help_colors(key, loop_state, cfg, help_state, stdscr, app):
     # loop_state.theme_pairs reassigned in place, not just cfg.theme —
     # skip this and the color saves to config.toml but never renders
     # until restart.
@@ -354,6 +414,15 @@ def handle_help_colors(key, loop_state, cfg, help_state):
             role, color, typed_value = result
             cfg.theme[role] = color
             loop_state.theme_pairs = reassign_theme_pairs(cfg.theme)
+            # role == "background" is the only edit that actually
+            # changes anything here (assign_control_toggle_pairs' own
+            # bg_color param is cfg.theme's "background" role and
+            # nothing else) — cheaper to just always re-apply both than
+            # special-case which single role was just edited.
+            apply_background(stdscr, loop_state.theme_pairs)
+            app.control_colors = assign_control_toggle_pairs(
+                cfg.control_toggles, len(loop_state.theme_pairs) + 1, cfg.theme.get("background", -1)
+            )
             set_theme_color(role, typed_value)
             return False
         return True
@@ -540,7 +609,11 @@ def main(stdscr):
     # before it can start. See app_setup.py for why this is split out.
     app = app_setup.build_app(preset_override=preset_override)
     cfg = app.cfg
-    control_colors = app.control_colors
+    # No local control_colors var — frame_update.py reads app.control_colors
+    # straight off this same `app` object every frame, so a live theme
+    # change (do_cycle_theme_preset/handle_help_colors reassigning
+    # app.control_colors in place) is picked up automatically; a local
+    # copy here would silently go stale the moment that happens.
     provider = app.provider
     wifi_agent = app.wifi_agent
     bluez_agent = app.bluez_agent
@@ -585,6 +658,11 @@ def main(stdscr):
         theme_pairs=app.theme_pairs,
         active_module=cfg.layout.boxes[0].name if cfg.layout.boxes else None,
     )
+    # build_app() stays deliberately stdscr-free (see its own docstring)
+    # — the "background" role's own fill can only be applied here, the
+    # first point main() actually has both theme_pairs and stdscr
+    # together. See apply_background()'s own docstring.
+    apply_background(stdscr, loop_state.theme_pairs)
 
     resize = resize_mode.ResizeState()
     spawn_picker = resize_mode.SpawnPickerState()
@@ -614,8 +692,8 @@ def main(stdscr):
             key, loop_state, cfg, status_worker, next_item_keys, prev_item_keys
         ),
         "connectivity_hidden_ssid": lambda key: handle_connectivity_hidden_ssid(key, loop_state, cfg, status_worker),
-        "help": lambda key: handle_help(key, loop_state, cfg, help_state),
-        "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state),
+        "help": lambda key: handle_help(key, loop_state, cfg, help_state, stdscr, app),
+        "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state, stdscr, app),
         "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves),
         "spawn_picker": lambda key: handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize),
         "resize_editing": lambda key: handle_resize_editing(
@@ -908,6 +986,8 @@ def main(stdscr):
                 do_cycle_preset(loop_state, cfg, resize)
             elif key == cfg.keybinds["new_preset"]:
                 do_new_preset(loop_state, cfg, resize)
+            elif key == cfg.keybinds["cycle_theme_preset"]:
+                do_cycle_theme_preset(loop_state, cfg, help_state, stdscr, app)
             elif key == cfg.keybinds["help"]:
                 do_enter_help(loop_state, help_state)
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:

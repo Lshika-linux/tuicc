@@ -142,6 +142,23 @@ def test_color_role_lines_editing_shows_typed_text_and_error_inline():
     assert "cy_" in edited_line
 
 
+def test_color_role_lines_shows_the_preset_message_when_browsing():
+    lines = color_role_lines(selected_index=0, raw_values={}, message="Applied Dracula")
+    assert "Applied Dracula" in lines
+
+
+def test_color_role_lines_omits_the_message_line_when_none():
+    lines = color_role_lines(selected_index=0, raw_values={})
+    assert not any("Applied" in l for l in lines)
+
+
+def test_color_role_lines_hides_the_message_while_editing():
+    # A stale "Applied X" from before Enter was pressed shouldn't leak
+    # into the editing view — editing has its own error line instead.
+    lines = color_role_lines(selected_index=0, raw_values={}, editing=True, edit_text="cy", message="Applied Dracula")
+    assert not any("Applied" in l for l in lines)
+
+
 # ---------- parse_color_input ----------
 
 def test_parse_color_input_named_color():
@@ -224,7 +241,7 @@ def test_format_color_value_none_is_empty_string():
 # ---------- HelpState: enter / select_page ----------
 
 def test_enter_activates_with_a_clean_slate():
-    state = HelpState(page="colors", color_index=3, color_editing=True, color_input="x")
+    state = HelpState(page="colors", color_index=3, color_editing=True, color_input="x", color_message="Applied Nord")
 
     enter(state)
 
@@ -234,6 +251,7 @@ def test_enter_activates_with_a_clean_slate():
     assert state.color_editing is False
     assert state.color_input == ""
     assert state.color_error is None
+    assert state.color_message is None
 
 
 def test_select_page_sets_a_valid_page():
@@ -258,6 +276,16 @@ def test_select_page_resets_color_index():
     select_page(state, ord(str(PAGE_NAMES.index("colors") + 1)))
 
     assert state.color_index == 0
+
+
+def test_select_page_resets_color_message():
+    # A stale "Applied X" from a previous visit to the Colors page
+    # shouldn't reappear on the next one.
+    state = HelpState(color_message="Applied Nord")
+
+    select_page(state, ord(str(PAGE_NAMES.index("colors") + 1)))
+
+    assert state.color_message is None
 
 
 # ---------- HelpState: colors browsing ----------

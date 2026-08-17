@@ -34,16 +34,17 @@ line. Still fully available by hand-editing config.toml directly.
 import curses
 from dataclasses import dataclass
 
-from tuicc.theme import resolve_color
+from tuicc.theme import resolve_color, THEME_ROLES
 from tuicc.render_utils import draw_box_outline, draw_filled_box, draw_text_panel
 
 TOP_MENU = ["Help", "Resize mode", "Colors"]
 PAGE_NAMES = ["help", "resize", "colors"]
 
-COLOR_ROLES = [
-    "background", "border", "border_selected", "text",
-    "accent", "selected", "warning", "urgent",
-]
+# Re-exported under this file's own established name (existing tests
+# import it as help_mode.COLOR_ROLES) — theme.py's THEME_ROLES is the
+# canonical list now, since theme_presets.py needs the same 8 names
+# and shouldn't import them from a UI-page-content module.
+COLOR_ROLES = THEME_ROLES
 
 
 def page_for_digit(key: int) -> str | None:
@@ -105,6 +106,11 @@ def help_lines(raw_keys: dict, raw_power_menu_actions: list[dict]) -> list[str]:
         "Or visit and edit ~/.config/tuicc/presets/<N>.toml, and apply the",
         "preset in ~/.config/tuicc/config.toml.",
         "",
+        "I don't like the colors, what do I do?",
+        "Open the Colors page (3), F4 to cycle built-in schemes + your own",
+        "saved ones, F5 to save the current 8 as a new one — Enter still",
+        "edits one role at a time on top of whatever you land on.",
+        "",
         "Esc  back to menu",
     ])
     return lines
@@ -148,6 +154,12 @@ def resize_help_lines() -> list[str]:
         "F1/F3/F4/F5/F6 all work from either level of edit mode — they",
         "commit whatever's in progress first, same as Enter would.",
         "",
+        "F7       cycle theme presets (built-in schemes + your own saved",
+        "         ones) — works standalone or while browsing here, but",
+        "         NOT mid-edit of a module (that's a full modal, unlike",
+        "         browsing) — same list F1's own Colors page (3) cycles",
+        "         with F4 there.",
+        "",
         "Esc  back to menu",
     ]
 
@@ -158,11 +170,22 @@ def color_role_lines(
     editing: bool = False,
     edit_text: str = "",
     error: str | None = None,
+    message: str | None = None,
 ) -> list[str]:
     """The whole Colors page as one role-per-row list, each row showing
     its current value — editing happens inline, on this same list (the
     selected row's value swaps for the live-typed text, everything
     else stays put), not a separate page you navigate away to.
+
+    message (main.py's own feedback after F4/F5 — "Applied Dracula",
+    "Saved as new preset 3") is deliberately NOT time-based like
+    resize_message elsewhere in this codebase: that toast is drawn by
+    the normal bottom-of-loop status line, which never runs while this
+    panel owns the whole screen (help_state.active). Persisting here
+    until the next F4/F5 press (or Escape resets it, see enter()) keeps
+    it visible for exactly as long as you're still looking at this
+    page — the same "linger until something else happens" precedent
+    color_error already sets on this same page.
     """
     lines = []
     for i, role in enumerate(COLOR_ROLES):
@@ -182,6 +205,10 @@ def color_role_lines(
         lines.append("Esc    cancel")
     else:
         lines.append("Enter  edit")
+        lines.append("F4     next preset")
+        lines.append("F5     save as new preset")
+        if message:
+            lines.append(message)
         lines.append("Esc    back to menu")
     return lines
 
@@ -296,6 +323,7 @@ class HelpState:
     color_editing: bool = False
     color_input: str = ""
     color_error: str | None = None
+    color_message: str | None = None
 
 
 def enter(state: HelpState) -> None:
@@ -305,6 +333,7 @@ def enter(state: HelpState) -> None:
     state.color_editing = False
     state.color_input = ""
     state.color_error = None
+    state.color_message = None
 
 
 def select_page(state: HelpState, key: int) -> None:
@@ -312,6 +341,7 @@ def select_page(state: HelpState, key: int) -> None:
     if page is not None:
         state.page = page
         state.color_index = 0
+        state.color_message = None
 
 
 def move_color_index(state: HelpState, delta: int) -> None:
@@ -381,6 +411,7 @@ def draw(stdscr, term_width, term_height, theme_pairs, state: HelpState,
         content = color_role_lines(
             state.color_index, raw_theme_values,
             editing=state.color_editing, edit_text=state.color_input, error=state.color_error,
+            message=state.color_message,
         )
         lines = [(line, theme_pairs.get("text", 0)) for line in content]
         draw_text_panel(stdscr, left_box, lines, theme_pairs.get("border_selected", 0), title="Colors")

@@ -47,6 +47,16 @@ PACKAGED_PRESETS_DIR = PACKAGE_DIR / "presets"
 USER_CONFIG_PATH = Path.home() / ".config" / "tuicc" / "config.toml"
 USER_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "presets"
 
+# Theme presets — a user-saved [theme] snapshot per numbered file,
+# same shape as USER_PRESETS_DIR's layout files but its own directory
+# (a theme preset and a layout preset sharing a number would mean
+# nothing to each other, so keeping them in one namespace would just
+# be confusing). No PACKAGED_ counterpart: the built-in named schemes
+# (theme_presets.py's BUILTIN_THEME_PRESETS) are hardcoded, not
+# shipped as files — there's no reason a user would want to hand-edit
+# "Dracula" itself in place the way a layout preset invites editing.
+USER_THEME_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "theme_presets"
+
 # Must match modules/sessions.py's own SLOT_COUNT — duplicated rather
 # than imported, since config.py sits below modules/ in the dependency
 # order (modules import from config, never the reverse). Session slot
@@ -203,6 +213,73 @@ def save_new_preset(layout: Layout) -> int:
     preset_number = next_free_preset_number()
     save_layout_to_preset(layout, preset_number)
     return preset_number
+
+
+def next_free_theme_preset_number() -> int:
+    """Same reasoning as next_free_preset_number(), but only over
+    USER_THEME_PRESETS_DIR — there's no packaged theme-preset dir to
+    also reserve numbers against (see that constant's own comment).
+    """
+    existing = []
+    if USER_THEME_PRESETS_DIR.exists():
+        for path in USER_THEME_PRESETS_DIR.glob("*.toml"):
+            try:
+                existing.append(int(path.stem))
+            except ValueError:
+                continue
+    return max(existing, default=0) + 1
+
+
+def save_new_theme_preset(theme_values: dict) -> int:
+    """Writes theme_values (get_raw_theme_values()'s own shape — every
+    [theme] role's current raw string/list value) as a brand-new
+    numbered file under USER_THEME_PRESETS_DIR. Returns the number
+    used. Mirrors save_new_preset()'s layout equivalent exactly, one
+    level simpler: a theme preset is just one [theme] table, no boxes
+    to convert.
+    """
+    preset_number = next_free_theme_preset_number()
+    USER_THEME_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    path = USER_THEME_PRESETS_DIR / f"{preset_number}.toml"
+    tmp_path = path.with_name(path.name + ".tmp")
+    with open(tmp_path, "wb") as f:
+        tomli_w.dump({"theme": theme_values}, f)
+    tmp_path.replace(path)
+    return preset_number
+
+
+def load_theme_preset(preset_number: int) -> dict:
+    """preset_number's saved [theme] table, straight from disk."""
+    path = USER_THEME_PRESETS_DIR / f"{preset_number}.toml"
+    return load_toml(path).get("theme", {})
+
+
+def available_theme_preset_numbers() -> list[int]:
+    """Every user theme preset number that exists, sorted — feeds
+    theme_presets.py's preset_cycle_list() the same way
+    available_preset_numbers() feeds resize mode's F4 for layouts.
+    """
+    numbers = []
+    if USER_THEME_PRESETS_DIR.exists():
+        for path in USER_THEME_PRESETS_DIR.glob("*.toml"):
+            try:
+                numbers.append(int(path.stem))
+            except ValueError:
+                continue
+    return sorted(numbers)
+
+
+def set_theme_colors(values: dict) -> None:
+    """Switches EVERY role in values over to its new value, in one
+    call — applying a whole theme preset (built-in or user-saved) at
+    once. Just set_theme_color() called once per role: each call
+    already does its own safe, comment-preserving read+write pass, and
+    a preset apply is a rare, human-triggered action (never per-frame),
+    so 8 separate file rewrites costs nothing worth optimizing away in
+    exchange for a second, parallel patching code path.
+    """
+    for role, value in values.items():
+        set_theme_color(role, value)
 
 
 def save_layout_to_preset(layout: Layout, preset_number: int) -> None:
@@ -646,6 +723,17 @@ def load_config(preset_override: int | None = None) -> Config:
     # one shared letter to read correctly for both sections at once.
     keybinds.setdefault("bt_power_toggle", resolve_key("p"))
     keybinds.setdefault("bt_pairable_toggle", resolve_key("a"))
+    # Same reasoning again — cycles theme presets from anywhere (not
+    # just the F1 Colors page's own cycle_preset-bound F4), added after
+    # bt_pairable_toggle above. Deliberately its own key rather than
+    # reusing cycle_preset/new_preset: those two already mean "layout
+    # preset" in every context they fire from (resize mode's own F4/F5,
+    # and — via handle_resize_editing's handoff — mid-edit too); reusing
+    # them here would make the same keypress mean two unrelated things
+    # depending on context. No theme equivalent of new_preset (save as
+    # new) exists outside the Colors page on purpose — see
+    # theme_presets.py's own module docstring.
+    keybinds.setdefault("cycle_theme_preset", resolve_key("F7"))
 
     quick_actions = []
     for action_data in user_data["quick_actions"]["action"]:

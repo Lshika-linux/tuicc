@@ -106,12 +106,26 @@ vim_down = "j"
 # on screen and spawn it (centered, ready to move) — works standalone
 # or from inside the session, dropping straight into moving the new
 # module.
+#
+# cycle_preset/new_preset do double duty: on F1's own Colors page (not
+# just here in resize mode), the same two keys cycle through built-in
+# named color schemes + your own saved theme presets (cycle_preset),
+# and save the current 8 colors as a new one (new_preset) — same
+# mental model, different context, never active at once.
+#
+# cycle_theme_preset (F7) is its own separate key, not a third context
+# for cycle_preset/new_preset above: it cycles theme presets from
+# ANYWHERE — works standalone or from inside a resize session, same as
+# spawn_box — without needing the F1 Colors page open at all. There's
+# no equivalent "save as new theme preset" key outside Colors on
+# purpose (see theme_presets.py's own module docstring for why).
 help = "F1"
 resize = "F2"
 save_layout = "F3"
 cycle_preset = "F4"
 new_preset = "F5"
 spawn_box = "F6"
+cycle_theme_preset = "F7"
 move_toggle = "m"
 delete_box = "Delete"
 

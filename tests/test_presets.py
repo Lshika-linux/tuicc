@@ -19,10 +19,15 @@ from tuicc.config import (
     pick_preset_for_size,
     set_active_preset,
     set_theme_color,
+    set_theme_colors,
     set_session_name,
     get_raw_theme_values,
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
+    next_free_theme_preset_number,
+    save_new_theme_preset,
+    load_theme_preset,
+    available_theme_preset_numbers,
     _build_session_names,
     _build_control_toggles,
     _build_weather_config,
@@ -919,3 +924,83 @@ def test_build_sysmon_blocks_allows_a_disabled_block_at_an_occupied_position():
     ]}}
     result = _build_sysmon_blocks(user_data)
     assert len(result) == 2
+
+
+# ---------- theme presets ----------
+
+def _sample_theme_values():
+    return {"accent": "cyan", "border": "#808080", "text": "white"}
+
+
+def test_next_free_theme_preset_number_with_none_saved_is_1(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "USER_THEME_PRESETS_DIR", tmp_path / "theme_presets")
+
+    assert next_free_theme_preset_number() == 1
+
+
+def test_next_free_theme_preset_number_is_one_past_the_highest_seen(tmp_path, monkeypatch):
+    presets_dir = tmp_path / "theme_presets"
+    presets_dir.mkdir()
+    (presets_dir / "3.toml").write_text("")
+
+    monkeypatch.setattr(config_module, "USER_THEME_PRESETS_DIR", presets_dir)
+
+    assert next_free_theme_preset_number() == 4
+
+
+def test_save_new_theme_preset_writes_a_readable_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "USER_THEME_PRESETS_DIR", tmp_path / "theme_presets")
+
+    preset_number = save_new_theme_preset(_sample_theme_values())
+
+    assert preset_number == 1
+    assert load_theme_preset(1) == _sample_theme_values()
+
+
+def test_save_new_theme_preset_never_overwrites_an_existing_file(tmp_path, monkeypatch):
+    presets_dir = tmp_path / "theme_presets"
+    presets_dir.mkdir()
+    presets_dir.joinpath("1.toml").write_text('[theme]\naccent = "red"\n')
+
+    monkeypatch.setattr(config_module, "USER_THEME_PRESETS_DIR", presets_dir)
+
+    preset_number = save_new_theme_preset(_sample_theme_values())
+
+    assert preset_number == 2
+    assert load_theme_preset(1) == {"accent": "red"}
+    assert load_theme_preset(2) == _sample_theme_values()
+
+
+def test_available_theme_preset_numbers_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "USER_THEME_PRESETS_DIR", tmp_path / "theme_presets")
+
+    assert available_theme_preset_numbers() == []
+
+
+def test_available_theme_preset_numbers_sorted(tmp_path, monkeypatch):
+    presets_dir = tmp_path / "theme_presets"
+    presets_dir.mkdir()
+    (presets_dir / "3.toml").write_text('[theme]\n')
+    (presets_dir / "1.toml").write_text('[theme]\n')
+
+    monkeypatch.setattr(config_module, "USER_THEME_PRESETS_DIR", presets_dir)
+
+    assert available_theme_preset_numbers() == [1, 3]
+
+
+def test_set_theme_colors_rewrites_every_given_role(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[theme]\n"
+        'accent = "cyan"\n'
+        'border = "white"\n'
+        'text = "white"\n'
+    )
+    monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
+
+    set_theme_colors({"accent": "magenta", "border": "#111111"})
+
+    values = get_raw_theme_values()
+    assert values["accent"] == "magenta"
+    assert values["border"] == "#111111"
+    assert values["text"] == "white"  # untouched — not in the given dict

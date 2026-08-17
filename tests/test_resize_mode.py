@@ -406,6 +406,19 @@ def test_hint_text_shows_dimension_and_module_when_editing():
     assert "MOVE" in hint_text(state, "sidebar")
 
 
+def test_hint_text_mentions_f7_cycle_theme_while_browsing():
+    state = ResizeState(editing=False)
+    assert "F7" in hint_text(state, "sidebar")
+
+
+def test_hint_text_omits_f7_while_editing():
+    # F7 isn't one of the six real handoff keys handle_editing_key()
+    # recognizes — pressing it mid-edit is silently ignored, so the
+    # hint shouldn't claim it works there.
+    state = ResizeState(editing=True, dimension="size")
+    assert "F7" not in hint_text(state, "sidebar")
+
+
 # ---------- SpawnPickerState ----------
 
 def test_open_picker_activates_with_sorted_choices():

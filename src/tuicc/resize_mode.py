@@ -325,9 +325,14 @@ def hint_text(state: ResizeState, active_module: str) -> str:
         return (
             f"EDIT MODE — {active_module}  Enter edit this module  Del delete it  |  "
             f"Tab/Shift+Tab/arrows pick another  |  F1 help  F3 save+exit  "
-            f"F4 cycle preset  F5 new preset  F6 spawn  Esc exit"
+            f"F4 cycle preset  F5 new preset  F6 spawn  F7 cycle theme  Esc exit"
         )
     action = "resize" if state.dimension == "size" else "move"
+    # F7 deliberately NOT listed here — editing is a true modal
+    # (handle_editing_key only recognizes F1/F3/F4/F5/F6, the six real
+    # handoff keys), so F7 pressed mid-edit is silently ignored, not
+    # wired up like it is at the browsing level above. See
+    # resize_help_lines()'s own note on this same distinction.
     return (
         f"[{state.dimension.upper()}] {active_module} — ←→↑↓ {action}  "
         f"M switch  Del delete  Enter done (back to browsing)  Esc cancel  |  "

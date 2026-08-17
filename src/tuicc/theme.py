@@ -17,6 +17,16 @@ startup.
 """
 
 
+# The 8 roles every theme (config.toml's own, or a theme_presets.py
+# scheme) has to define — canonical home for this list. help_mode.py
+# re-exports it as COLOR_ROLES (its own established name, existing
+# tests import it that way) rather than duplicating it; theme_presets.py
+# imports it directly under this name.
+THEME_ROLES = [
+    "background", "border", "border_selected", "text",
+    "accent", "selected", "warning", "urgent",
+]
+
 NAMED_COLORS = {
     "black": 0,
     "red": 1,
