@@ -21,7 +21,9 @@ from tuicc.modules.connectivity import (
     _adapter_info_table,
     _bt_header_status_segments,
     _connection_diagnostics_table,
+    _forget_hidden_hint_segments,
     _is_header_action_flashing,
+    _preview_available,
     flash_header_action,
     _wifi_preview_tables,
     _bt_adapter_info_table,
@@ -497,7 +499,7 @@ def _theme():
 def _cfg():
     return SimpleNamespace(keybinds={
         "scan": ord("s"), "confirm": ord("\n"),
-        "wifi_forget": ord("d"), "wifi_connect_hidden": ord("n"), "wifi_power_toggle": ord("p"),
+        "wifi_forget": ord("f"), "wifi_connect_hidden": ord("h"), "wifi_power_toggle": ord("p"),
         "bt_power_toggle": ord("p"), "bt_pairable_toggle": ord("a"),
     })
 
@@ -1014,8 +1016,8 @@ def test_browsing_hint_footer_wifi_lists_every_active_wifi_only_key_when_known()
     text = _text_of(footer)
 
     assert any("Connect" in line and "[Enter]" in line for line in text)
-    assert any("Forget" in line and "[D]" in line for line in text)
-    assert any("Hidden" in line and "[N]" in line for line in text)
+    assert any("Forget" in line and "[F]" in line for line in text)
+    assert any("Hidden" in line and "[H]" in line for line in text)
     assert any("Power" in line and "[P]" in line for line in text)
     assert any("Scan" in line for line in text)
     assert any("Esc" in line for line in text)
@@ -1651,3 +1653,50 @@ def test_wifi_header_status_segments_flashes_only_the_pressed_group():
     scan_dot_text, scan_dot_color = segments[7:12][3]
     assert scan_dot_text == "○"
     assert scan_dot_color != flash_color
+
+
+# ---------- _preview_available / _forget_hidden_hint_segments ----------
+# The Connectivity box's own bottom-border-line fallback for wifi_
+# forget/wifi_connect_hidden discoverability — CLAUDE/NOTES/design-
+# decisions.md#module-self-sufficiency-vs-preview's own "mechanism #2"
+# (a module checking whether preview exists in the layout at all and
+# branching what it draws), first real consumer.
+
+def test_preview_available_true_when_preview_box_present():
+    cfg = SimpleNamespace(layout=SimpleNamespace(boxes=[
+        SimpleNamespace(name="sidebar"), SimpleNamespace(name="preview"), SimpleNamespace(name="connectivity"),
+    ]))
+
+    assert _preview_available(cfg) is True
+
+
+def test_preview_available_false_when_preview_box_absent():
+    cfg = SimpleNamespace(layout=SimpleNamespace(boxes=[
+        SimpleNamespace(name="sidebar"), SimpleNamespace(name="connectivity"),
+    ]))
+
+    assert _preview_available(cfg) is False
+
+
+def test_preview_available_false_for_empty_layout():
+    cfg = SimpleNamespace(layout=SimpleNamespace(boxes=[]))
+
+    assert _preview_available(cfg) is False
+
+
+def test_forget_hidden_hint_segments_spells_out_forget_and_hidden_connect():
+    segments = _forget_hidden_hint_segments(_theme(), _cfg())
+    text = "".join(t for t, _c in segments)
+
+    assert text == "[F]orget   [H]idden connect"
+
+
+def test_forget_hidden_hint_segments_bolds_only_the_mnemonic_letters():
+    segments = _forget_hidden_hint_segments(_theme(), _cfg())
+    by_text = {t: c for t, c in segments}
+    urgent = _theme()["urgent"]
+
+    assert by_text["F"] == (urgent | curses.A_BOLD)
+    assert by_text["H"] == (urgent | curses.A_BOLD)
+    assert by_text["]orget"] == urgent
+    assert by_text["]idden connect"] == urgent

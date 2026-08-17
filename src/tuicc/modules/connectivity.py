@@ -732,6 +732,52 @@ def _draw_segments(stdscr, row, x, segments, max_w):
         remaining -= advance
 
 
+def _preview_available(cfg) -> bool:
+    """Whether the "preview" box exists anywhere in the CURRENT
+    layout — the check CLAUDE/NOTES/design-decisions.md
+    #module-self-sufficiency-vs-preview's own "mechanism #2" names but
+    never actually built until now: "a module can check any(b.name ==
+    'preview' for b in ctx.config.layout.boxes) and branch how much it
+    draws in its OWN box accordingly." First real consumer is
+    _forget_hidden_hint_segments' own border-line fallback below —
+    Rafi's own call: that hint only needs to live in-module when
+    there's nowhere ELSE (preview's own preview_footer) it could show
+    instead.
+    """
+    return any(b.name == "preview" for b in cfg.layout.boxes)
+
+
+def _forget_hidden_hint_segments(theme, cfg):
+    """(text, color) segments for "[F]orget   [H]idden connect" — the
+    Connectivity box's own bottom-border-line fallback for wifi_forget/
+    wifi_connect_hidden's own discoverability, shown only when
+    _preview_available() is False (see draw()'s own comment for the
+    full "why only then" reasoning) and only while actually browsing
+    WiFi (same "don't hint at something not currently actionable"
+    instinct the header's own PWR/SCAN/PAIRABLE legend already applies
+    via is_controllable).
+
+    The bracket wraps ONLY the mnemonic letter itself ("[F]orget", not
+    "[Forget]") — a different convention from the header's own
+    "[PWR ...]" (which brackets the whole group) deliberately matching
+    Rafi's own literal ask instead: a classic "underlined hotkey
+    letter in a word" menu convention. Hardcodes "F"/"H" rather than
+    reading them back out of cfg.keybinds — same known tradeoff the
+    header's own P/S/A legend already accepts (see wifi_power_toggle's
+    own comment in defaults/config.toml): correct for the packaged
+    defaults ("f"/"h"), and would read wrong if a user ever rebinds
+    wifi_forget/wifi_connect_hidden away from them, exactly like
+    rebinding wifi_power_toggle away from "p" already would for [P]WR.
+    """
+    urgent = theme.get("urgent", 0)
+    bold_urgent = urgent | curses.A_BOLD
+    return [
+        ("[", urgent), ("F", bold_urgent), ("]orget", urgent),
+        ("   ", urgent),
+        ("[", urgent), ("H", bold_urgent), ("]idden connect", urgent),
+    ]
+
+
 def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
@@ -801,6 +847,21 @@ def draw(stdscr, box, ctx, module_name):
         lines.append((f"{key_label(ctx.config.keybinds['confirm'])} to connect, Esc to cancel", theme.get("text", 0) | curses.A_DIM))
         draw_centered_lines(stdscr, box, lines)
         return
+
+    # Fallback discoverability for wifi_forget/wifi_connect_hidden,
+    # cut right into the box's own bottom border — only when preview
+    # isn't in the layout at all (its own preview_footer already
+    # covers this otherwise, see _browsing_hint_footer) and only while
+    # actually browsing WiFi (nothing else uses these two keys). See
+    # _forget_hidden_hint_segments' own docstring for the full design;
+    # _preview_available() is CLAUDE/NOTES/design-decisions.md
+    # #module-self-sufficiency-vs-preview's own "mechanism #2", its
+    # first real consumer.
+    if not _preview_available(ctx.config) and is_browsing() and browsing_section() == "wifi":
+        hint_segments = _forget_hidden_hint_segments(theme, ctx.config)
+        hint_w = sum(display_width(text) for text, _color in hint_segments)
+        hint_x = x + max((w - hint_w) // 2, 1)
+        _draw_segments(stdscr, y + h - 1, hint_x, hint_segments, max(w - 2, 0))
 
     inner_w = max(w - 4, 0)
 

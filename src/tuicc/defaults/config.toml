@@ -53,9 +53,14 @@ scan = "s"
 # wifi_forget: forget the selected known network (asks Y/N first).
 # wifi_connect_hidden: type in a network name that doesn't broadcast
 # its SSID and connect to it. wifi_power_toggle: turn the wifi radio
-# itself on/off.
-wifi_forget = "d"
-wifi_connect_hidden = "n"
+# itself on/off. wifi_forget/wifi_connect_hidden deliberately match
+# their own mnemonic letters ("f"/"h") — same reasoning as bt_power_
+# toggle's own comment below: the Connectivity box's own border-line
+# fallback hint (no-preview case — see _forget_hidden_hint_segments'
+# own docstring) spells them as "[F]orget"/"[H]idden connect", the
+# accent letter being the actual key.
+wifi_forget = "f"
+wifi_connect_hidden = "h"
 wifi_power_toggle = "p"
 
 # Bluetooth's own equivalents while browsing. bt_power_toggle: turn

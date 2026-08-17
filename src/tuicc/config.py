@@ -636,8 +636,8 @@ def load_config(preset_override: int | None = None) -> Config:
     # Same reasoning again — these three followed "scan" into
     # [navigation.keys] for connectivity.py's wifi-only forget/connect-
     # hidden/power-toggle keys.
-    keybinds.setdefault("wifi_forget", resolve_key("d"))
-    keybinds.setdefault("wifi_connect_hidden", resolve_key("n"))
+    keybinds.setdefault("wifi_forget", resolve_key("f"))
+    keybinds.setdefault("wifi_connect_hidden", resolve_key("h"))
     keybinds.setdefault("wifi_power_toggle", resolve_key("p"))
     # Same reasoning again — Bluetooth's own power/pairable toggles,
     # added after wifi's own three above. bt_power_toggle deliberately
