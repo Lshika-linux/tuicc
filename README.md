@@ -162,6 +162,14 @@ exactly what renders, always. If a box looks wrong on a different
 terminal size, fix it with tuicc's own interactive resize mode (`F2`
 on the module) rather than hand-computing ratios.
 
+Colors work the same live-editable way: `F1` → `3` opens the Colors
+page, `Enter` on a role edits it in place (named color / `#hex` /
+`inherit`), and `F4`/`F5` cycle through 9 built-in named schemes
+(Dracula, Nord, Solarized Dark, Gruvbox, One Dark, Rose Pine,
+Catppuccin Mocha, Tokyo Night, plus tuicc's own Default) and save your
+own tweaks as a new preset — `F7` cycles the same list from anywhere,
+not just that page.
+
 Every section — layout, navigation, theme, power menu, quick actions,
 and the rest — is documented field-by-field in the wiki's
 [Config Reference](https://github.com/Lshika-linux/tuicc/wiki/Config-Reference),
@@ -303,6 +311,7 @@ src/tuicc/
 ├── context.py                    # RenderContext — everything a module needs per frame
 ├── theme.py                       # resolves config colors (named/hex/RGB) to curses color numbers
 ├── theme_setup.py                  # one-time curses color pair setup at startup
+├── theme_presets.py                 # built-in named color schemes + user-saved-preset cycling (F4/F5/F7)
 ├── config.py                        # loads + merges packaged defaults, presets, user config
 ├── render.py                         # module registry (draw + nav_items + action handlers)
 ├── render_utils.py                    # shared curses drawing helpers
