@@ -125,9 +125,11 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         else:
             status_worker.request_action("bluetooth", "discover", None)
         return True
-    # wifi-only keys below — forgetting/hidden-connect/radio-power are
-    # wifi concepts, no bluetooth equivalent was asked for (see this
+    # wifi-only keys below — forgetting/hidden-connect are wifi
+    # concepts, no bluetooth equivalent was asked for (see this
     # feature's own scoping — impala doesn't cover bluetooth either).
+    # Radio power DOES have a bluetooth equivalent (bt_power_toggle,
+    # below) — bluetooth just uses its own separate key.
     if section == "wifi" and key == cfg.keybinds["wifi_forget"] and loop_state.selected_id:
         ssid = loop_state.selected_id.split(":", 2)[2]
         networks = status_worker.get("wifi") or []
@@ -151,6 +153,19 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         adapter = status_worker.get("wifi_adapter")
         if adapter is not None and adapter.powered is not None:
             status_worker.request_action("wifi", "set_powered", not adapter.powered, pending_key="power")
+        return True
+    # Bluetooth's own equivalents, added 2026-08-16 mirroring the wifi
+    # branch above exactly (same pending_key="power" reasoning) — plus
+    # Pairable, which wifi has no equivalent of at all.
+    if section == "bluetooth" and key == cfg.keybinds["bt_power_toggle"]:
+        adapter = status_worker.get("bluetooth_adapter")
+        if adapter is not None and adapter.powered is not None:
+            status_worker.request_action("bluetooth", "set_powered", not adapter.powered, pending_key="power")
+        return True
+    if section == "bluetooth" and key == cfg.keybinds["bt_pairable_toggle"]:
+        adapter = status_worker.get("bluetooth_adapter")
+        if adapter is not None and adapter.pairable is not None:
+            status_worker.request_action("bluetooth", "set_pairable", not adapter.pairable, pending_key="pairable")
         return True
     items = status_worker.get(section) or []
     if key == cfg.keybinds["confirm"] and items and loop_state.selected_id:

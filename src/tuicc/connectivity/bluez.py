@@ -22,7 +22,7 @@ import threading
 from jeepney.io.blocking import open_dbus_connection
 
 from tuicc.connectivity.base import BluetoothBackend
-from tuicc.connectivity.model import BluetoothDevice
+from tuicc.connectivity.model import BluetoothDevice, BluetoothAdapterInfo
 from tuicc.connectivity.util import dbus_call
 
 BUS_NAME = "org.bluez"
@@ -123,6 +123,32 @@ def find_adapter_path_in_objects(objects):
     return None
 
 
+def _adapter_interface_name(path):
+    """The adapter's own interface id (e.g. "hci0") — the last segment
+    of its D-Bus object path (e.g. "/org/bluez/hci0"). Deliberately NOT
+    Adapter1's own "Name" property, which is the machine's Bluetooth
+    broadcast name (its hostname, by default — confirmed live,
+    "node1" on this machine's own adapter), not an interface
+    identifier — see BluetoothAdapterInfo.name's own docstring.
+    """
+    return path.rsplit("/", 1)[-1]
+
+
+def _build_bluetooth_adapter_info(path, props):
+    """Pure logic half of get_adapter_info() — testable without a real
+    D-Bus connection. `props` is Adapter1's own GetAll reply.
+    """
+    address_prop = props.get("Address")
+    powered_prop = props.get("Powered")
+    pairable_prop = props.get("Pairable")
+    return BluetoothAdapterInfo(
+        name=_adapter_interface_name(path),
+        address=address_prop[1] if address_prop is not None else None,
+        powered=powered_prop[1] if powered_prop is not None else None,
+        pairable=pairable_prop[1] if pairable_prop is not None else None,
+    )
+
+
 def _get_managed_objects(connection):
     return _call(connection, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")[0]
 
@@ -220,5 +246,43 @@ class BluezBackend(BluetoothBackend):
                            "s", ("org.bluez.Adapter1",))[0]
             discovering_prop = props.get("Discovering")
             return discovering_prop[1] if discovering_prop is not None else False
+        finally:
+            connection.close()
+
+    def get_adapter_info(self) -> BluetoothAdapterInfo | None:
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            adapter_path = find_adapter_path_in_objects(_get_managed_objects(connection))
+            if adapter_path is None:
+                return None
+            props = _call(connection, adapter_path, "org.freedesktop.DBus.Properties", "GetAll",
+                           "s", ("org.bluez.Adapter1",))[0]
+            return _build_bluetooth_adapter_info(adapter_path, props)
+        finally:
+            connection.close()
+
+    def set_powered(self, powered: bool) -> None:
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            adapter_path = find_adapter_path_in_objects(_get_managed_objects(connection))
+            if adapter_path is None:
+                return
+            _call(
+                connection, adapter_path, "org.freedesktop.DBus.Properties", "Set",
+                "ssv", ("org.bluez.Adapter1", "Powered", ("b", powered)),
+            )
+        finally:
+            connection.close()
+
+    def set_pairable(self, pairable: bool) -> None:
+        connection = open_dbus_connection(bus="SYSTEM")
+        try:
+            adapter_path = find_adapter_path_in_objects(_get_managed_objects(connection))
+            if adapter_path is None:
+                return
+            _call(
+                connection, adapter_path, "org.freedesktop.DBus.Properties", "Set",
+                "ssv", ("org.bluez.Adapter1", "Pairable", ("b", pairable)),
+            )
         finally:
             connection.close()

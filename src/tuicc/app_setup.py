@@ -160,7 +160,16 @@ def build_app(preset_override: int | None = None) -> AppContext:
                 "connect": bluetooth_backend.connect,
                 "disconnect": bluetooth_backend.disconnect,
                 "discover": lambda _arg: bluetooth_backend.start_discovery(),
+                "set_powered": lambda powered: bluetooth_backend.set_powered(powered),
+                "set_pairable": lambda pairable: bluetooth_backend.set_pairable(pairable),
             },
+        ),
+        # Single-object poll (not a list), same shape as "wifi_adapter"
+        # — the controller/radio itself, not any one paired device.
+        Domain(
+            name="bluetooth_adapter",
+            poll=bluetooth_backend.get_adapter_info,
+            actions={},
         ),
         # Separate tiny Domains, not folded into wifi/bluetooth above:
         # scan()/start_discovery() are fire-and-forget, so is_pending()

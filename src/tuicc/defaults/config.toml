@@ -58,6 +58,16 @@ wifi_forget = "d"
 wifi_connect_hidden = "n"
 wifi_power_toggle = "o"
 
+# Bluetooth's own equivalents while browsing — separate keys from
+# wifi_power_toggle above rather than a shared one, same reasoning
+# forget/hidden already have (a real, distinct action per section).
+# bt_power_toggle: turn the Bluetooth adapter itself on/off.
+# bt_pairable_toggle: toggle whether the adapter accepts new pairing
+# requests. Discovery uses the shared `scan` key above, not its own —
+# "rescan" already means the same thing in both sections.
+bt_power_toggle = "p"
+bt_pairable_toggle = "a"
+
 # Only used when vim_mode = true below (ambient typing is disabled in
 # that mode specifically so h/j/k/l etc. don't collide with it) —
 # press this to start typing into the launcher instead.

@@ -155,15 +155,33 @@ def draw_table_box(stdscr, y, x, h, w, title, rows, header_color=0, value_color=
     than plain stacked preview_text lines). `rows` is
     [[(label, value), ...], ...] — a list of rows, each row itself a
     list of columns drawn side by side; each column's own width is
-    max(len(label), len(value)), columns separated by a fixed gap,
-    each row's two-line block centered as its own unit within the box,
-    rows stacked top to bottom. Originally single-row only; generalized
-    (2026-08-15) once the WiFi "Connection" table grew past one row's
-    comfortable width — a single-row table is just rows=[columns], the
-    only shape every caller used before that. A row that doesn't fit
-    the box's own height is skipped entirely, not partially drawn —
-    same "degrade, don't corrupt" tolerance every other primitive here
-    has for a too-small box.
+    max(len(label), len(value)), rows stacked top to bottom. Originally
+    single-row only; generalized (2026-08-15) once the WiFi "Connection"
+    table grew past one row's comfortable width — a single-row table is
+    just rows=[columns], the only shape every caller used before that.
+    A row that doesn't fit the box's own height is skipped entirely,
+    not partially drawn — same "degrade, don't corrupt" tolerance every
+    other primitive here has for a too-small box.
+
+    A stretched-gap version of this (columns spread evenly across the
+    row's own full width) was tried live, 2026-08-16, and reverted the
+    same day — Rafi's own call, back to the plain fixed gap WiFi's own
+    tables already used. That same live round DID find and fix a real,
+    separate bug though: header_line/value_line used to be centered
+    INDEPENDENTLY of each other, each via its own centered_x() call —
+    fine as long as both lines end up the same length after their own
+    .rstrip(), which silently stops holding the moment one column's
+    header and value differ a lot in length (Bluetooth's own "Address"
+    column: label "Address" is 7 chars, a real MAC address is 17 —
+    .rstrip() left header_line shorter than value_line by exactly that
+    difference), producing two rows centered at two DIFFERENT x
+    offsets — the header and value visibly not starting at the same
+    place, the bug that motivated the stretched-gap experiment in the
+    first place even though the real cause had nothing to do with gap
+    width. Fixed by centering ONCE, before either line's own trailing
+    whitespace is stripped (both lines share the identical un-stripped
+    length by construction — same col_widths, same gap), and drawing
+    both lines at that one shared x.
 
     Padding uses plain str.ljust (character count, not display_width)
     deliberately, unlike wc_truncate elsewhere in this codebase: every
@@ -177,7 +195,6 @@ def draw_table_box(stdscr, y, x, h, w, title, rows, header_color=0, value_color=
     if h < 3 or w < 3 or not rows:
         return
     inner_w = max(w - 2, 0)
-    gap = "   "
     for i, columns in enumerate(rows):
         if not columns:
             continue
@@ -186,13 +203,19 @@ def draw_table_box(stdscr, y, x, h, w, title, rows, header_color=0, value_color=
         if value_y > y + h - 2:
             break
         col_widths = [max(len(label), len(value)) for label, value in columns]
-        header_line = gap.join(label.ljust(width) for (label, _value), width in zip(columns, col_widths)).rstrip()
-        value_line = gap.join(value.ljust(width) for (_label, value), width in zip(columns, col_widths)).rstrip()
-        header_line = wc_truncate(header_line, inner_w)
-        value_line = wc_truncate(value_line, inner_w)
+        gap = "   "
+        header_line = gap.join(label.ljust(width) for (label, _value), width in zip(columns, col_widths))
+        value_line = gap.join(value.ljust(width) for (_label, value), width in zip(columns, col_widths))
+        # Same un-stripped length by construction — one shared x for
+        # both lines, computed before either one's own trailing
+        # whitespace is trimmed (see this function's own docstring for
+        # the misalignment this avoids).
+        shared_x = centered_x(x + 1, inner_w, header_line)
+        header_line = wc_truncate(header_line.rstrip(), inner_w)
+        value_line = wc_truncate(value_line.rstrip(), inner_w)
         try:
-            stdscr.addstr(header_y, centered_x(x + 1, inner_w, header_line), header_line, header_color | curses.A_BOLD)
-            stdscr.addstr(value_y, centered_x(x + 1, inner_w, value_line), value_line, value_color)
+            stdscr.addstr(header_y, shared_x, header_line, header_color | curses.A_BOLD)
+            stdscr.addstr(value_y, shared_x, value_line, value_color)
         except curses.error:
             pass
 
@@ -249,6 +272,21 @@ def draw_centered_lines(stdscr, box, lines):
     CLAUDE/VISION.md's R6 section for the overflow bug this fixes);
     genuinely too much even for two columns still truncates with a
     "+N more" marker.
+
+    Once the 2-column path triggers, the FIRST line is drawn as a
+    standalone header — centered across the FULL inner width, on its
+    own row, exempt from the column split — rather than becoming just
+    another entry in whichever column it happens to land in. Found
+    live, 2026-08-16: WiFi's own "Available networks [16]" title
+    (deliberately lines[0] — see _wifi_scan_preview_text's own
+    docstring) landed inside the narrower LEFT column once enough
+    networks triggered the overflow path, left-aligned there instead
+    of centered across the whole box — the single-column path above
+    already centers a first line correctly; this closes the identical
+    gap for the overflow path. A first line is a reasonable thing to
+    treat as a header for ANY caller whose content overflows this far,
+    not just WiFi's — the single-column (common) case is completely
+    unaffected.
     """
     x, y, w, h = box
     inner_w = max(w - 2, 0)
@@ -276,15 +314,54 @@ def draw_centered_lines(stdscr, box, lines):
         _draw_centered_column(stdscr, x + 1, y + 1, inner_w, max_rows, lines, center_each_line=True)
         return
 
-    # Two side-by-side columns, each getting half the inner width
-    # (minus a small gap between them) — left-aligned within its own
-    # column rather than individually centered per line, which would
-    # stagger unevenly against its neighbor; a shared left margin per
-    # column reads as one coherent block instead.
+    header, *rest = lines
+    header_text, header_color = header
+    header_clipped = wc_truncate(header_text, inner_w)
+    try:
+        stdscr.addstr(y + 1, centered_x(x + 1, inner_w, header_clipped), header_clipped, header_color)
+    except curses.error:
+        pass
+
+    # Two side-by-side columns, each up to half the inner width. Each
+    # column's own lines share ONE left margin rather than being
+    # individually centered per line, which would stagger unevenly
+    # against its neighbor — a shared margin reads as one coherent
+    # block instead (this is `_draw_centered_column`'s own
+    # center_each_line=False behavior, unchanged).
+    #
+    # The two columns are positioned as ONE combined block — left
+    # column's own widest line, a small fixed gap, right column's own
+    # widest line — centered together within the full inner width,
+    # rather than each column separately centered within its own half
+    # (tried live the same day, immediately reverted: on a wide box
+    # with narrow content, "each half centered independently" reads as
+    # two clumps pulled apart to the box's own edges, a big empty gap
+    # in the middle — the opposite of "one list, two columns").
+    body_top = y + 2
+    body_rows = max(max_rows - 1, 0)
     col_w = max((inner_w - 2) // 2, 1)
-    left_lines, right_lines = split_lines_into_columns(lines, max_rows)
-    _draw_centered_column(stdscr, x + 1, y + 1, col_w, max_rows, left_lines, center_each_line=False)
-    _draw_centered_column(stdscr, x + 1 + col_w + 2, y + 1, col_w, max_rows, right_lines, center_each_line=False)
+    left_lines, right_lines = split_lines_into_columns(rest, body_rows)
+    col_gap = 4
+    left_w = display_width(_widest_line(left_lines, col_w))
+    right_w = display_width(_widest_line(right_lines, col_w))
+    combined_w = left_w + (col_gap + right_w if right_lines else 0)
+    left_x = x + 1 + max((inner_w - combined_w) // 2, 0)
+    right_x = left_x + left_w + col_gap
+    _draw_centered_column(stdscr, left_x, body_top, col_w, body_rows, left_lines, center_each_line=False)
+    _draw_centered_column(stdscr, right_x, body_top, col_w, body_rows, right_lines, center_each_line=False)
+
+
+def _widest_line(lines, max_w):
+    """The widest (already truncated to max_w) line's own text, or ""
+    if `lines` is empty — used by draw_centered_lines' own 2-column
+    path to compute a single block-centering offset per column,
+    matching exactly what _draw_centered_column will actually
+    truncate and draw (truncated width, not the untruncated real
+    width, in case a line is longer than the column itself).
+    """
+    if not lines:
+        return ""
+    return max((wc_truncate(text, max_w) for text, _color in lines), key=display_width)
 
 
 def split_lines_into_columns(lines: list, max_rows: int) -> tuple[list, list]:
@@ -294,6 +371,16 @@ def split_lines_into_columns(lines: list, max_rows: int) -> tuple[list, list]:
     (unlike draw_centered_lines itself, which needs one — see this
     file's own module docstring on why curses-drawing functions are
     otherwise left untested here).
+
+    Split BALANCED (left gets the extra one on an odd count), not
+    "fill left to max_rows, spill whatever's left into right" — found
+    live, 2026-08-16: 16 WiFi networks with only ~10 slots' worth of
+    left-column room produced a lopsided 10-vs-6 split, visually
+    obviously uneven and, combined with _draw_centered_column's own
+    per-column vertical centering, left the shorter right column
+    start several rows lower than the left one. A balanced split can
+    never exceed max_rows in either column (len(shown) is already
+    capped to 2*max_rows above), so no extra clamping is needed.
     """
     if max_rows <= 0:
         return [], []
@@ -304,7 +391,8 @@ def split_lines_into_columns(lines: list, max_rows: int) -> tuple[list, list]:
         shown = shown + [(f"+{len(lines) - len(shown)} more", fallback_color)]
     else:
         shown = lines
-    return shown[:max_rows], shown[max_rows:]
+    half = (len(shown) + 1) // 2
+    return shown[:half], shown[half:]
 
 
 def _draw_centered_column(stdscr, col_x, top_row, col_w, max_rows, lines, center_each_line):

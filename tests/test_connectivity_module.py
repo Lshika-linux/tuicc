@@ -12,16 +12,19 @@ other module.
 import re
 from types import SimpleNamespace
 
-from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics
+from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics, BluetoothAdapterInfo
 from tuicc.modules.connectivity import (
     _action_progress_line,
     _power_progress_line,
     _adapter_info_table,
     _connection_diagnostics_table,
     _wifi_preview_tables,
+    _bt_adapter_info_table,
+    _bt_preview_tables,
     _browsing_hint_footer,
     _empty_browsing_nav_item,
     _build_rows,
+    _connected_first,
     _bt_discover_preview_text,
     _bt_preview_text,
     _format_timestamp,
@@ -31,6 +34,8 @@ from tuicc.modules.connectivity import (
     _selected_wifi_index,
     _signal_bars,
     _wifi_preview_text,
+    _wifi_property_rows,
+    _wifi_row_nav_item,
     _wifi_scan_preview_text,
     next_browsing_selection,
     toggle_wifi,
@@ -123,6 +128,46 @@ def test_bluetooth_genuinely_empty_list_renders_same_as_cold_start():
 
     assert ("empty_slot", "[empty - device 1]") in rows
     assert "error" not in _kinds(rows)
+
+
+# ---------- _connected_first / connected devices sort to the top ----------
+# WiFi's own get_networks() (iwd's GetOrderedNetworks) already hands
+# back the connected network first, confirmed live — no client-side
+# sort needed there. bluez's GetManagedObjects() walk has no such
+# guarantee, so bluetooth needs its own sort — found live, Rafi's own
+# report: a connected device sitting third in a 3-slot windowed view.
+
+def test_connected_first_sorts_connected_device_to_front():
+    a = BluetoothDevice(id="AA", name="A", connected=False)
+    b = BluetoothDevice(id="BB", name="B", connected=True)
+    c = BluetoothDevice(id="CC", name="C", connected=False)
+
+    assert _connected_first([a, b, c]) == [b, a, c]
+
+
+def test_connected_first_is_stable_among_ties():
+    a = BluetoothDevice(id="AA", name="A", connected=False)
+    b = BluetoothDevice(id="BB", name="B", connected=False)
+
+    assert _connected_first([a, b]) == [a, b]
+
+
+def test_connected_first_none_stays_none():
+    assert _connected_first(None) is None
+
+
+def test_build_rows_bluetooth_connected_device_sorts_first():
+    devices = [
+        BluetoothDevice(id="AA", name="Keyboard", connected=False),
+        BluetoothDevice(id="BB", name="MAJOR IV", connected=True),
+        BluetoothDevice(id="CC", name="Mouse", connected=False),
+    ]
+    ctx = _ctx(bluetooth_devices=devices, visible_slots=3)
+
+    rows = _build_rows(ctx, box_h=20)
+    bt_items = [payload for kind, payload in rows if kind == "bt_item"]
+
+    assert bt_items[0].name == "MAJOR IV"
 
 
 # ---------- both domains erroring independently ----------
@@ -254,6 +299,7 @@ def test_selected_wifi_index_none_when_not_a_wifi_selection():
     assert _selected_wifi_index(networks, None) is None
     assert _selected_wifi_index(networks, "connectivity:bt:AA:BB") is None
     assert _selected_wifi_index(networks, "connectivity:wifi:header") is None
+    assert _selected_wifi_index(networks, "connectivity:wifi:scan") is None
 
 
 def test_selected_bt_index_finds_matching_id():
@@ -268,6 +314,7 @@ def test_selected_bt_index_none_when_not_a_bluetooth_selection():
     assert _selected_bt_index(devices, None) is None
     assert _selected_bt_index(devices, "connectivity:wifi:Home") is None
     assert _selected_bt_index(devices, "connectivity:bt:header") is None
+    assert _selected_bt_index(devices, "connectivity:bt:scan") is None
 
 
 # ---------- next_browsing_selection ----------
@@ -443,6 +490,7 @@ def _cfg():
     return SimpleNamespace(keybinds={
         "scan": ord("s"), "confirm": ord("\n"),
         "wifi_forget": ord("d"), "wifi_connect_hidden": ord("n"), "wifi_power_toggle": ord("o"),
+        "bt_power_toggle": ord("p"), "bt_pairable_toggle": ord("a"),
     })
 
 
@@ -553,6 +601,36 @@ def test_bt_preview_text_blocked_uses_urgent_color():
     blocked_line = next(line for line in lines if line[0] == "Blocked: yes")
 
     assert blocked_line[1] == theme["urgent"]
+
+
+# ---------- _wifi_row_nav_item: browsing a row keeps the network list ----------
+# A side-by-side "Available networks | Selected" panel briefly lived
+# here (2026-08-16/17, _wifi_networks_side_panel) — reverted the same
+# session, Rafi's own call: it just duplicated the WiFi box's own row
+# list (dot/[new]/signal%) a second time, with no new information. The
+# row's own preview is back to plain per-network detail only.
+
+def test_wifi_row_nav_item_shows_plain_network_detail():
+    network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
+
+    item = _wifi_row_nav_item(
+        network, box=(0, 0, 40, 20), row=5, theme=_theme(), status=None, cfg=_cfg(),
+        adapter_info=None, scanning=False, diagnostics=None,
+    )
+
+    assert _text_of(item.preview_text)[0] == "Home"
+
+
+def test_wifi_property_rows_matches_wifi_preview_text_content():
+    # The extracted shared helper (_wifi_property_rows) should produce
+    # exactly the label:value pairs _wifi_preview_text's own padded
+    # display already showed — same data, two different presentations.
+    network = WifiNetwork(ssid="Home", connected=True, signal=80, known=True, security="psk")
+
+    rows = _wifi_property_rows(network, _theme())
+
+    labels = [label for label, _value, _color in rows]
+    assert labels == ["Signal:", "Security:", "Known:", "Auto-connect:", "Hidden:", "Connected:"]
 
 
 # ---------- _action_progress_line: connect/disconnect feedback ----------
@@ -719,9 +797,9 @@ def test_power_progress_line_only_checks_its_own_fixed_key():
 # preview.py content; this is the full list at a glance, not just the
 # connectivity_visible_slots window the box's own scrollable section
 # shows. The "[Enter] Browse ..." discoverability hint lives in a
-# SEPARATE preview_footer now (see NavItem.preview_footer's own
-# docstring and _header_enter_hint_footer's own tests below), not
-# appended into this list.
+# SEPARATE preview_footer (see NavItem.preview_footer's own docstring
+# and _header_enter_hint_footer's own tests below), not appended into
+# this list.
 
 def test_wifi_scan_preview_lists_every_network_not_just_the_window():
     networks = [WifiNetwork(ssid=f"AP{i}", connected=False, signal=50) for i in range(10)]
@@ -789,28 +867,96 @@ def test_wifi_scan_preview_cold_start_none_no_error_is_empty_not_error():
     assert lines == ["No networks found"]
 
 
-def test_bt_discover_preview_lists_every_device():
-    devices = [BluetoothDevice(id=f"AA:{i}", name=f"Dev{i}", connected=False) for i in range(4)]
+def test_bt_discover_preview_idle_shows_the_full_list_not_just_paired():
+    # Reverted the idle-only paired-filter (2026-08-17, Rafi's own
+    # report) — this preview's own count must always match the
+    # sidebar's honest full count, scan or not. Unpaired devices still
+    # get "[new]" (a persisted bluez fact, not scan-dependent); paired,
+    # not-connected devices get no status word (nothing honest to say
+    # about range without an active scan).
+    devices = [
+        BluetoothDevice(id="AA", name="Speaker", connected=False, paired=True),
+        BluetoothDevice(id="BB", name="Stranger", connected=False, paired=False),
+    ]
 
     lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
 
-    assert "Available devices [4]" in lines
-    assert any("Dev0" in line for line in lines)
-    assert any("Dev3" in line for line in lines)
+    assert "Devices [2]" in lines
+    assert any("Speaker" in line for line in lines)
+    assert any("Stranger" in line and "[new]" in line for line in lines)
+    assert not any("Speaker" in line and "[" in line for line in lines)
 
 
-def test_bt_discover_preview_marks_unpaired_devices():
-    devices = [BluetoothDevice(id="AA", name="Stranger", connected=False, paired=False)]
+def test_bt_discover_preview_discovering_adds_range_status_for_known_devices():
+    devices = [
+        BluetoothDevice(id="AA", name="Speaker", connected=False, paired=True, rssi=-60),
+        BluetoothDevice(id="BB", name="Stranger", connected=False, paired=False),
+    ]
 
-    lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), discovering=True))
 
-    assert any("[new] Stranger" in line for line in lines)
+    assert "Devices [2]" in lines
+    assert any("Speaker" in line and "[known; detected]" in line for line in lines)
+    assert any("Stranger" in line and "[new]" in line for line in lines)
+
+
+def test_bt_discover_preview_discovering_paired_not_recently_seen_is_undetected():
+    devices = [BluetoothDevice(id="AA", name="Speaker", connected=False, paired=True, rssi=None)]
+
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), discovering=True))
+
+    assert any("[known; undetected]" in line for line in lines)
+
+
+def test_bt_discover_preview_connected_device_gets_its_own_status_even_when_idle():
+    # "Connected" is a real-time D-Bus fact, not scan-result-dependent
+    # — unlike detected/undetected, it stays honest to show whether or
+    # not a scan is currently running. A real, live-found case: MAJOR
+    # IV, connected and playing audio, still rssi=None since a
+    # classic-BT connection doesn't keep advertising the way an
+    # idle-but-nearby device does. Checked before rssi, so it wins
+    # regardless of discovering.
+    devices = [BluetoothDevice(id="AA", name="MAJOR IV", connected=True, paired=True, rssi=None)]
+
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme(), discovering=False))
+
+    assert any("[known; connected]" in line for line in lines)
+    assert not any("[known; detected]" in line for line in lines)
 
 
 def test_bt_discover_preview_shows_error_when_none_with_error():
     lines = _text_of(_bt_discover_preview_text(None, "bluez unreachable", _theme()))
 
     assert lines == ["⚠ bluez unreachable"]
+
+
+def test_bt_discover_preview_has_a_blank_line_between_every_row():
+    devices = [BluetoothDevice(id="AA", name="Speaker", connected=False, paired=True)]
+
+    lines = _text_of(_bt_discover_preview_text(devices, None, _theme()))
+
+    assert lines[0] == "Devices [1]"
+    assert lines[1] == ""
+    assert lines[2] != ""
+
+
+def test_bt_discover_preview_rows_are_all_the_same_length():
+    # The actual bug this whole redesign was found fixing: draw_
+    # centered_lines() centers each row INDEPENDENTLY, so rows of
+    # differing length end up staggered at different x offsets once
+    # rendered — confirmed live via screenshots. Every row must come
+    # out exactly the same character count regardless of how long its
+    # own name/status happen to be, so independent per-row centering
+    # can't tell them apart.
+    devices = [
+        BluetoothDevice(id="AA", name="A", connected=False, paired=False),
+        BluetoothDevice(id="BB", name="LongerDeviceName", connected=True, paired=True, rssi=-50),
+    ]
+
+    texts = _text_of(_bt_discover_preview_text(devices, None, _theme(), discovering=True))[1:]  # skip the title line
+    texts = [t for t in texts if t]  # drop blank spacer lines
+
+    assert len({len(text) for text in texts}) == 1
 
 
 # ---------- _header_enter_hint_footer / _browsing_hint_footer ----------
@@ -831,19 +977,26 @@ def test_header_enter_hint_footer_bluetooth_wording():
     assert footer == [("[Enter] Browse devices", _theme()["urgent"])]
 
 
-def test_browsing_hint_footer_bluetooth_is_connect_scan_and_back():
-    # No forget/hidden/power equivalent was asked for on the bluetooth
-    # side (see connectivity.py's own module docstring on scope) — the
-    # hint must not claim keys that do nothing there.
+def test_browsing_hint_footer_bluetooth_is_connect_scan_pairable_power_and_back():
+    # No forget/hidden equivalent was asked for on the bluetooth side
+    # (see connectivity.py's own module docstring on scope) — the hint
+    # must not claim keys that do nothing there. Power/Pairable DO have
+    # real bluetooth equivalents (bt_power_toggle/bt_pairable_toggle,
+    # added 2026-08-16) — same two-line shape wifi's own "on" hint has,
+    # Power on line 2 alongside Pairable (found live, Rafi's own
+    # report: the "on" hint had no way to turn the radio back off).
     footer = _browsing_hint_footer(_theme(), _cfg(), "bluetooth", connected=False)
 
-    assert footer == [("[Enter] Connect   [S] Scan   [Esc] Back", _theme()["urgent"])]
+    assert footer == [
+        ("[Enter] Connect   [S] Scan", _theme()["urgent"]),
+        ("[A] Pairable   [P] Power   [Esc] Back", _theme()["urgent"]),
+    ]
 
 
 def test_browsing_hint_footer_bluetooth_says_disconnect_when_already_connected():
     footer = _browsing_hint_footer(_theme(), _cfg(), "bluetooth", connected=True)
 
-    assert footer == [("[Enter] Disconnect   [S] Scan   [Esc] Back", _theme()["urgent"])]
+    assert footer[0] == ("[Enter] Disconnect   [S] Scan", _theme()["urgent"])
 
 
 def test_browsing_hint_footer_wifi_lists_every_active_wifi_only_key_when_known():
@@ -887,12 +1040,12 @@ def test_browsing_hint_footer_wifi_narrows_to_just_power_when_radio_off():
     assert footer == [("[O] Power   [Esc] Back", _theme()["urgent"])]
 
 
-def test_browsing_hint_footer_bluetooth_ignores_powered():
-    # Bluetooth has no radio-power concept in this feature — powered=
-    # False must not affect it.
+def test_browsing_hint_footer_bluetooth_narrows_to_power_when_off():
+    # Bluetooth's own adapter power toggle (2026-08-16) — same
+    # narrowing wifi's own powered=False already had, its own key.
     footer = _browsing_hint_footer(_theme(), _cfg(), "bluetooth", connected=False, powered=False)
 
-    assert footer == [("[Enter] Connect   [S] Scan   [Esc] Back", _theme()["urgent"])]
+    assert footer == [("[P] Power   [Esc] Back", _theme()["urgent"])]
 
 
 def test_browsing_hint_footer_wifi_omits_forget_when_not_known():
@@ -967,12 +1120,17 @@ def test_empty_browsing_nav_item_wifi_carries_the_device_table():
     assert dict(item.preview_data[0][1][0])["Powered"] == "no"
 
 
-def test_empty_browsing_nav_item_bluetooth_has_no_device_table():
-    # AdapterInfo is a wifi-only concept.
-    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
-                                     adapter_info=None, scanning=False)
+def test_empty_browsing_nav_item_bluetooth_carries_the_device_table():
+    # BluetoothAdapterInfo, added 2026-08-16 — bluetooth's own Device
+    # table now survives into the empty-section placeholder exactly
+    # like wifi's already does.
+    adapter = BluetoothAdapterInfo(name="hci0", powered=False)
 
-    assert item.preview_data is None
+    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=adapter, scanning=False)
+
+    assert [title for title, _rows in item.preview_data] == ["Device"]
+    assert dict(item.preview_data[0][1][0])["Powered"] == "no"
 
 
 def test_empty_browsing_nav_item_shows_power_progress_when_pending():
@@ -984,9 +1142,12 @@ def test_empty_browsing_nav_item_shows_power_progress_when_pending():
     assert "Powering on…" in _text_of(item.preview_text)
 
 
-def test_empty_browsing_nav_item_bluetooth_never_shows_power_progress():
-    # Bluetooth has no power-toggle concept — even a coincidentally
-    # matching pending key must not leak a wifi-only message onto it.
+def test_empty_browsing_nav_item_bluetooth_power_progress_scoped_to_its_own_domain():
+    # A wifi-scoped pending key must not leak into bluetooth's own
+    # progress line — each section's power toggle is a separate
+    # StatusWorker domain ("wifi" vs "bluetooth"), same pending_key
+    # ("power") in both, so this is the one real place they could
+    # bleed into each other if domain scoping were ever dropped.
     status = _FakeStatus(pending_keys={("wifi", "power")})
 
     item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=status,
@@ -995,11 +1156,65 @@ def test_empty_browsing_nav_item_bluetooth_never_shows_power_progress():
     assert _text_of(item.preview_text) == ["No devices in range"]
 
 
+def test_empty_browsing_nav_item_bluetooth_shows_its_own_power_progress():
+    status = _FakeStatus(pending_keys={("bluetooth", "power")})
+
+    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=status,
+                                     adapter_info=BluetoothAdapterInfo(powered=False), scanning=False)
+
+    assert "Powering on…" in _text_of(item.preview_text)
+
+
 def test_empty_browsing_nav_item_footer_narrows_when_radio_off():
     item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
                                      adapter_info=AdapterInfo(powered=False), scanning=False)
 
     assert item.preview_footer == [("[O] Power   [Esc] Back", _theme()["urgent"])]
+
+
+def test_empty_browsing_nav_item_bluetooth_footer_narrows_when_radio_off():
+    item = _empty_browsing_nav_item("bluetooth", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
+                                     adapter_info=BluetoothAdapterInfo(powered=False), scanning=False)
+
+    assert item.preview_footer == [("[P] Power   [Esc] Back", _theme()["urgent"])]
+
+
+# ---------- _bt_adapter_info_table / _bt_preview_tables ----------
+# Bluetooth's own mirror of _adapter_info_table/_wifi_preview_tables
+# below (2026-08-16) — scoped to exactly what has a real action behind
+# it (Powered/Pairable, both toggleable; Discovering, toggleable via
+# the existing shared `scan` key) — see BluetoothAdapterInfo's own
+# docstring for why Discoverable isn't included despite bluez exposing
+# it, and _bt_preview_tables' own docstring for why there's no second
+# "Connection" table the way WiFi has.
+
+def test_bt_adapter_info_table_none_adapter_is_none():
+    assert _bt_adapter_info_table(None, discovering=False) is None
+
+
+def test_bt_adapter_info_table_includes_every_present_field():
+    adapter = BluetoothAdapterInfo(name="hci0", address="D0:C6:37:61:24:D8", powered=True, pairable=True)
+
+    columns = dict(_bt_adapter_info_table(adapter, discovering=False))
+
+    assert columns["Name"] == "hci0"
+    assert columns["Address"] == "D0:C6:37:61:24:D8"
+    assert columns["Powered"] == "yes"
+    assert columns["Pairable"] == "yes"
+
+
+def test_bt_adapter_info_table_always_includes_discovering():
+    adapter = BluetoothAdapterInfo(name="hci0")
+
+    columns = dict(_bt_adapter_info_table(adapter, discovering=True))
+
+    assert columns["Discovering"] == "yes"
+
+
+def test_bt_preview_tables_is_device_only_no_connection_table():
+    tables = _bt_preview_tables(BluetoothAdapterInfo(name="hci0"), discovering=False)
+
+    assert [title for title, _rows in tables] == ["Device"]
 
 
 # ---------- _adapter_info_table ----------

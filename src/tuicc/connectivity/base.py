@@ -11,7 +11,7 @@ count.
 
 from abc import ABC, abstractmethod
 
-from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics
+from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics, BluetoothAdapterInfo
 
 
 class WifiBackend(ABC):
@@ -149,4 +149,19 @@ class BluetoothBackend(ABC):
         progress — see BluezBackend.is_discovering()'s own docstring
         for why this needs to be its own poll, separate from
         start_discovery() and from get_devices()."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_adapter_info(self) -> BluetoothAdapterInfo | None:
+        """The controller/radio itself — mirrors WifiBackend's own
+        get_adapter_info(). None only when no Bluetooth adapter could
+        be found at all."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_powered(self, powered: bool) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_pairable(self, pairable: bool) -> None:
         raise NotImplementedError

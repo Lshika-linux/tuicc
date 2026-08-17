@@ -21,7 +21,20 @@ def draw(stdscr, box, ctx, module_name):
     theme = ctx.theme or {}
 
     is_active = module_name == ctx.active_module
-    showing_preview = ctx.selected_item is not None and (
+    # Ambient typing (VISION.md's own "start typing from anywhere"
+    # identity commitment) always overrides whatever was selected
+    # elsewhere before it started — found live, 2026-08-16: a WiFi row
+    # (its own real preview_text/preview_data) stayed selected while
+    # typing_mode claimed input for the launcher, so preview kept
+    # showing stale WiFi diagnostics instead of the one thing actually
+    # relevant right now — sidebar.py's own "launching here" label
+    # already tracks ctx.focus_id for exactly this reason (see its own
+    # comment), preview.py just wasn't reading the same signal.
+    # Falling through to the window-preview branch below shows that
+    # target workspace instead, the same as no item being selected at
+    # all — the stale item's own preview content simply isn't reached
+    # while typing, regardless of what it is.
+    showing_preview = not ctx.typing_mode and ctx.selected_item is not None and (
         ctx.selected_item.preview_text is not None
         or ctx.selected_item.preview_data is not None
     )

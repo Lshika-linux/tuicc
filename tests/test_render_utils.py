@@ -8,6 +8,7 @@ from tuicc.render_utils import (
     centered_x,
     eighth_block_level,
     split_lines_into_columns,
+    _widest_line,
     display_width,
     wc_truncate,
     marquee_text,
@@ -96,6 +97,31 @@ def test_centered_x_respects_box_x_offset():
     assert centered_x(20, 10, "abcd") == 23
 
 
+# ---------- _widest_line ----------
+# draw_centered_lines' own 2-column block-centering helper — the
+# widest (already truncated) line in a column, so each column can be
+# centered within its own half-width as one unit rather than hugging
+# a fixed left margin regardless of how much of it the content
+# actually uses.
+
+def test_widest_line_empty_is_empty_string():
+    assert _widest_line([], max_w=10) == ""
+
+
+def test_widest_line_picks_the_longest():
+    lines = [("short", 0), ("a much longer line", 0), ("mid", 0)]
+
+    assert _widest_line(lines, max_w=50) == "a much longer line"
+
+
+def test_widest_line_respects_truncation():
+    # wc_truncate() clips, no "..." suffix — matching what
+    # _draw_centered_column will actually draw.
+    lines = [("short", 0), ("way too long for the column", 0)]
+
+    assert _widest_line(lines, max_w=10) == "way too lo"
+
+
 # ---------- split_lines_into_columns ----------
 # draw_centered_lines' own overflow-handling math, pulled out pure —
 # see that function's own docstring for the live bug this fixes (a
@@ -106,18 +132,23 @@ def _lines(n):
     return [(f"line{i}", 0) for i in range(n)]
 
 
-def test_split_lines_into_columns_fits_entirely_in_left_when_under_capacity():
+def test_split_lines_into_columns_balances_a_small_input():
+    # Balanced (left gets the extra one on an odd count), not "fill
+    # left to max_rows first" — this exact combo (3 lines, room for 5)
+    # never actually reaches this function via draw_centered_lines
+    # itself (which only calls it once len(lines) > max_rows), but the
+    # pure math should still be internally consistent.
     left, right = split_lines_into_columns(_lines(3), max_rows=5)
-    assert len(left) == 3
-    assert right == []
+    assert len(left) == 2
+    assert len(right) == 1
 
 
 def test_split_lines_into_columns_splits_evenly_at_max_rows():
     left, right = split_lines_into_columns(_lines(8), max_rows=5)
-    assert len(left) == 5
-    assert len(right) == 3
+    assert len(left) == 4
+    assert len(right) == 4
     assert left[0] == ("line0", 0)
-    assert right[0] == ("line5", 0)
+    assert right[0] == ("line4", 0)
 
 
 def test_split_lines_into_columns_truncates_with_a_more_marker_past_capacity():

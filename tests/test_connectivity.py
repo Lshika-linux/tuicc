@@ -24,6 +24,8 @@ from tuicc.connectivity.bluez import (
     find_adapter_path_in_objects,
     find_device_path_in_objects,
     find_devices_in_objects,
+    _adapter_interface_name,
+    _build_bluetooth_adapter_info,
 )
 
 
@@ -486,6 +488,43 @@ def test_find_adapter_path_no_adapter_returns_none():
     assert find_adapter_path_in_objects({"/org/bluez": {"org.bluez.AgentManager1": {}}}) is None
 
 
+# ---------- bluez: _adapter_interface_name / _build_bluetooth_adapter_info ----------
+# org.bluez.Adapter1's own property shape, confirmed live (2026-08-16)
+# via `busctl call org.bluez / ... GetManagedObjects` against a real
+# adapter — the same "node1"/"D0:C6:37:61:24:D8" data BLUEZ_MANAGED_
+# OBJECTS above already uses, extended with Pairable/Discovering here.
+
+def test_adapter_interface_name_extracts_last_path_segment():
+    assert _adapter_interface_name("/org/bluez/hci0") == "hci0"
+
+
+def test_build_bluetooth_adapter_info_reads_every_field():
+    props = {
+        "Address": ("s", "D0:C6:37:61:24:D8"),
+        "Name": ("s", "node1"),  # the broadcast name — deliberately NOT what .name ends up as
+        "Powered": ("b", True),
+        "Pairable": ("b", True),
+        "Discoverable": ("b", False),
+        "Discovering": ("b", False),
+    }
+
+    info = _build_bluetooth_adapter_info("/org/bluez/hci0", props)
+
+    assert info.name == "hci0"  # from the path, not Adapter1's own "Name" property
+    assert info.address == "D0:C6:37:61:24:D8"
+    assert info.powered is True
+    assert info.pairable is True
+
+
+def test_build_bluetooth_adapter_info_missing_props_are_none():
+    info = _build_bluetooth_adapter_info("/org/bluez/hci0", {})
+
+    assert info.name == "hci0"  # always derivable from the path alone
+    assert info.address is None
+    assert info.powered is None
+    assert info.pairable is None
+
+
 # ---------- no-silent-failure: real exceptions must propagate ----------
 # VISION.md's R3: both backends used to have their OWN internal
 # except-and-hide-behind-[] before status_worker.StatusWorker's poll
@@ -533,6 +572,36 @@ def test_bluez_is_discovering_propagates_dbus_connection_failure(monkeypatch):
 
     with pytest.raises(ConnectionError):
         BluezBackend().is_discovering()
+
+
+def test_bluez_get_adapter_info_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(bluez_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        BluezBackend().get_adapter_info()
+
+
+def test_bluez_set_powered_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(bluez_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        BluezBackend().set_powered(True)
+
+
+def test_bluez_set_pairable_propagates_dbus_connection_failure(monkeypatch):
+    def _raise(**kwargs):
+        raise ConnectionError("SYSTEM bus unreachable")
+
+    monkeypatch.setattr(bluez_module, "open_dbus_connection", _raise)
+
+    with pytest.raises(ConnectionError):
+        BluezBackend().set_pairable(True)
 
 
 # ---------- same discipline for the four newer WifiBackend methods, both backends ----------

@@ -89,6 +89,27 @@ def _selected_bt_index(devices, selected_id):
     return None
 
 
+def _connected_first(devices):
+    """Bluetooth's own device list has no inherent relevance ordering
+    the way WiFi's already does for free — iwd's Station.
+    GetOrderedNetworks() (get_networks()'s own D-Bus call) already
+    hands back the connected network sorted first, confirmed live, no
+    client-side sort needed there. bluez's GetManagedObjects() walk
+    (get_devices()) has no such guarantee — devices come back in
+    whatever order the D-Bus object tree happens to iterate, arbitrary
+    from tuicc's own point of view. Sorts connected devices first so
+    the one actually in use doesn't get pushed below the fold by the
+    fixed-slot windowed list — found live, Rafi's own report: a
+    connected device sitting third in a 3-slot view. `None` stays
+    `None` (a poll error, nothing to sort); Python's own sorted() is
+    stable, so devices tied on `connected` keep their original
+    relative order rather than being shuffled for no reason.
+    """
+    if devices is None:
+        return None
+    return sorted(devices, key=lambda d: not d.connected)
+
+
 def _build_rows(ctx, box_h):
     """One row per line the box will render, in order — the single
     source of truth draw() and nav_items() both walk, so their row
@@ -99,7 +120,7 @@ def _build_rows(ctx, box_h):
     symmetry with media.py's _build_rows but unused here.
     """
     wifi_networks = ctx.wifi_networks
-    bluetooth_devices = ctx.bluetooth_devices
+    bluetooth_devices = _connected_first(ctx.bluetooth_devices)
     visible_slots = ctx.config.connectivity_visible_slots
 
     selected_wifi_index = _selected_wifi_index(wifi_networks or [], ctx.selected_id)
@@ -582,22 +603,18 @@ def draw(stdscr, box, ctx, module_name):
             is_wifi = kind == "wifi_header"
             item_id = "connectivity:wifi:header" if is_wifi else "connectivity:bt:header"
             is_selected = item_id == ctx.selected_id
-            # Selection now shows on the header TEXT's own color (same
+            # Selection shows on the header TEXT's own color (same
             # convention every other row in this module already uses)
-            # rather than a separate right-aligned "↻ Scan"/"↻ Discover"
-            # label — Enter here enters browsing, it doesn't scan
-            # anymore (see this module's own "level-2 browsing" section
-            # docstring), so a static action-looking label would be
-            # misleading. The real scanning/discovering state (main.py's
-            # dedicated "wifi_scanning"/"bluetooth_discovering" Domains,
-            # polling the daemon's own Scanning/Discovering property —
-            # not StatusWorker.is_pending(), which only reflects the
-            # brief fire-and-forget scan()/start_discovery() CALL, not
-            # the real scan/discovery duration; see CLAUDE/NOTES/
-            # design-decisions.md#connectivity-module-design) still
-            # blinks on the right, independent of selection — a scan
-            # triggered from inside browsing (the new `scan` key) stays
-            # visible from level 1 too.
+            # — Enter here enters browsing (see this module's own
+            # "level-2 browsing" section docstring). The real scanning/
+            # discovering state (main.py's dedicated "wifi_scanning"/
+            # "bluetooth_discovering" Domains, polling the daemon's own
+            # Scanning/Discovering property — not StatusWorker.
+            # is_pending(), which only reflects the brief fire-and-
+            # forget scan()/start_discovery() CALL, not the real scan/
+            # discovery duration; see CLAUDE/NOTES/design-decisions.md
+            # #connectivity-module-design) blinks on the right,
+            # independent of selection.
             header_color = theme.get("selected", 0) if is_selected else theme.get("accent", 0)
             scanning_domain = "wifi_scanning" if is_wifi else "bluetooth_discovering"
             scanning = ctx.status is not None and bool(ctx.status.get(scanning_domain))
@@ -804,28 +821,34 @@ def _action_progress_line(status, domain_name, key, connected, theme):
     return None
 
 
-def _power_progress_line(status, adapter_info, theme):
-    """Same role as _action_progress_line above, for the radio power
+def _power_progress_line(status, adapter_info, theme, domain_name="wifi"):
+    """Same role as _action_progress_line above, for a radio power
     toggle specifically — "Powering on…"/"Powering off…" while in
     flight, or the real failure message once it's done. Uses its own
     fixed pending_key ("power", set explicitly by main.py's
-    handle_connectivity_browsing — see its own request_action() call)
+    handle_connectivity_browsing — see its own request_action() calls)
     rather than the request's own target bool, so this only ever has
     to check ONE key regardless of which direction was requested,
-    instead of checking both is_pending("wifi", True) and
-    is_pending("wifi", False). Direction is inferred from
+    instead of checking both is_pending(domain_name, True) and
+    is_pending(domain_name, False). Direction is inferred from
     adapter_info's own last-known `powered` (the toggle always
     requests the opposite of what it saw) — genuinely just a best
     guess while the real answer is still in flight, same as every
     other "Connecting…"/"Disconnecting…" progress line already is.
+    `domain_name` defaults to "wifi" (this function's original, only
+    consumer); generalized 2026-08-16 to also serve "bluetooth" once
+    its own adapter power toggle landed — both domains' StatusWorker
+    actions use the identical "power" pending_key, so the same function
+    body works unchanged for either, just scoped by which domain it's
+    told to check.
     """
     if status is None:
         return None
-    if status.is_pending("wifi", "power"):
+    if status.is_pending(domain_name, "power"):
         text_color, attr = _pending_blink_style(theme)
         target_on = adapter_info is None or not adapter_info.powered
         return ("Powering on…" if target_on else "Powering off…", text_color | attr)
-    action_error = status.get_action_error_for("wifi", "power")
+    action_error = status.get_action_error_for(domain_name, "power")
     if action_error:
         return (f"⚠ {action_error}", theme.get("urgent", 0))
     return None
@@ -963,19 +986,64 @@ def _wifi_preview_tables(adapter_info, scanning, diagnostics=None, connected=Fal
     return tables
 
 
+def _bt_adapter_info_table(adapter, discovering):
+    """Bluetooth's own "Device" table — mirrors _adapter_info_table()
+    above exactly, scoped to what has a real action behind it (see
+    BluetoothAdapterInfo's own docstring for why Discoverable isn't
+    here): Name/Powered/Pairable each independently optional, Discovering
+    always shown (same "fold in the tighter-polled live domain instead
+    of a stale duplicate field" reasoning Scanning already has).
+    """
+    if adapter is None:
+        return None
+    columns = []
+    if adapter.name:
+        columns.append(("Name", adapter.name))
+    if adapter.powered is not None:
+        columns.append(("Powered", _yes_no(adapter.powered)))
+    if adapter.pairable is not None:
+        columns.append(("Pairable", _yes_no(adapter.pairable)))
+    columns.append(("Discovering", _yes_no(discovering)))
+    if adapter.address:
+        columns.append(("Address", adapter.address))
+    return columns
+
+
+def _bt_preview_tables(adapter_info, discovering):
+    """The stacked "Device" table every Bluetooth-section NavItem's
+    preview_data carries — mirrors _wifi_preview_tables()'s own role
+    (one shared builder so the header, real device rows, and the
+    empty-section placeholder can't drift out of sync), minus a
+    "Connection" second table: BlueZ has no live post-connection
+    diagnostic equivalent to iwd's StationDiagnostic (confirmed live,
+    2026-08-16, against a real connected device — org.bluez.Device1
+    carries no live RSSI once connected, only during discovery), so
+    there's nothing genuine to show there.
+    """
+    device_columns = _bt_adapter_info_table(adapter_info, discovering)
+    return [("Device", [device_columns] if device_columns else [])]
+
+
 def draw_preview(stdscr, box, preview_data, theme) -> int:
     """Registered into render.py's PREVIEW_RENDERERS (keyed "connectivity")
     — draws the WiFi Device/Connection table stack a NavItem's own
     preview_data carries (_wifi_preview_tables()'s return value, [(title,
     rows), ...]) and returns how much height it used, so preview.py can
-    keep stacking preview_text/preview_footer below it. Moved here,
-    unchanged, from what used to be preview.py's own inline tables loop
-    — this whole indirection exists so preview.py never has to know this
-    module's content shape at all; see CLAUDE/NOTES/design-decisions.md
+    keep stacking preview_text/preview_footer below it. This whole
+    indirection exists so preview.py never has to know this module's
+    content shape at all; see CLAUDE/NOTES/design-decisions.md
     #module-self-sufficiency-vs-preview for the full reasoning. A table
     that doesn't fit in whatever height is left is simply skipped, not
     partially drawn — same "degrade, don't corrupt" tolerance every
     other primitive here has for a too-small box.
+
+    A 2026-08-16/17 side-by-side "Available networks | Selected: <ssid>"
+    panel briefly lived here (see git history if reviving this idea) —
+    reverted the same session, Rafi's own call: it duplicated the exact
+    list the WiFi box's own rows already show (dot/[new]/signal%), just
+    in a second place, with no new information — the sidebar's whole
+    job IS that list; preview's job is detail on the one thing browsed,
+    not a second copy of what sidebar already shows.
     """
     x, y, w, h = box
     content_y, content_h = y, h
@@ -1043,20 +1111,88 @@ def _wifi_scan_preview_text(networks, error, theme, status=None, adapter_info=No
     return lines
 
 
-def _bt_discover_preview_text(devices, error, theme):
+def _bt_discover_preview_text(devices, error, theme, discovering=False):
     """Same reasoning as _wifi_scan_preview_text above, for the
-    Bluetooth header row and ctx.bluetooth_devices."""
+    Bluetooth header row and ctx.bluetooth_devices — name left, a
+    bracketed status word right, blank line between rows.
+
+    ALWAYS shows the FULL current device list (paired and not) —
+    title is always "Devices [N]", the same N the sidebar's own header
+    count and row list already show. An earlier version (2026-08-16)
+    filtered this down to paired-only devices while idle ("Known
+    devices [N]"), reasoning that an unqualified list would
+    misrepresent recently-discovered unpaired devices as "known" — a
+    real point about the TITLE, but it meant this preview's own count
+    silently disagreed with the sidebar's honest full count the moment
+    a scan ended. Reverted, 2026-08-17, Rafi's own report: two
+    different numbers for the same box read as a bug, not two
+    deliberately different definitions. `paired` is itself a
+    persisted bluez fact, not something that goes stale outside a scan
+    the way rssi does — showing it via the same "[new]" tag the
+    sidebar's own rows already use is honest regardless of
+    `discovering`.
+
+    Per-row status, in order of priority:
+    - "[new]" — not paired. Always shown, scan or not (paired-ness
+      never goes stale).
+    - "[known; connected]" — paired AND currently connected. Checked
+      before the rssi-based statuses below and shown regardless of
+      `discovering` too — device.connected is a real-time D-Bus fact,
+      not scan-result-dependent, so it's just as honest to say outside
+      a scan as during one. Found live, Rafi's own follow-up question:
+      "detected" claims something about the scan's own advertisement
+      results, which isn't actually true for a connected device (an
+      active classic-BT connection often doesn't keep advertising the
+      way an idle-but-nearby device does) — "connected" is the
+      stronger, more specific fact, so it's said directly.
+    - "[known; detected]" / "[known; undetected]" — paired, not
+      connected: ONLY shown while `discovering`, since device.rssi
+      reverts to None the moment discovery stops (see BluetoothDevice's
+      own docstring) — claiming detected/undetected outside a scan
+      would be a fabrication, not a stale-but-still-true fact.
+    - "" (nothing) — paired, not connected, not discovering. There's
+      genuinely nothing honest to say about range without an active
+      scan.
+
+    Every row is padded to the SAME total width (name_width + gap +
+    status_width), deliberately NOT .rstrip()'d down to its own
+    shorter natural length — draw_centered_lines() centers each row
+    INDEPENDENTLY, so rows of differing length end up centered at
+    different x offsets, a real bug found live (screenshots showing
+    device rows staggered diagonally, one x position per row, once
+    status words of visibly different lengths made the effect
+    obvious; WiFi's own equivalent likely has the identical latent
+    bug, just less visible with its own more similar-length rows).
+    Keeping every row's own total character count identical sidesteps
+    it without touching draw_centered_lines() itself — trailing
+    padding renders as plain background, not a visible cost.
+    """
     if devices is None and error:
         return [(f"⚠ {error}", theme.get("urgent", 0))]
-    if not devices:
+    visible = devices or []
+    if not visible:
         return [("No devices found", theme.get("text", 0) | curses.A_DIM)]
-    lines = [(f"Available devices [{len(devices)}]", theme.get("accent", 0))]
-    for device in devices:
+    rows = []
+    for device in visible:
+        if not device.paired:
+            status = "[new]"
+        elif device.connected:
+            status = "[known; connected]"
+        elif discovering:
+            status = "[known; detected]" if device.rssi is not None else "[known; undetected]"
+        else:
+            status = ""
         dot = "●" if device.connected else "○"
-        prefix = "[new] " if not device.paired else ""
-        battery = f" {device.battery}%" if device.battery is not None else ""
         color = theme.get("accent", 0) if device.connected else theme.get("text", 0)
-        lines.append((f"{dot} {prefix}{device.name}{battery}", color))
+        rows.append((f"{dot} {device.name}", status, color))
+    name_width = max(len(name) for name, _status, _color in rows)
+    status_width = max((len(status) for _name, status, _color in rows), default=0)
+    title = f"Devices [{len(visible)}]"
+    lines = [(title, theme.get("accent", 0))]
+    for name, status, color in rows:
+        lines.append(("", 0))
+        text = f"{name.ljust(name_width)} {status.rjust(status_width)}" if status_width > 0 else name
+        lines.append((text, color))
     return lines
 
 
@@ -1074,11 +1210,15 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True, has_item=T
     actually do on Enter, and the hint should say so unconditionally
     rather than only for the wifi-only extra keys below it.
 
-    wifi_forget/wifi_connect_hidden/wifi_power_toggle only ever DO
-    anything while section == "wifi" (see main.py's handle_
-    connectivity_browsing — bluetooth rows have no equivalent), so
-    they're only listed there. [D] Forget specifically is further
-    narrowed to `known` networks only — forgetting an unknown network
+    wifi_forget/wifi_connect_hidden only ever DO anything while
+    section == "wifi" (see main.py's handle_connectivity_browsing —
+    bluetooth has no forget/hidden-network equivalent), so they're
+    only listed there. Power (wifi_power_toggle/bt_power_toggle) and,
+    for bluetooth, Pairable (bt_pairable_toggle) DO have real
+    per-section equivalents — see the powered=False branch above for
+    Power specifically, and the bluetooth branch below for Pairable.
+    [D] Forget specifically is further narrowed to `known` networks
+    only — forgetting an unknown network
     (never actually saved, nothing to delete) isn't a real action, so
     offering the key there would be misleading, not just redundant.
 
@@ -1088,19 +1228,31 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True, has_item=T
     Disconnect and [D] Forget entirely, since neither has a selected
     network/device to act on.
 
-    powered=False (wifi only — bluetooth has no equivalent concept)
-    narrows the WHOLE hint down to just [O] Power/[Esc] Back — found
-    live, Rafi's own report: with the radio off, Scan/Hidden/Forget
-    all genuinely can't do anything (nothing to scan, no radio to
-    connect a hidden network on), so offering them was actively
-    confusing, not just unhelpful clutter.
+    powered=False narrows the WHOLE hint down to just Power/[Esc] Back
+    — found live, Rafi's own report (originally wifi-only, widened
+    2026-08-16 once Bluetooth got its own adapter power toggle): with
+    the radio off, Scan/Hidden/Forget (wifi) or Scan (bluetooth) all
+    genuinely can't do anything (nothing to scan, no radio to connect a
+    hidden network on), so offering them was actively confusing, not
+    just unhelpful clutter. Each section uses its own power key
+    (wifi_power_toggle vs bt_power_toggle — separate keys, see
+    defaults/config.toml's own comment for why).
     """
     urgent = theme.get("urgent", 0)
-    if section == "wifi" and not powered:
-        return [(f"[{key_label(cfg.keybinds['wifi_power_toggle'])}] Power   [Esc] Back", urgent)]
+    if not powered:
+        power_key = cfg.keybinds["wifi_power_toggle"] if section == "wifi" else cfg.keybinds["bt_power_toggle"]
+        return [(f"[{key_label(power_key)}] Power   [Esc] Back", urgent)]
     connect_hint = f"[{key_label(cfg.keybinds['confirm'])}] {'Disconnect' if connected else 'Connect'}   " if has_item else ""
     if section != "wifi":
-        return [(f"{connect_hint}[{key_label(cfg.keybinds['scan'])}] Scan   [Esc] Back", urgent)]
+        # Same two-line shape wifi's own "on" hint below has — line 1
+        # connect/scan, line 2 the section's own extra keys ending in
+        # Power/Esc. Power belongs here too (not just the powered=False
+        # branch above) — found live, Rafi's own report: the "radio is
+        # on" hint had no way to turn it back OFF.
+        return [
+            (f"{connect_hint}[{key_label(cfg.keybinds['scan'])}] Scan", urgent),
+            (f"[{key_label(cfg.keybinds['bt_pairable_toggle'])}] Pairable   [{key_label(cfg.keybinds['bt_power_toggle'])}] Power   [Esc] Back", urgent),
+        ]
     forget_hint = f"   [{key_label(cfg.keybinds['wifi_forget'])}] Forget" if (has_item and known) else ""
     return [
         (f"{connect_hint}[{key_label(cfg.keybinds['scan'])}] Scan{forget_hint}", urgent),
@@ -1108,17 +1260,17 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True, has_item=T
     ]
 
 
-def _wifi_preview_text(network, theme, status):
-    """SSID first, then Signal:/Security:/Known:/... — each label
-    padded to a shared width first so every value lands in the same
-    column, one blank line between every row so the block has some
-    breathing room instead of reading as a packed wall of text (Rafi's
-    own call, 2026-08-15, after a boxed version was tried and rejected
-    as unnecessary — plain, aligned, spaced-out centered text was the
-    actual ask, not a border). A live connect/disconnect attempt's own
-    progress/error line (_action_progress_line) rides along as one
-    more (unpadded) row — genuinely just one more fact about this same
-    network, not a separate concept needing its own alignment.
+def _wifi_property_rows(network, theme):
+    """(label, value, color) triples for a network's own property list
+    — Signal:/Security:/Known:/Auto-connect:/Hidden:/Last connected:/
+    Connected:, each independently optional per network.known. Extracted
+    out of _wifi_preview_text() below so a future second consumer of the
+    same rows (a side-by-side detail panel was tried and reverted the
+    same session — see draw_preview's own docstring) doesn't have to
+    re-derive them by hand. Deliberately excludes the live connect/
+    disconnect progress line — that's not a real label:value pair, and
+    including it here would skew label_width padding calculations for
+    callers that pad these rows themselves.
     """
     text = theme.get("text", 0)
     connected_color = theme.get("accent", 0) if network.connected else text
@@ -1134,6 +1286,22 @@ def _wifi_preview_text(network, theme, status):
         if network.last_connected:
             rows.append(("Last connected:", _format_timestamp(network.last_connected), text))
     rows.append(("Connected:", _yes_no(network.connected), connected_color))
+    return rows
+
+
+def _wifi_preview_text(network, theme, status):
+    """SSID first, then Signal:/Security:/Known:/... — each label
+    padded to a shared width first so every value lands in the same
+    column, one blank line between every row so the block has some
+    breathing room instead of reading as a packed wall of text (Rafi's
+    own call, 2026-08-15, after a boxed version was tried and rejected
+    as unnecessary — plain, aligned, spaced-out centered text was the
+    actual ask, not a border). A live connect/disconnect attempt's own
+    progress/error line (_action_progress_line) rides along as one
+    more (unpadded) row — genuinely just one more fact about this same
+    network, not a separate concept needing its own alignment.
+    """
+    rows = _wifi_property_rows(network, theme)
     label_width = max(len(label) for label, _value, _color in rows)
     lines = [(network.ssid, theme.get("accent", 0))]
     for label, value, color in rows:
@@ -1192,23 +1360,31 @@ def _empty_browsing_nav_item(section, row, box, theme, cfg, status, adapter_info
     (minus Connect/Disconnect/Forget, which need a real item — see
     _browsing_hint_footer's own has_item=False) — "Powered: no" right
     here is exactly what explains why the list is empty and that the
-    same power key fixes it, for wifi specifically; bluetooth has no
-    adapter_info concept, so those two args are always None/False there.
-    Also carries the live power-toggle progress line
+    same power key fixes it, for either section (both wifi and
+    bluetooth have their own adapter power toggle — see
+    defaults/config.toml's own wifi_power_toggle/bt_power_toggle
+    comments). Also carries the live power-toggle progress line
     (_power_progress_line) and narrows the hint to just Power/Back
     while the radio is actually off (_browsing_hint_footer's own
-    powered=False) — Scan/Hidden/Forget can't do anything without a
-    radio, so offering them here would be actively confusing, not just
-    unhelpful.
+    powered=False) — Scan/Hidden/Forget (wifi) or Scan/Pairable
+    (bluetooth) can't do anything without a radio, so offering them
+    here would be actively confusing, not just unhelpful. `adapter_info`
+    is whichever section's own adapter snapshot the caller passed in
+    (AdapterInfo for wifi, BluetoothAdapterInfo for bluetooth — both
+    share a `.powered` attribute, which is all this function itself
+    ever reads directly); `scanning` is that section's own live
+    scanning/discovering domain value.
     """
     x, y, w, h = box
     id_prefix = "wifi" if section == "wifi" else "bt"
     noun = "networks" if section == "wifi" else "devices"
-    powered = adapter_info.powered if (section == "wifi" and adapter_info is not None) else True
-    power_progress = _power_progress_line(status, adapter_info, theme) if section == "wifi" else None
+    domain_name = "wifi" if section == "wifi" else "bluetooth"
+    powered = adapter_info.powered if adapter_info is not None else True
+    power_progress = _power_progress_line(status, adapter_info, theme, domain_name)
     preview_text = [(f"No {noun} in range", theme.get("text", 0) | curses.A_DIM)]
     if power_progress is not None:
         preview_text.append(power_progress)
+    tables = _wifi_preview_tables(adapter_info, scanning) if section == "wifi" else _bt_preview_tables(adapter_info, scanning)
     return NavItem(
         id=f"connectivity:{id_prefix}:empty",
         rect=(x + 1, row, w - 2, 1),
@@ -1217,7 +1393,7 @@ def _empty_browsing_nav_item(section, row, box, theme, cfg, status, adapter_info
         preview_footer=_browsing_hint_footer(
             theme, cfg, section, connected=False, known=False, has_item=False, powered=powered,
         ),
-        preview_data=_wifi_preview_tables(adapter_info, scanning) if section == "wifi" else None,
+        preview_data=tables,
     )
 
 
@@ -1244,7 +1420,7 @@ def _wifi_row_nav_item(network, box, row, theme, status, cfg, adapter_info, scan
     )
 
 
-def _bt_row_nav_item(device, box, row, theme, status, cfg) -> NavItem:
+def _bt_row_nav_item(device, box, row, theme, status, cfg, adapter_info, discovering) -> NavItem:
     x, y, w, h = box
     return NavItem(
         id=f"connectivity:bt:{device.id}",
@@ -1253,6 +1429,11 @@ def _bt_row_nav_item(device, box, row, theme, status, cfg) -> NavItem:
         target_kind="bluetooth_device",
         preview_text=_bt_preview_text(device, theme, status),
         preview_footer=_browsing_hint_footer(theme, cfg, "bluetooth", device.connected),
+        # Same reasoning _wifi_row_nav_item's own comment gives — d/n/o
+        # (here: p/a) only ever usable from INSIDE browsing, so the
+        # adapter's own current state belongs right where those
+        # controls actually live, on every row, not just the header.
+        preview_data=_bt_preview_tables(adapter_info, discovering),
     )
 
 
@@ -1278,19 +1459,23 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     theme = ctx.theme or {}
     cfg = ctx.config
     wifi_networks = ctx.wifi_networks or []
-    bluetooth_devices = ctx.bluetooth_devices or []
+    bluetooth_devices = _connected_first(ctx.bluetooth_devices) or []
     # Computed once here, not per-row inside the loop below — needed by
-    # BOTH the header (level 1) and every wifi row (level 2, see
-    # _wifi_row_nav_item's own comment on why the Device table needs to
-    # survive into browsing) for the exact same preview_table content.
+    # every wifi row (level 2, see _wifi_row_nav_item's own comment on
+    # why the Device/Connection tables need to survive into browsing)
+    # for the exact same preview_table content; adapter_info alone is
+    # also read by the header's own preview_text below (the live
+    # power-toggle progress line — see _wifi_scan_preview_text), even
+    # though the header no longer carries the tables themselves (see
+    # wifi_header_item's own comment, 2026-08-17).
     adapter_info = ctx.status.get("wifi_adapter") if ctx.status is not None else None
     scanning = bool(ctx.status.get("wifi_scanning")) if ctx.status is not None else False
     diagnostics = ctx.status.get("wifi_diagnostics") if ctx.status is not None else None
-    # For the header's own "Connection - <ssid>" table title — the
-    # header has no single `network` object in scope the way a real
-    # row does, so the connected one (there's at most one) has to be
-    # found by hand.
-    connected_ssid = next((n.ssid for n in wifi_networks if n.connected), None)
+    # Bluetooth's own equivalents — same "wifi_adapter"/"wifi_scanning"
+    # split (see _bt_preview_tables' own docstring for why there's no
+    # "Connection" table on this side).
+    bt_adapter_info = ctx.status.get("bluetooth_adapter") if ctx.status is not None else None
+    bt_discovering = bool(ctx.status.get("bluetooth_discovering")) if ctx.status is not None else False
 
     wifi_header_item = None
     bt_header_item = None
@@ -1319,27 +1504,35 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
                 preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme, ctx.status, adapter_info),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "networks"),
-                # connected=True unconditionally — diagnostics itself
-                # already gates the "Connection" table's presence (see
-                # _wifi_preview_tables' own docstring): it's only ever
-                # non-None when something genuinely IS connected, and
-                # the header represents the whole section, not one
-                # specific row, so there's no narrower scope to check
-                # here the way a real network row has.
-                preview_data=_wifi_preview_tables(adapter_info, scanning, diagnostics, connected=True, ssid=connected_ssid),
+                # No preview_data (Device/Connection tables) at level 1
+                # — Rafi's own call, 2026-08-17: those tables are about
+                # ONE thing you're browsing/connected to, and belong
+                # once you're actually inside browsing (every real row,
+                # plus the empty-section placeholder), not stacked
+                # above the header's own "what's out there" overview,
+                # which already has plenty to show on its own.
             )
         elif kind == "bt_header":
             in_wifi_section = False
             bt_header_item = NavItem(
                 id="connectivity:bt:header", rect=(x + 1, row, w - 2, 1), target_kind="bluetooth_browse",
-                preview_text=_bt_discover_preview_text(ctx.bluetooth_devices, ctx.bluetooth_error, theme),
+                # ctx.bluetooth_devices directly (via _connected_first,
+                # which preserves None unchanged), not the local
+                # bluetooth_devices variable above — that one's already
+                # "or []"-normalized, which would silently turn a real
+                # poll failure into "no devices found" here instead of
+                # the real error, same None-vs-[] distinction
+                # _wifi_scan_preview_text's own callers already protect.
+                preview_text=_bt_discover_preview_text(_connected_first(ctx.bluetooth_devices), ctx.bluetooth_error, theme, bt_discovering),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "devices"),
+                # Same reasoning as wifi_header_item above — no Device
+                # table at level 1.
             )
         elif kind == "wifi_item":
             wifi_items.append(_wifi_row_nav_item(payload, box, row, theme, ctx.status, cfg, adapter_info, scanning, diagnostics))
             wifi_rows.append(row)
         elif kind == "bt_item":
-            bt_items.append(_bt_row_nav_item(payload, box, row, theme, ctx.status, cfg))
+            bt_items.append(_bt_row_nav_item(payload, box, row, theme, ctx.status, cfg, bt_adapter_info, bt_discovering))
             bt_rows.append(row)
         elif kind == "empty_slot":
             if in_wifi_section and wifi_empty_row is None:
@@ -1359,9 +1552,9 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     selected_bt_index = _selected_bt_index(bluetooth_devices, ctx.selected_id)
     before_i, after_i = _section_nav_indices(len(bluetooth_devices), selected_bt_index, visible_slots=visible_slots)
     if before_i is not None and bt_rows:
-        bt_items = [_bt_row_nav_item(bluetooth_devices[before_i], box, bt_rows[0], theme, ctx.status, cfg)] + bt_items
+        bt_items = [_bt_row_nav_item(bluetooth_devices[before_i], box, bt_rows[0], theme, ctx.status, cfg, bt_adapter_info, bt_discovering)] + bt_items
     if after_i is not None and bt_rows:
-        bt_items = bt_items + [_bt_row_nav_item(bluetooth_devices[after_i], box, bt_rows[-1], theme, ctx.status, cfg)]
+        bt_items = bt_items + [_bt_row_nav_item(bluetooth_devices[after_i], box, bt_rows[-1], theme, ctx.status, cfg, bt_adapter_info, bt_discovering)]
 
     if _browsing_section == "wifi":
         if wifi_items:
@@ -1373,7 +1566,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
         if bt_items:
             return bt_items
         if bt_empty_row is not None:
-            return [_empty_browsing_nav_item("bluetooth", bt_empty_row, box, theme, cfg, ctx.status, None, False)]
+            return [_empty_browsing_nav_item("bluetooth", bt_empty_row, box, theme, cfg, ctx.status, bt_adapter_info, bt_discovering)]
         return []
 
     items = []

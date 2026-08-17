@@ -133,3 +133,27 @@ class BluetoothDevice:
     icon: str | None = None  # bluez's own Device1.Icon, e.g. "audio-headphones" — None if bluez has no guess
     address_type: str | None = None  # "public" | "random"
     rssi: int | None = None  # signed dBm — only present while actively discovering, None otherwise
+
+
+@dataclass
+class BluetoothAdapterInfo:
+    """The controller/radio itself — mirrors WiFi's own AdapterInfo,
+    scoped to exactly what has a real action behind it (2026-08-16, see
+    CLAUDE/NOTES/design-decisions.md for the fuller writeup): Powered
+    and Pairable both get a toggle key; Discovering already has one
+    (`scan`, wired since R4) and deliberately isn't a field here — see
+    below. Discoverable exists on org.bluez.Adapter1 too (confirmed
+    live) but has no action behind it in this pass, so it's left out
+    rather than shown as inert info.
+    """
+    name: str | None = None  # interface id (e.g. "hci0"), from the adapter's own D-Bus object path — NOT Adapter1's own "Name" property, which is the machine's Bluetooth broadcast name (e.g. the hostname), not an interface identifier. Mirrors WiFi's own AdapterInfo.name convention.
+    address: str | None = None  # MAC
+    powered: bool | None = None
+    pairable: bool | None = None
+    # discovering is NOT a field here, deliberately: the existing
+    # bluetooth_discovering Domain (poll_interval=0.5, tighter than
+    # this adapter snapshot's own default interval) is the live truth
+    # for a blinking "Scanning" indicator — same reasoning WiFi's own
+    # AdapterInfo already documents for its own Scanning field.
+    # modules/connectivity.py's _bt_adapter_info_table() takes
+    # discovering as a separate function parameter instead.
