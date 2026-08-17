@@ -12,7 +12,7 @@ preset = 1
 tab_order = "columns_first"
 
 # Only turn this on if you actually use vim-style h/j/k/l navigation.
-# Those four letters collide with "type anywhere to search apps" (the
+# Those four letters collide with "type anywhere to launch apps" (the
 # ambient launcher), so vim_mode users need to press "insert" first to
 # start typing instead of just typing.
 vim_mode = false
@@ -29,7 +29,7 @@ vim_mode = false
 # vim_up/vim_down below duplicate left/right/up/down again, but only
 # take effect when vim_mode = true (see below) — left as plain
 # characters otherwise, they'd steal 4 letters from "type anywhere to
-# search apps" for everyone, not just vim users.
+# launch apps" for everyone, not just vim users.
 left = "Left"
 right = "Right"
 up = "Up"

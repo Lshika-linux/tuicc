@@ -279,7 +279,7 @@ def draw(stdscr, box, ctx, module_name):
     draw_box_outline(stdscr, y, x, h, w, outer_color, title="Launcher")
 
     if not ctx.typing_mode:
-        hint = "start typing to search apps…"
+        hint = "start typing to launch apps…"
         hint_x = x + 1 + max((w - 2 - len(hint)) // 2, 0)
         hint_y = y + h // 2
         try:
