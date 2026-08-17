@@ -364,6 +364,38 @@ def stop_browsing() -> None:
     _browsing_section = None
 
 
+# ---------- header action flash: instant feedback for P/S/A ----------
+# A brief accent flash on just the ONE bracket group ([PWR ...]/
+# [SCAN ...]/[PAIRABLE ...]) whose key was actually just pressed —
+# Rafi's own ask, found live: the header's own status legend (see
+# _wifi_header_status_segments/_bt_header_status_segments) shows real
+# state, but nothing confirmed a keypress itself LANDED the instant you
+# pressed it — StatusWorker.is_pending() alone isn't a fit here (its
+# own window is a single D-Bus round trip, often too brief to actually
+# see even at the app's own idle 300ms redraw cadence — see scan's own
+# similar timing story, this same session). A dedicated, real minimum-
+# duration flash instead: main.py calls flash_header_action() directly
+# at each request_action() call site (scan/power/pairable), draw()
+# checks it via _is_header_action_flashing() when building that one
+# group's own segments.
+_flash_until = {}  # {(section, action): monotonic deadline}
+_FLASH_DURATION_SECONDS = 0.4  # long enough to survive the idle 300ms redraw cadence with room to spare
+
+
+def flash_header_action(section: str, action: str) -> None:
+    """action is "power"/"scan"/"pairable" — matches the StatusWorker
+    pending_key each request_action() call already uses for that same
+    action, kept as the same vocabulary rather than inventing a second
+    one.
+    """
+    _flash_until[(section, action)] = time.monotonic() + _FLASH_DURATION_SECONDS
+
+
+def _is_header_action_flashing(section: str, action: str) -> bool:
+    deadline = _flash_until.get((section, action))
+    return deadline is not None and time.monotonic() < deadline
+
+
 def next_browsing_selection(section: str, items: list, current_selected_id: str | None, direction: int) -> str:
     """The next/previous item's own "connectivity:<section>:<key>" id,
     wrapping at both ends (same convention same_row_neighbor(wrap=True)
@@ -521,6 +553,185 @@ def _connection_dot(theme, connected):
     return "\u25cb", theme.get("text", 0) | curses.A_DIM  # ○, dim outline
 
 
+def _status_dot(theme, value):
+    """Same shape as _connection_dot above, generalized to any boolean
+    adapter-level state (Powered/Scanning/Pairable) rather than just
+    connected/disconnected. `None` (adapter not polled yet) renders as
+    the same dim outline dot a real `False` would — same "unknown reads
+    as off, never wrongly claimed on" tolerance _yes_no() already uses
+    for exactly this reason elsewhere in this module.
+    """
+    if value:
+        return "\u25cf", theme.get("accent", 0) | curses.A_BOLD  # ●, filled
+    return "\u25cb", theme.get("text", 0) | curses.A_DIM  # ○, dim outline
+
+
+def _scanning_dot(theme, scanning):
+    """Same shape as _status_dot above, but the filled state BLINKS
+    while a scan/discovery is actually in progress this exact frame,
+    via the same _pending_blink_style() every other live-action
+    indicator in this module already uses — replaces the old separate
+    right-aligned "Scanning…"/"Discovering…" text entirely
+    (found live this same session: keeping both was redundant, and the
+    two segments now sit right next to the label with no spare room
+    for a second, separately-positioned indicator anyway).
+    """
+    if not scanning:
+        return "\u25cb", theme.get("text", 0) | curses.A_DIM  # ○, dim outline
+    color, attr = _pending_blink_style(theme)
+    return "\u25cf", color | attr  # ●, blinking
+
+
+def _header_status_dim(theme, segments):
+    """Overrides every segment's own color to one flat, dim text
+    color — keeps each segment's TEXT (including which dot glyph,
+    ●/○) exactly as computed, only recolors it. Applied whenever the
+    header row itself isn't the current selection (level-1 navigation
+    — Rafi's own call: the whole legend should read as quiet/inert
+    background info until you've actually navigated onto this row,
+    same "dim until relevant" instinct sessions.py's own LOAD/SAVE/
+    DEL/NAME and media.py's own transport glyphs already apply, just
+    keyed off row selection here rather than an expanded/collapsed
+    state).
+    """
+    dim = theme.get("text", 0) | curses.A_DIM
+    return [(text, dim) for text, _color in segments]
+
+
+def _flash_group(theme, segments, flashing):
+    """Overrides one bracket group's own segments to flat accent
+    (bold) while `flashing` — same "keep the text, override the
+    color" shape as _header_status_dim above, just applied per-group
+    instead of to the whole row. See flash_header_action()'s own
+    docstring for why this exists (a real, minimum-duration keypress
+    confirmation, not a repurposed StatusWorker.is_pending() flicker).
+    """
+    if not flashing:
+        return segments
+    flash_color = theme.get("accent", 0) | curses.A_BOLD
+    return [(text, flash_color) for text, _color in segments]
+
+
+def _wifi_header_status_segments(theme, powered, scanning, is_controllable, power_flashing=False, scan_flashing=False):
+    """(text, color) segments for the WiFi header row's own compact
+    "[P]WR ● [S]CAN ○" status legend — real Powered/Scanning state,
+    plus a built-in key legend: the accent-colored letter in each word
+    IS the actual keybind for that action (wifi_power_toggle resolves
+    to "p", scan to "s" — see defaults/config.toml's own comments), so
+    this one row does the job _header_enter_hint_footer's separate
+    preview-only strip used to do alone, but lives in the module's own
+    box regardless of whether preview exists in the current layout at
+    all — the first real instance of CLAUDE/NOTES/design-decisions.md
+    #module-self-sufficiency-vs-preview's own still-mostly-unbuilt
+    mechanism #2 (a module branching what it draws in its OWN box).
+    Drawn as a sequence of separately-colored segments (curses can't
+    color part of one addstr() call) — draw()'s own caller walks this
+    list left to right, advancing x by each segment's own display_width.
+
+    is_controllable=False flattens the whole thing to one dim color
+    via _header_status_dim — see that function's own docstring. True
+    only once you've actually entered level-2 browsing for THIS
+    section (see draw()'s own comment) — not merely having the
+    collapsed header row selected/hovered at level 1, where P/S/A
+    can't actually be pressed yet.
+
+    power_flashing/scan_flashing each briefly flash JUST that one
+    bracket group accent — built as its own small segment list first
+    (_flash_group applied before the groups are ever concatenated),
+    so pressing P never flashes SCAN too. Built PER GROUP, not as one
+    combined "flash everything" flag, deliberately mirroring
+    _header_status_dim's own "override color, keep text" shape one
+    level more granular.
+    """
+    text_color = theme.get("text", 0)
+    accent = theme.get("accent", 0) | curses.A_BOLD
+    pwr_group = _flash_group(theme, [
+        ("[", text_color),
+        ("P", accent),
+        ("WR ", text_color),
+        _status_dot(theme, powered),
+        ("]", text_color),
+    ], power_flashing)
+    scan_group = _flash_group(theme, [
+        ("[", text_color),
+        ("S", accent),
+        ("CAN ", text_color),
+        _scanning_dot(theme, scanning),
+        ("]", text_color),
+    ], scan_flashing)
+    segments = [("  ", text_color), *pwr_group, (" ", text_color), *scan_group]
+    return segments if is_controllable else _header_status_dim(theme, segments)
+
+
+def _bt_header_status_segments(
+    theme, powered, scanning, pairable, is_controllable,
+    power_flashing=False, scan_flashing=False, pairable_flashing=False,
+):
+    """Same reasoning as _wifi_header_status_segments above, plus a
+    third "P[A]IRABLE" segment/flash for bt_pairable_toggle's own key.
+    The accent letter sits at "PAIRABLE"'s own SECOND character
+    (matching where the "a" keybind actually falls, not the word's
+    first letter the way PWR/SCAN's own accent letters do) — Rafi's
+    own explicit call, not a mistake: "obarvi... A v PAIRABLE na
+    accent".
+    """
+    text_color = theme.get("text", 0)
+    accent = theme.get("accent", 0) | curses.A_BOLD
+    pwr_group = _flash_group(theme, [
+        ("[", text_color),
+        ("P", accent),
+        ("WR ", text_color),
+        _status_dot(theme, powered),
+        ("]", text_color),
+    ], power_flashing)
+    scan_group = _flash_group(theme, [
+        ("[", text_color),
+        ("S", accent),
+        ("CAN ", text_color),
+        _scanning_dot(theme, scanning),
+        ("]", text_color),
+    ], scan_flashing)
+    pairable_group = _flash_group(theme, [
+        ("[", text_color),
+        ("P", text_color),
+        ("A", accent),
+        ("IRABLE ", text_color),
+        _status_dot(theme, pairable),
+        ("]", text_color),
+    ], pairable_flashing)
+    segments = [("  ", text_color), *pwr_group, (" ", text_color), *scan_group, (" ", text_color), *pairable_group]
+    return segments if is_controllable else _header_status_dim(theme, segments)
+
+
+def _draw_segments(stdscr, row, x, segments, max_w):
+    """Draws a sequence of (text, color) segments left to right,
+    starting at (row, x), advancing x by each segment's own
+    display_width — curses can't color part of a single addstr() call,
+    so any inline multi-color text in this module (the header row's
+    own "[P]WR ● [S]CAN ○" legend) goes through this instead of one
+    big string. Stops once max_w is exhausted rather than overflowing
+    past it — each segment is wc_truncate'd to whatever room is left,
+    so a too-narrow box clips cleanly mid-segment instead of just
+    stopping abruptly between segments, same "degrade, don't corrupt"
+    tolerance every other primitive here has for a too-small box.
+    """
+    cx = x
+    remaining = max_w
+    for text, color in segments:
+        if remaining <= 0:
+            break
+        clipped = wc_truncate(text, remaining)
+        if not clipped:
+            continue
+        try:
+            stdscr.addstr(row, cx, clipped, color)
+        except curses.error:
+            pass
+        advance = display_width(clipped)
+        cx += advance
+        remaining -= advance
+
+
 def draw(stdscr, box, ctx, module_name):
     x, y, w, h = box
     theme = ctx.theme or {}
@@ -601,37 +812,70 @@ def draw(stdscr, box, ctx, module_name):
         if kind in ("wifi_header", "bt_header"):
             header_text = payload
             is_wifi = kind == "wifi_header"
+            if not is_wifi:
+                header_text = header_text.replace("Bluetooth", "BT")
             item_id = "connectivity:wifi:header" if is_wifi else "connectivity:bt:header"
             is_selected = item_id == ctx.selected_id
             # Selection shows on the header TEXT's own color (same
             # convention every other row in this module already uses)
             # — Enter here enters browsing (see this module's own
-            # "level-2 browsing" section docstring). The real scanning/
-            # discovering state (main.py's dedicated "wifi_scanning"/
-            # "bluetooth_discovering" Domains, polling the daemon's own
-            # Scanning/Discovering property — not StatusWorker.
-            # is_pending(), which only reflects the brief fire-and-
-            # forget scan()/start_discovery() CALL, not the real scan/
-            # discovery duration; see CLAUDE/NOTES/design-decisions.md
-            # #connectivity-module-design) blinks on the right,
-            # independent of selection.
+            # "level-2 browsing" section docstring). Real Powered/
+            # Scanning/(Bluetooth's own Pairable) state is drawn as a
+            # compact "[P]WR ● [S]CAN ○[...]" legend right after the
+            # label — see _wifi_header_status_segments' own docstring
+            # for the full "why" (both a live status readout AND a
+            # built-in key legend in one, right in this module's own
+            # box regardless of whether preview exists in the layout
+            # at all). Replaces the old separate right-aligned
+            # "Scanning…"/"Discovering…" blink text entirely — the
+            # SCAN segment's own dot now blinks instead (_scanning_dot).
             header_color = theme.get("selected", 0) if is_selected else theme.get("accent", 0)
+            # The legend only lights up once you've actually ENTERED
+            # level-2 browsing for THIS section — merely having the
+            # collapsed header row selected/hovered at level 1 keeps it
+            # dim. Rafi's own call: P/S/A only do anything once
+            # main.py's handle_connectivity_browsing is actually
+            # dispatching keys (a real mode_stack claim), so dim-until-
+            # then honestly signals "not controllable yet", not just
+            # "not currently looked at".
+            section = "wifi" if is_wifi else "bluetooth"
+            is_controllable = is_browsing() and browsing_section() == section
             scanning_domain = "wifi_scanning" if is_wifi else "bluetooth_discovering"
             scanning = ctx.status is not None and bool(ctx.status.get(scanning_domain))
+            if is_wifi:
+                adapter = ctx.status.get("wifi_adapter") if ctx.status is not None else None
+                status_segments = _wifi_header_status_segments(
+                    theme, adapter.powered if adapter else None, scanning, is_controllable,
+                    power_flashing=_is_header_action_flashing(section, "power"),
+                    scan_flashing=_is_header_action_flashing(section, "scan"),
+                )
+            else:
+                adapter = ctx.status.get("bluetooth_adapter") if ctx.status is not None else None
+                status_segments = _bt_header_status_segments(
+                    theme, adapter.powered if adapter else None, scanning,
+                    adapter.pairable if adapter else None, is_controllable,
+                    power_flashing=_is_header_action_flashing(section, "power"),
+                    scan_flashing=_is_header_action_flashing(section, "scan"),
+                    pairable_flashing=_is_header_action_flashing(section, "pairable"),
+                )
+            # Right-aligned to the box's own right edge (same "block's
+            # own last character sits one cell in from the border"
+            # convention sessions.py's own _action_positions() uses),
+            # not left-anchored right after the label — Rafi's own ask:
+            # a consistent right edge regardless of how long "WiFi
+            # [19]"/"BT [3]" happens to be. The label's own available
+            # width shrinks to make room rather than risking overlap;
+            # status_segments' own leading "  " (see _wifi_header_
+            # status_segments' own construction) already supplies the
+            # visual gap between the two, no separate margin needed here.
+            status_w = sum(display_width(text) for text, _color in status_segments)
+            status_x = x + w - 1 - status_w
+            clipped_label = wc_truncate(header_text, max(status_x - (x + 2), 0))
             try:
-                stdscr.addstr(row, x + 2, wc_truncate(header_text, max(inner_w, 0)), header_color | curses.A_BOLD)
-                if scanning:
-                    trigger_color, trigger_attr = _pending_blink_style(theme)
-                    trigger_label = "Scanning…" if is_wifi else "Discovering…"
-                    # Right-aligned within the box's own inner width —
-                    # only drawn if there's room left after the header
-                    # text, so a long SSID-count header ("WiFi [143]")
-                    # on a narrow box can't make the two overlap.
-                    trigger_x = x + w - 2 - len(trigger_label)
-                    if trigger_x > x + 2 + len(header_text):
-                        stdscr.addstr(row, trigger_x, trigger_label, trigger_color | trigger_attr)
+                stdscr.addstr(row, x + 2, clipped_label, header_color | curses.A_BOLD)
             except curses.error:
                 pass
+            _draw_segments(stdscr, row, status_x, status_segments, status_w)
 
         elif kind == "error":
             # No-silent-failure (VISION.md, R3): distinct from "empty"
@@ -1234,9 +1478,11 @@ def _browsing_hint_footer(theme, cfg, section, connected, known=True, has_item=T
     the radio off, Scan/Hidden/Forget (wifi) or Scan (bluetooth) all
     genuinely can't do anything (nothing to scan, no radio to connect a
     hidden network on), so offering them was actively confusing, not
-    just unhelpful clutter. Each section uses its own power key
-    (wifi_power_toggle vs bt_power_toggle — separate keys, see
-    defaults/config.toml's own comment for why).
+    just unhelpful clutter. wifi_power_toggle and bt_power_toggle
+    resolve to the SAME physical key (config.toml default "p", not two
+    separate ones) — see defaults/config.toml's own comment: the
+    header row's own "[P]WR" legend needs one shared letter to read
+    correctly for both sections.
     """
     urgent = theme.get("urgent", 0)
     if not powered:

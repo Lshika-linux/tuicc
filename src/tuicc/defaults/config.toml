@@ -56,12 +56,15 @@ scan = "s"
 # itself on/off.
 wifi_forget = "d"
 wifi_connect_hidden = "n"
-wifi_power_toggle = "o"
+wifi_power_toggle = "p"
 
-# Bluetooth's own equivalents while browsing — separate keys from
-# wifi_power_toggle above rather than a shared one, same reasoning
-# forget/hidden already have (a real, distinct action per section).
-# bt_power_toggle: turn the Bluetooth adapter itself on/off.
+# Bluetooth's own equivalents while browsing. bt_power_toggle: turn
+# the Bluetooth adapter itself on/off — deliberately the SAME key as
+# wifi_power_toggle above (a real change from an earlier version that
+# kept them separate on purpose): the Connectivity box's own header
+# row shows a "[P]WR"/"[S]CAN"/"P[A]IRABLE" legend, the accent-colored
+# letter being the actual key — one shared "P" reads correctly for
+# both sections at a glance, two different letters wouldn't.
 # bt_pairable_toggle: toggle whether the adapter accepts new pairing
 # requests. Discovery uses the shared `scan` key above, not its own —
 # "rescan" already means the same thing in both sections.

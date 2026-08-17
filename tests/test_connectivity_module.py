@@ -9,18 +9,25 @@ themselves need a real curses screen, left untested here same as every
 other module.
 """
 
+import curses
 import re
 from types import SimpleNamespace
 
 from tuicc.connectivity.model import WifiNetwork, BluetoothDevice, AdapterInfo, ConnectionDiagnostics, BluetoothAdapterInfo
+from tuicc.modules import connectivity as connectivity_module
 from tuicc.modules.connectivity import (
     _action_progress_line,
     _power_progress_line,
     _adapter_info_table,
+    _bt_header_status_segments,
     _connection_diagnostics_table,
+    _is_header_action_flashing,
+    flash_header_action,
     _wifi_preview_tables,
     _bt_adapter_info_table,
     _bt_preview_tables,
+    _scanning_dot,
+    _status_dot,
     _browsing_hint_footer,
     _empty_browsing_nav_item,
     _build_rows,
@@ -33,6 +40,7 @@ from tuicc.modules.connectivity import (
     _selected_bt_index,
     _selected_wifi_index,
     _signal_bars,
+    _wifi_header_status_segments,
     _wifi_preview_text,
     _wifi_property_rows,
     _wifi_row_nav_item,
@@ -489,7 +497,7 @@ def _theme():
 def _cfg():
     return SimpleNamespace(keybinds={
         "scan": ord("s"), "confirm": ord("\n"),
-        "wifi_forget": ord("d"), "wifi_connect_hidden": ord("n"), "wifi_power_toggle": ord("o"),
+        "wifi_forget": ord("d"), "wifi_connect_hidden": ord("n"), "wifi_power_toggle": ord("p"),
         "bt_power_toggle": ord("p"), "bt_pairable_toggle": ord("a"),
     })
 
@@ -1008,7 +1016,7 @@ def test_browsing_hint_footer_wifi_lists_every_active_wifi_only_key_when_known()
     assert any("Connect" in line and "[Enter]" in line for line in text)
     assert any("Forget" in line and "[D]" in line for line in text)
     assert any("Hidden" in line and "[N]" in line for line in text)
-    assert any("Power" in line and "[O]" in line for line in text)
+    assert any("Power" in line and "[P]" in line for line in text)
     assert any("Scan" in line for line in text)
     assert any("Esc" in line for line in text)
     assert all(color == _theme()["urgent"] for _line, color in footer)
@@ -1037,7 +1045,7 @@ def test_browsing_hint_footer_wifi_narrows_to_just_power_when_radio_off():
     # just unhelpful clutter.
     footer = _browsing_hint_footer(_theme(), _cfg(), "wifi", connected=False, known=True, powered=False)
 
-    assert footer == [("[O] Power   [Esc] Back", _theme()["urgent"])]
+    assert footer == [("[P] Power   [Esc] Back", _theme()["urgent"])]
 
 
 def test_browsing_hint_footer_bluetooth_narrows_to_power_when_off():
@@ -1169,7 +1177,7 @@ def test_empty_browsing_nav_item_footer_narrows_when_radio_off():
     item = _empty_browsing_nav_item("wifi", row=5, box=(0, 0, 40, 12), theme=_theme(), cfg=_cfg(), status=None,
                                      adapter_info=AdapterInfo(powered=False), scanning=False)
 
-    assert item.preview_footer == [("[O] Power   [Esc] Back", _theme()["urgent"])]
+    assert item.preview_footer == [("[P] Power   [Esc] Back", _theme()["urgent"])]
 
 
 def test_empty_browsing_nav_item_bluetooth_footer_narrows_when_radio_off():
@@ -1455,3 +1463,191 @@ def test_cancel_hidden_ssid_entry_clears_input_and_state():
 
     assert is_entering_hidden_ssid() is False
     assert apply_hidden_ssid() is None
+
+
+# ---------- _status_dot / _scanning_dot / header status segments ----------
+# The Connectivity header row's own compact "[P]WR ● [S]CAN ○[...]"
+# legend — real Powered/Scanning/(Bluetooth's own Pairable) state,
+# drawn directly in the module's own box (not preview-exclusive), with
+# a built-in key legend: the accent-colored letter in each word IS the
+# actual keybind for that action. See CLAUDE/NOTES/design-decisions.md
+# #module-self-sufficiency-vs-preview for why this belongs in-module.
+
+def test_status_dot_true_is_filled_accent():
+    char, color = _status_dot(_theme(), True)
+
+    assert char == "●"
+    assert color == (_theme()["accent"] | curses.A_BOLD)
+
+
+def test_status_dot_false_is_dim_outline():
+    char, color = _status_dot(_theme(), False)
+
+    assert char == "○"
+    assert color == (_theme()["text"] | curses.A_DIM)
+
+
+def test_status_dot_none_reads_as_off_not_wrongly_on():
+    # Adapter not polled yet — same "unknown reads as off" tolerance
+    # _yes_no() already uses elsewhere in this module.
+    char, color = _status_dot(_theme(), None)
+
+    assert char == "○"
+    assert color == (_theme()["text"] | curses.A_DIM)
+
+
+def test_scanning_dot_false_is_dim_outline():
+    char, color = _scanning_dot(_theme(), False)
+
+    assert char == "○"
+    assert color == (_theme()["text"] | curses.A_DIM)
+
+
+def test_scanning_dot_true_is_filled_and_blinking():
+    # The actual blink color alternates with wall-clock time (see
+    # _pending_blink_style's own docstring) — not asserted exactly
+    # here, just that scanning=True renders the FILLED glyph, unlike
+    # _status_dot's own static on/off pair.
+    char, _color = _scanning_dot(_theme(), True)
+
+    assert char == "●"
+
+
+def test_wifi_header_status_segments_spells_out_pwr_and_scan():
+    segments = _wifi_header_status_segments(_theme(), powered=True, scanning=False, is_controllable=True)
+    text = "".join(t for t, _c in segments)
+
+    assert text == "  [PWR ●] [SCAN ○]"
+
+
+def test_wifi_header_status_segments_accents_only_the_hotkey_letter():
+    # "P" in PWR and "S" in SCAN are the actual wifi_power_toggle/scan
+    # keybind letters (see defaults/config.toml) — accent-colored AND
+    # bold, the rest of each word stays plain, un-bold text color.
+    segments = _wifi_header_status_segments(_theme(), powered=True, scanning=False, is_controllable=True)
+    by_text = {t: c for t, c in segments}
+
+    assert by_text["P"] == (_theme()["accent"] | curses.A_BOLD)
+    assert by_text["WR "] == _theme()["text"]
+    assert by_text["S"] == (_theme()["accent"] | curses.A_BOLD)
+    assert by_text["CAN "] == _theme()["text"]
+
+
+def test_wifi_header_status_segments_dims_everything_until_controllable():
+    # is_controllable=False (level-1 — the collapsed header row merely
+    # selected/hovered, not real level-2 browsing) — Rafi's own call:
+    # the whole legend reads as quiet background info until P/S/A can
+    # actually be pressed, same instinct sessions.py's own dimmed
+    # LOAD/SAVE/DEL/NAME already apply for their own expanded-or-not
+    # state.
+    segments = _wifi_header_status_segments(_theme(), powered=True, scanning=True, is_controllable=False)
+
+    text = "".join(t for t, _c in segments)
+    assert text == "  [PWR ●] [SCAN ●]"  # same text, dots included
+    dim = _theme()["text"] | curses.A_DIM
+    assert all(color == dim for _text, color in segments)
+
+
+def test_bt_header_status_segments_spells_out_pwr_scan_pairable():
+    segments = _bt_header_status_segments(_theme(), powered=True, scanning=False, pairable=True, is_controllable=True)
+    text = "".join(t for t, _c in segments)
+
+    assert text == "  [PWR ●] [SCAN ○] [PAIRABLE ●]"
+
+
+def test_bt_header_status_segments_accents_the_a_in_pairable_not_the_p():
+    # bt_pairable_toggle's own key is "a" — the SECOND character of
+    # "PAIRABLE" gets the accent, not the word's first letter (Rafi's
+    # own explicit call: "obarvi... A v PAIRABLE na accent").
+    segments = _bt_header_status_segments(_theme(), powered=True, scanning=False, pairable=False, is_controllable=True)
+
+    # The word splits into three separate segments: "P", "A", "IRABLE ".
+    idx = [t for t, _c in segments].index("A")
+    assert segments[idx] == ("A", _theme()["accent"] | curses.A_BOLD)
+    assert segments[idx - 1] == ("P", _theme()["text"])
+    assert segments[idx + 1] == ("IRABLE ", _theme()["text"])
+
+
+def test_bt_header_status_segments_dims_everything_until_controllable():
+    segments = _bt_header_status_segments(_theme(), powered=True, scanning=False, pairable=True, is_controllable=False)
+
+    dim = _theme()["text"] | curses.A_DIM
+    assert all(color == dim for _text, color in segments)
+
+
+# ---------- flash_header_action / _is_header_action_flashing ----------
+# A brief accent flash on just ONE bracket group ([PWR ...]/
+# [SCAN ...]/[PAIRABLE ...]) — immediate confirmation a P/S/A keypress
+# landed, distinct from StatusWorker.is_pending()'s own often-too-brief
+# window (see flash_header_action's own docstring for the full "why").
+#
+# _flash_until is module-level state (same "no autouse fixture,
+# resets by hand" convention _browsing_section's own tests already
+# document) — cleared at the top of every test here, since a leftover
+# deadline from an earlier test can otherwise still read as "flashing"
+# under a freshly-mocked clock that happens to reuse the same value.
+
+def test_flash_header_action_is_flashing_immediately_after(monkeypatch):
+    connectivity_module._flash_until.clear()
+    monkeypatch.setattr(connectivity_module.time, "monotonic", lambda: 100.0)
+
+    flash_header_action("wifi", "scan")
+
+    assert _is_header_action_flashing("wifi", "scan") is True
+
+
+def test_flash_header_action_expires_after_the_flash_duration(monkeypatch):
+    connectivity_module._flash_until.clear()
+    now = [100.0]
+    monkeypatch.setattr(connectivity_module.time, "monotonic", lambda: now[0])
+
+    flash_header_action("wifi", "scan")
+    now[0] += 10.0  # well past _FLASH_DURATION_SECONDS
+
+    assert _is_header_action_flashing("wifi", "scan") is False
+
+
+def test_flash_header_action_only_flashes_the_matching_section_and_action(monkeypatch):
+    connectivity_module._flash_until.clear()
+    now = [100.0]
+    monkeypatch.setattr(connectivity_module.time, "monotonic", lambda: now[0])
+
+    flash_header_action("wifi", "power")
+
+    assert _is_header_action_flashing("wifi", "power") is True
+    assert _is_header_action_flashing("wifi", "scan") is False  # different action
+    assert _is_header_action_flashing("bluetooth", "power") is False  # different section
+
+
+def test_is_header_action_flashing_false_when_never_flashed():
+    connectivity_module._flash_until.clear()
+
+    assert _is_header_action_flashing("bluetooth", "pairable") is False
+
+
+def test_wifi_header_status_segments_flashes_only_the_pressed_group():
+    # power_flashing=True must recolor PWR's own group (brackets
+    # included) accent, while SCAN's own group — same "[" text,
+    # different position in the list — stays completely unaffected.
+    # Checked by list position, not a text-keyed dict: both groups
+    # legitimately share segments with identical text ("[", "]"), so a
+    # dict would silently collide and hide exactly the bug this test
+    # exists to catch.
+    segments = _wifi_header_status_segments(
+        _theme(), powered=True, scanning=False, is_controllable=True,
+        power_flashing=True, scan_flashing=False,
+    )
+    flash_color = _theme()["accent"] | curses.A_BOLD
+
+    # segments[0] is the leading "  ", segments[1:6] is PWR's own
+    # 5-piece group ("[", "P", "WR ", dot, "]"), segments[6] is the
+    # inter-group " ", segments[7:12] is SCAN's own group.
+    assert all(color == flash_color for _text, color in segments[1:6])
+    # SCAN's own dot specifically (segments[7:12][3]) — scanning=False
+    # means it's the plain dim outline, never accent-colored under any
+    # non-flashing circumstance, unlike the "S" hotkey letter right
+    # next to it (already accent+bold even unflashed, so checking that
+    # one wouldn't actually prove anything).
+    scan_dot_text, scan_dot_color = segments[7:12][3]
+    assert scan_dot_text == "○"
+    assert scan_dot_color != flash_color

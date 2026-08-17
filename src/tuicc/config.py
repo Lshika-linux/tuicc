@@ -638,9 +638,12 @@ def load_config(preset_override: int | None = None) -> Config:
     # hidden/power-toggle keys.
     keybinds.setdefault("wifi_forget", resolve_key("d"))
     keybinds.setdefault("wifi_connect_hidden", resolve_key("n"))
-    keybinds.setdefault("wifi_power_toggle", resolve_key("o"))
+    keybinds.setdefault("wifi_power_toggle", resolve_key("p"))
     # Same reasoning again — Bluetooth's own power/pairable toggles,
-    # added after wifi's own three above.
+    # added after wifi's own three above. bt_power_toggle deliberately
+    # matches wifi_power_toggle's own "p" (see defaults/config.toml's
+    # own comment) — the header row's "[P]WR"/"P[A]IRABLE" legend needs
+    # one shared letter to read correctly for both sections at once.
     keybinds.setdefault("bt_power_toggle", resolve_key("p"))
     keybinds.setdefault("bt_pairable_toggle", resolve_key("a"))
 

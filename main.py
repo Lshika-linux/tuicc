@@ -124,6 +124,7 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
             status_worker.request_action("wifi", "scan", None)
         else:
             status_worker.request_action("bluetooth", "discover", None)
+        connectivity_mode.flash_header_action(section, "scan")
         return True
     # wifi-only keys below — forgetting/hidden-connect are wifi
     # concepts, no bluetooth equivalent was asked for (see this
@@ -153,6 +154,7 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         adapter = status_worker.get("wifi_adapter")
         if adapter is not None and adapter.powered is not None:
             status_worker.request_action("wifi", "set_powered", not adapter.powered, pending_key="power")
+            connectivity_mode.flash_header_action(section, "power")
         return True
     # Bluetooth's own equivalents, added 2026-08-16 mirroring the wifi
     # branch above exactly (same pending_key="power" reasoning) — plus
@@ -161,11 +163,13 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         adapter = status_worker.get("bluetooth_adapter")
         if adapter is not None and adapter.powered is not None:
             status_worker.request_action("bluetooth", "set_powered", not adapter.powered, pending_key="power")
+            connectivity_mode.flash_header_action(section, "power")
         return True
     if section == "bluetooth" and key == cfg.keybinds["bt_pairable_toggle"]:
         adapter = status_worker.get("bluetooth_adapter")
         if adapter is not None and adapter.pairable is not None:
             status_worker.request_action("bluetooth", "set_pairable", not adapter.pairable, pending_key="pairable")
+            connectivity_mode.flash_header_action(section, "pairable")
         return True
     items = status_worker.get(section) or []
     if key == cfg.keybinds["confirm"] and items and loop_state.selected_id:
