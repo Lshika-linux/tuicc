@@ -75,6 +75,8 @@ This is an early project of mine — what I'm excited about is that it's theoret
 
 ## Try it 
 
+!!! CURRENTLY MANUAL INTERVENTION IS NEEDED, RWB MODULE BLOCKS LAUNCHING IT. COMMENT IT OUT IN ~/.config/tuicc/presets/1.toml before launching !!!
+
 ```bash
 git clone https://github.com/Lshika-linux/tuicc
 cd tuicc
