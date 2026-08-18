@@ -5,7 +5,7 @@ from pathlib import Path
 
 from i3ipc import Con
 
-from tuicc.providers.sway import parse_tree, MARK_PREFIX
+from tuicc.providers.sway import parse_tree, MARK_PREFIX, _stale_self_marks
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -59,11 +59,11 @@ def _tree_with_windows(tiled=(), floating=()):
     }, None, None)
 
 
-def _leaf(id_, marks=(), floating_type=False):
+def _leaf(id_, marks=(), floating_type=False, pid=None):
     return {
         "id": id_, "type": "floating_con" if floating_type else "con",
         "app_id": "kitty", "name": f"window-{id_}",
-        "focused": False, "marks": list(marks),
+        "focused": False, "marks": list(marks), "pid": pid,
         "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
     }
 
@@ -114,3 +114,51 @@ def test_two_different_tuicc_instances_both_get_excluded():
     state = parse_tree(tree)
     windows = [w for r in state.regions for w in r.windows]
     assert [w.id for w in windows] == ["40"]
+
+
+# ---------- _stale_self_marks ----------
+
+def test_stale_self_marks_flags_a_mark_on_the_wrong_window():
+    # The actual live bug: a mark whose embedded pid (111) belongs to
+    # some OTHER, long-gone tuicc process — but the window it's
+    # actually sitting on has a completely different real pid (9219,
+    # an unrelated app).
+    tree = _tree_with_windows(tiled=[_leaf(50, marks=[f"{MARK_PREFIX}111"], pid=9219)])
+    assert _stale_self_marks(tree) == [("50", f"{MARK_PREFIX}111")]
+
+
+def test_stale_self_marks_leaves_a_correctly_matched_mark_alone():
+    # A legitimate self-mark: the embedded pid IS this window's own
+    # real pid — exactly what mark_self() produces under normal
+    # operation.
+    tree = _tree_with_windows(tiled=[_leaf(51, marks=[f"{MARK_PREFIX}111"], pid=111)])
+    assert _stale_self_marks(tree) == []
+
+
+def test_stale_self_marks_ignores_marks_that_are_not_tuiccs_own():
+    tree = _tree_with_windows(tiled=[_leaf(52, marks=["some-other-mark"], pid=9219)])
+    assert _stale_self_marks(tree) == []
+
+
+def test_stale_self_marks_ignores_a_malformed_pid_suffix():
+    # Shouldn't happen in practice (tuicc always suffixes with a real
+    # int pid), but a non-numeric suffix must not crash this — just
+    # isn't ours to touch.
+    tree = _tree_with_windows(tiled=[_leaf(53, marks=[f"{MARK_PREFIX}not-a-pid"], pid=9219)])
+    assert _stale_self_marks(tree) == []
+
+
+def test_stale_self_marks_checks_floating_windows_too():
+    tree = _tree_with_windows(floating=[
+        _leaf(54, marks=[f"{MARK_PREFIX}111"], pid=9219, floating_type=True),
+    ])
+    assert _stale_self_marks(tree) == [("54", f"{MARK_PREFIX}111")]
+
+
+def test_stale_self_marks_finds_multiple_across_the_tree():
+    tree = _tree_with_windows(tiled=[
+        _leaf(55, marks=[f"{MARK_PREFIX}111"], pid=9219),  # stale
+        _leaf(56, marks=[f"{MARK_PREFIX}222"], pid=222),   # legitimate
+        _leaf(57, marks=[f"{MARK_PREFIX}333"], pid=9220),  # stale
+    ])
+    assert _stale_self_marks(tree) == [("55", f"{MARK_PREFIX}111"), ("57", f"{MARK_PREFIX}333")]

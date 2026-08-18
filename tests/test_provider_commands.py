@@ -10,18 +10,24 @@ tests already use for the identical class of external-tool boundary.
 
 import subprocess
 
+from i3ipc import Con
+
 import tuicc.providers.sway as sway_module
 import tuicc.providers.i3 as i3_module
-from tuicc.providers.sway import SwayProvider
-from tuicc.providers.i3 import I3Provider
+from tuicc.providers.sway import SwayProvider, MARK_PREFIX as SWAY_MARK_PREFIX
+from tuicc.providers.i3 import I3Provider, MARK_PREFIX as I3_MARK_PREFIX
 
 
 class FakeConnection:
-    def __init__(self):
+    def __init__(self, tree=None):
         self.commands = []
+        self._tree = tree
 
     def command(self, cmd):
         self.commands.append(cmd)
+
+    def get_tree(self):
+        return self._tree
 
 
 def test_sway_move_window_to_region():
@@ -329,3 +335,85 @@ def test_i3_copy_to_clipboard_missing_binary_returns_false(monkeypatch):
     provider = I3Provider(conn=FakeConnection())
 
     assert provider.copy_to_clipboard("hello") is False
+
+
+# ---------- cleanup_stale_self_marks ----------
+
+def _sway_tree_with_leaf(marks=(), pid=None, id_=99):
+    return Con({
+        "id": 1, "type": "root",
+        "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+        "nodes": [{
+            "id": 2, "type": "workspace", "num": 1, "name": "1",
+            "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+            "floating_nodes": [],
+            "nodes": [{
+                "id": id_, "type": "con", "app_id": "kitty", "name": "w",
+                "focused": False, "marks": list(marks), "pid": pid,
+                "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+            }],
+        }],
+    }, None, None)
+
+
+def test_sway_cleanup_stale_self_marks_unmarks_the_wrong_window():
+    # The actual live bug: mark_self()'s focus-race fallback left a
+    # stale mark (embedded pid 111, some earlier/dead tuicc process) on
+    # an unrelated window (real pid 9219) — cleanup_stale_self_marks()
+    # is what's supposed to strip exactly this.
+    tree = _sway_tree_with_leaf(marks=[f"{SWAY_MARK_PREFIX}111"], pid=9219, id_=50)
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    provider.cleanup_stale_self_marks()
+
+    assert conn.commands == [f"[con_id=50] unmark {SWAY_MARK_PREFIX}111"]
+
+
+def test_sway_cleanup_stale_self_marks_leaves_a_legitimate_mark_alone():
+    tree = _sway_tree_with_leaf(marks=[f"{SWAY_MARK_PREFIX}111"], pid=111, id_=51)
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    provider.cleanup_stale_self_marks()
+
+    assert conn.commands == []
+
+
+def _i3_tree_with_leaf(marks=(), window=None, id_=99):
+    return Con({
+        "id": 1, "type": "root",
+        "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+        "nodes": [{
+            "id": 2, "type": "workspace", "num": 1, "name": "1",
+            "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+            "floating_nodes": [],
+            "nodes": [{
+                "id": id_, "type": "con", "app_id": None, "window_class": "XTerm",
+                "name": "w", "focused": False, "marks": list(marks), "window": window,
+                "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+            }],
+        }],
+    }, None, None)
+
+
+def test_i3_cleanup_stale_self_marks_unmarks_the_wrong_window(monkeypatch):
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: 9219)
+    tree = _i3_tree_with_leaf(marks=[f"{I3_MARK_PREFIX}111"], window=555, id_=50)
+    conn = FakeConnection(tree=tree)
+    provider = I3Provider(conn=conn)
+
+    provider.cleanup_stale_self_marks()
+
+    assert conn.commands == [f"[con_id=50] unmark {I3_MARK_PREFIX}111"]
+
+
+def test_i3_cleanup_stale_self_marks_leaves_a_legitimate_mark_alone(monkeypatch):
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: 111)
+    tree = _i3_tree_with_leaf(marks=[f"{I3_MARK_PREFIX}111"], window=555, id_=51)
+    conn = FakeConnection(tree=tree)
+    provider = I3Provider(conn=conn)
+
+    provider.cleanup_stale_self_marks()
+
+    assert conn.commands == []

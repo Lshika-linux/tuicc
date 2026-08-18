@@ -48,6 +48,39 @@ def _is_tuicc_self(leaf) -> bool:
     return any(m.startswith(MARK_PREFIX) for m in leaf.marks)
 
 
+def _stale_self_marks(tree) -> list:
+    """(window_id, mark) pairs for every _tuicc_self_<pid> mark whose
+    embedded pid does NOT match the window it's actually sitting on —
+    the checkable signature of mark_self()'s own focus-race fallback
+    mismarking an unrelated window (see that method's own docstring,
+    and cleanup_stale_self_marks() below). The pid embedded in a
+    LEGITIMATE tuicc self-mark is always that tuicc process's own pid
+    — since sway reports each window's real owning pid directly
+    (unlike i3, see that provider's own comment on this), a real
+    mismatch here is unambiguous: no liveness probing needed, no
+    guessing. Pure function (walks a tree, returns data, no IPC) so
+    it's testable against a synthetic/recorded tree, same as
+    parse_tree() itself — cleanup_stale_self_marks() is the thin,
+    IPC-issuing wrapper around this.
+    """
+    stale = []
+
+    def walk(node):
+        for mark in node.marks:
+            if mark.startswith(MARK_PREFIX):
+                try:
+                    mark_pid = int(mark[len(MARK_PREFIX):])
+                except ValueError:
+                    continue  # not this format at all — not ours to touch
+                if node.pid != mark_pid:
+                    stale.append((str(node.id), mark))
+        for child in node.nodes + node.floating_nodes:
+            walk(child)
+
+    walk(tree)
+    return stale
+
+
 def parse_tree(tree) -> WMState:
     """Convert an i3ipc tree into tuicc's generic WMState.
     
@@ -117,6 +150,11 @@ class SwayProvider(Provider):
         # concrete failure mode and why setting self_app_id sidesteps it
         # entirely (see defaults/config.toml's own comment on it).
         self.conn.command(f"mark --add {mark}")
+
+    def cleanup_stale_self_marks(self) -> None:
+        tree = self.conn.get_tree()
+        for window_id, mark in _stale_self_marks(tree):
+            self.conn.command(f"[con_id={window_id}] unmark {mark}")
 
     def dismiss_self(self) -> None:
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")

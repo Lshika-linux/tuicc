@@ -53,6 +53,24 @@ class Provider(ABC):
         """
         pass
 
+    def cleanup_stale_self_marks(self) -> None:
+        """Strips a _tuicc_self_<pid> mark sitting on the WRONG window —
+        the concrete, checkable damage mark_self()'s known focus-race
+        fallback can leave behind (see that method's own docstring): an
+        earlier tuicc launch raced against whatever was focused at that
+        moment and marked an unrelated window instead of its own,
+        leaving that window silently excluded from get_state() forever
+        after (found live, confirmed: a stray mark from an earlier test
+        launch hid a real, unrelated app from tuicc's own sidebar/
+        preview with no error anywhere). Called once at startup, BEFORE
+        mark_self() marks the current instance's own window, so a
+        leftover bad mark from a previous run never gets the chance to
+        keep hiding an unrelated window this session. Optional, default
+        no-op: sway/i3 both implement it via the same mark mechanism
+        mark_self()/dismiss_self() already use.
+        """
+        pass
+
     def dismiss_self(self) -> None:
         """Hide tuicc's own window without ending the process — see
         CLAUDE/NOTES/design-decisions.md#dismiss-vs-quit. Optional,

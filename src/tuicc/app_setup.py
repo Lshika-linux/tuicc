@@ -94,6 +94,12 @@ def build_app(preset_override: int | None = None) -> AppContext:
         cfg.control_toggles, len(theme_pairs) + 1, cfg.theme.get("background", -1)
     )
     provider = build_provider(cfg.provider_name)
+    # Before this instance marks its OWN window — see
+    # Provider.cleanup_stale_self_marks()'s own docstring for why a
+    # leftover bad mark from an earlier, crashed/killed launch has to
+    # be swept up before it can keep hiding an unrelated window this
+    # session too.
+    provider.cleanup_stale_self_marks()
     provider.mark_self(cfg.self_app_id)
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)

@@ -91,6 +91,42 @@ def _is_tuicc_self(leaf) -> bool:
     return any(m.startswith(MARK_PREFIX) for m in leaf.marks)
 
 
+def _stale_self_marks(tree) -> list:
+    """(window_id, mark) pairs for every _tuicc_self_<pid> mark whose
+    embedded pid does NOT match the window it's actually sitting on —
+    same concept as sway.py's own version of this function (see its
+    docstring for the full "why" — the checkable signature of
+    mark_self()'s focus-race fallback mismarking an unrelated window),
+    but i3's own GET_TREE has no pid field to cross-check against (see
+    _leaf_to_window's own comment on this), so this one falls back to
+    _x11_pid_for_window()'s on-demand X11 lookup per marked window
+    found — the same source Provider.resolve_pid() already uses for
+    this WM, not a second, separate mechanism. A lookup failure (no
+    DISPLAY, window already gone, client never set the EWMH hint) is
+    treated as INCONCLUSIVE, not "stale" — a mark is only ever removed
+    here on a real, positive pid mismatch, never on "couldn't tell",
+    since wrongly stripping a legitimate mark is worse than leaving a
+    genuinely stale one in place one cycle longer.
+    """
+    stale = []
+
+    def walk(node):
+        for mark in node.marks:
+            if mark.startswith(MARK_PREFIX):
+                try:
+                    mark_pid = int(mark[len(MARK_PREFIX):])
+                except ValueError:
+                    continue  # not this format at all — not ours to touch
+                real_pid = _x11_pid_for_window(node.window) if node.window else None
+                if real_pid is not None and real_pid != mark_pid:
+                    stale.append((str(node.id), mark))
+        for child in node.nodes + node.floating_nodes:
+            walk(child)
+
+    walk(tree)
+    return stale
+
+
 def parse_tree(tree) -> WMState:
     """Convert an i3ipc tree into tuicc's generic WMState.
 
@@ -170,6 +206,11 @@ class I3Provider(Provider):
         # concrete failure mode and why setting self_app_id sidesteps it
         # entirely (see defaults/config.toml's own comment on it).
         self.conn.command(f"mark --add {mark}")
+
+    def cleanup_stale_self_marks(self) -> None:
+        tree = self.conn.get_tree()
+        for window_id, mark in _stale_self_marks(tree):
+            self.conn.command(f"[con_id={window_id}] unmark {mark}")
 
     def dismiss_self(self) -> None:
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")

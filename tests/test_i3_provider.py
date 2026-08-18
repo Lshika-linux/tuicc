@@ -5,7 +5,8 @@ from pathlib import Path
 
 from i3ipc import Con
 
-from tuicc.providers.i3 import parse_tree, MARK_PREFIX
+import tuicc.providers.i3 as i3_module
+from tuicc.providers.i3 import parse_tree, MARK_PREFIX, _stale_self_marks
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -155,3 +156,55 @@ def test_two_different_tuicc_instances_both_get_excluded():
     state = parse_tree(tree)
     windows = [w for r in state.regions for w in r.windows]
     assert [w.id for w in windows] == ["40"]
+
+
+# ---------- _stale_self_marks ----------
+#
+# i3's own GET_TREE has no pid field (see _leaf_to_window's own comment
+# on this) — _stale_self_marks falls back to _x11_pid_for_window()'s
+# on-demand X11 lookup, monkeypatched here so these tests don't need a
+# real X server. window=<some int> stands in for the X11 window id
+# _x11_pid_for_window() would be called with.
+
+def _leaf_with_window(id_, marks=(), window=None):
+    return {
+        "id": id_, "type": "con", "app_id": None, "window_class": "XTerm",
+        "name": f"window-{id_}", "focused": False, "marks": list(marks),
+        "window": window,
+        "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+    }
+
+
+def test_stale_self_marks_flags_a_mark_on_the_wrong_window(monkeypatch):
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: 9219)
+    tree = _tree_with_windows(tiled=[_leaf_with_window(50, marks=[f"{MARK_PREFIX}111"], window=555)])
+    assert _stale_self_marks(tree) == [("50", f"{MARK_PREFIX}111")]
+
+
+def test_stale_self_marks_leaves_a_correctly_matched_mark_alone(monkeypatch):
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: 111)
+    tree = _tree_with_windows(tiled=[_leaf_with_window(51, marks=[f"{MARK_PREFIX}111"], window=555)])
+    assert _stale_self_marks(tree) == []
+
+
+def test_stale_self_marks_treats_a_failed_x11_lookup_as_inconclusive_not_stale(monkeypatch):
+    # A real, unavoidable gap on i3 (no DISPLAY, window already gone, a
+    # client that never set the EWMH hint) — must not wrongly strip a
+    # possibly-legitimate mark just because the lookup itself failed.
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: None)
+    tree = _tree_with_windows(tiled=[_leaf_with_window(52, marks=[f"{MARK_PREFIX}111"], window=555)])
+    assert _stale_self_marks(tree) == []
+
+
+def test_stale_self_marks_skips_a_window_with_no_x11_window_id(monkeypatch):
+    calls = []
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: calls.append(xid) or 9219)
+    tree = _tree_with_windows(tiled=[_leaf_with_window(53, marks=[f"{MARK_PREFIX}111"], window=None)])
+    assert _stale_self_marks(tree) == []
+    assert calls == []  # never even attempted the lookup
+
+
+def test_stale_self_marks_ignores_marks_that_are_not_tuiccs_own(monkeypatch):
+    monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: 9219)
+    tree = _tree_with_windows(tiled=[_leaf_with_window(54, marks=["some-other-mark"], window=555)])
+    assert _stale_self_marks(tree) == []
