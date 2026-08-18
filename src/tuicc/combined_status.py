@@ -45,6 +45,25 @@ class CombinedStatus:
         # be "first".
         return self._owner.get(domain_name, self._pull)
 
+    def domain_names(self) -> set:
+        """Every domain name registered with EITHER underlying worker —
+        the combined view neither one has on its own. Exists so a
+        module backing a genuinely optional domain (weather.py's own
+        "weather" — only registered when [weather] is configured, see
+        app_setup.py) can check "is this even registered" before
+        calling get()/get_error() on it, instead of assuming an absent
+        domain safely returns None the way a registered-but-not-yet-
+        polled one does. Found live: it didn't — get()/get_error() on
+        an unregistered name hit StatusWorker's own direct dict
+        indexing (self._snapshots[domain_name]) and raised a bare
+        KeyError, crashing rwb.py's draw() on every single frame for
+        anyone running the packaged default config as-is (weather
+        commented out, exactly the documented fresh-install state) —
+        not a rare edge case, the literal default. modules/rwb.py is
+        the one real caller of this method today.
+        """
+        return set(self._owner.keys())
+
     def start(self):
         self._pull.start()
         self._push.start()

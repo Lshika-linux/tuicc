@@ -16,6 +16,8 @@ either way a fixed sleep would be.
 
 import time
 
+import pytest
+
 from tuicc.status_worker import StatusWorker, Domain
 
 
@@ -30,6 +32,42 @@ def _wait_until(predicate, timeout=2.0, interval=0.01):
             return True
         time.sleep(interval)
     return predicate()
+
+
+# ---------- get/get_error on a name never registered ----------
+#
+# Deliberately raises (direct dict indexing, not .get()-with-default) —
+# CombinedStatus._worker_for()'s own docstring treats an unregistered
+# domain name as a caller bug that should stay loud, not degrade
+# silently. That's the right default for domains that are ALWAYS
+# registered (wifi/bluetooth/audio/...), but wrong for a genuinely
+# OPTIONAL one (weather.py's "weather", only added when [weather] is
+# configured — see app_setup.py). Found live: modules/rwb.py called
+# .get("weather") unconditionally, assuming it would safely return
+# None the way a registered-but-not-yet-polled domain does — instead
+# this KeyError crashed draw() on every frame for the packaged default
+# config as shipped (weather commented out). The fix is
+# domain_names() (StatusWorker's own, and combined_status.py's new
+# passthrough) — check membership BEFORE calling get()/get_error(),
+# never assume; these two tests document the exact crash a caller
+# skips by doing that.
+
+def test_get_raises_for_a_name_never_registered():
+    worker = StatusWorker([_domain("wifi")])
+    with pytest.raises(KeyError):
+        worker.get("weather")
+
+
+def test_get_error_raises_for_a_name_never_registered():
+    worker = StatusWorker([_domain("wifi")])
+    with pytest.raises(KeyError):
+        worker.get_error("weather")
+
+
+def test_domain_names_omits_a_name_never_registered():
+    worker = StatusWorker([_domain("wifi")])
+    assert "weather" not in worker.domain_names()
+    assert "wifi" in worker.domain_names()
 
 
 # ---------- pending tracking (no thread started) ----------

@@ -30,9 +30,18 @@ def _weather_line(ctx):
     configured" (draw nothing) from "configured but erroring" (draw a
     visible ⚠) — never a guessed value in either case, same discipline
     as bars.py's own BarSpec.urgent handling.
+
+    The domain_names() check below is load-bearing, not defensive
+    hygiene: ctx.status.get()/get_error() raise a bare KeyError for a
+    domain that was never registered (StatusWorker's own direct dict
+    indexing) — "weather" only IS registered when [weather] is
+    configured, so calling .get("weather") unconditionally crashed
+    draw() on every frame for anyone running the packaged default
+    as-is. Found live, confirmed via a fresh-clone repro matching the
+    README's own "Try it" instructions exactly.
     """
     theme = ctx.theme or {}
-    if ctx.status is None:
+    if ctx.status is None or "weather" not in ctx.status.domain_names():
         return None, 0
     weather = ctx.status.get("weather")
     error = ctx.status.get_error("weather")
@@ -61,7 +70,7 @@ def _build_weather_preview(ctx) -> list[tuple[str, int]] | None:
     day-by-day outlook strip on another, not interleaved.
     """
     theme = ctx.theme or {}
-    if ctx.status is None:
+    if ctx.status is None or "weather" not in ctx.status.domain_names():
         return None
     weather = ctx.status.get("weather")
     error = ctx.status.get_error("weather")

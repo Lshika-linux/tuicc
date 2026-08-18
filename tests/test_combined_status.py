@@ -84,6 +84,25 @@ def test_no_overlap_constructs_fine():
     assert combined is not None
 
 
+# ---------- domain_names ----------
+
+def test_domain_names_combines_both_workers():
+    combined, pull, push = _combined(pull_names=("wifi", "bluetooth"), push_names=("battery",))
+    assert combined.domain_names() == {"wifi", "bluetooth", "battery"}
+
+
+def test_domain_names_lets_a_caller_check_before_querying_an_optional_domain():
+    # The actual regression this exists to prevent: a domain that's
+    # only SOMETIMES registered (weather.py's own "weather", only
+    # added when [weather] is configured — see app_setup.py) must be
+    # checkable without calling get()/get_error() first, since those
+    # raise for a name neither worker ever registered (see
+    # test_get_raises_for_a_name_neither_worker_registered below).
+    combined, pull, push = _combined(pull_names=("wifi",), push_names=("battery",))
+    assert "weather" not in combined.domain_names()
+    assert "wifi" in combined.domain_names()
+
+
 # ---------- routing: get/get_error/get_action_error/is_pending ----------
 
 def test_get_routes_to_the_owning_worker():
