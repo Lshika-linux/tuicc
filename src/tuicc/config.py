@@ -170,12 +170,34 @@ def build_layout_from_preset(preset_number: int) -> Layout:
 
     boxes = []
     for box_data in data["box"]:
+        w = box_data.get("w")
+        fw = box_data.get("fw")
+        h = box_data.get("h")
+        fh = box_data.get("fh")
+        # Exactly one of w/fw, and independently exactly one of h/fh —
+        # see layout.py's own module docstring for why a box's
+        # width/height can't silently mean two things at once, or
+        # nothing at all, on either axis.
+        if (w is None) == (fw is None):
+            raise ValueError(
+                f"box {box_data['name']!r} in preset {preset_number} needs "
+                f"exactly one of w (ratio) or fw (fixed columns), not "
+                f"{'both' if w is not None else 'neither'}"
+            )
+        if (h is None) == (fh is None):
+            raise ValueError(
+                f"box {box_data['name']!r} in preset {preset_number} needs "
+                f"exactly one of h (ratio) or fh (fixed rows), not "
+                f"{'both' if h is not None else 'neither'}"
+            )
         box = ModuleBox(
             name=box_data["name"],
             x=box_data["x"],
             y=box_data["y"],
-            w=box_data["w"],
-            h=box_data["h"],
+            w=w,
+            fw=fw,
+            h=h,
+            fh=fh,
         )
         boxes.append(box)
 

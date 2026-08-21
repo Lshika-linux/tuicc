@@ -7,6 +7,7 @@ import pytest
 
 from tuicc.layout import ModuleBox
 from tuicc.resize_mode import (
+    MIN_CELLS,
     enter_resize,
     resize_step,
     move_step,
@@ -63,7 +64,7 @@ def test_enter_resize_snapshots_x_y_w_h():
 
     snapshot = enter_resize(box)
 
-    assert snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6}
+    assert snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6, "fw": None, "fh": None}
 
 
 def test_cancel_resize_restores_the_snapshot():
@@ -126,6 +127,102 @@ def test_resize_step_clamps_at_terminal_edge():
     resize_step(box, "w", grow=True, term_width=100, term_height=40, x_cells=90, y_cells=0)
 
     assert box.w == pytest.approx(0.1)  # (100 - 90) / 100
+
+
+# ---------- resize_step: fh (fixed rows) boxes ----------
+
+def test_resize_step_grows_fh_by_one_cell_not_a_ratio():
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=10)
+
+    resize_step(box, "h", grow=True, term_width=100, term_height=40, x_cells=0, y_cells=20)
+
+    assert box.fh == 11
+    assert box.h is None  # never silently converted to a ratio
+
+
+def test_resize_step_shrinks_fh_by_one_cell():
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=10)
+
+    resize_step(box, "h", grow=False, term_width=100, term_height=40, x_cells=0, y_cells=20)
+
+    assert box.fh == 9
+
+
+def test_resize_step_fh_clamps_at_minimum():
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=MIN_CELLS)
+
+    resize_step(box, "h", grow=False, term_width=100, term_height=40, x_cells=0, y_cells=20)
+
+    assert box.fh == MIN_CELLS
+
+
+def test_resize_step_fh_clamps_at_terminal_edge():
+    # y_cells=35 in a 40-row terminal — at most 5 more rows before
+    # running off the bottom, same edge-clamp reasoning as the ratio
+    # case above.
+    box = ModuleBox(name="control", x=0.0, y=0.875, w=0.2, h=None, fh=5)
+
+    resize_step(box, "h", grow=True, term_width=100, term_height=40, x_cells=0, y_cells=35)
+
+    assert box.fh == 5  # already at the max (40 - 35), can't grow further
+
+
+def test_resize_step_w_is_unaffected_by_fh():
+    # w stays a plain ratio regardless of whether h uses fh — each
+    # dimension's fixed/ratio choice is independent (see layout.py's
+    # own module docstring).
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=10)
+
+    resize_step(box, "w", grow=True, term_width=100, term_height=40, x_cells=0, y_cells=20)
+
+    assert box.w == pytest.approx(0.21)
+    assert box.fh == 10  # untouched
+
+
+# ---------- resize_step: fw (fixed columns) boxes ----------
+
+def test_resize_step_grows_fw_by_one_cell_not_a_ratio():
+    box = ModuleBox(name="bars", x=0.9, y=0.0, w=None, fw=8, h=0.7)
+
+    resize_step(box, "w", grow=True, term_width=100, term_height=40, x_cells=90, y_cells=0)
+
+    assert box.fw == 9
+    assert box.w is None  # never silently converted to a ratio
+
+
+def test_resize_step_shrinks_fw_by_one_cell():
+    box = ModuleBox(name="bars", x=0.9, y=0.0, w=None, fw=8, h=0.7)
+
+    resize_step(box, "w", grow=False, term_width=100, term_height=40, x_cells=90, y_cells=0)
+
+    assert box.fw == 7
+
+
+def test_resize_step_fw_clamps_at_minimum():
+    box = ModuleBox(name="bars", x=0.9, y=0.0, w=None, fw=MIN_CELLS, h=0.7)
+
+    resize_step(box, "w", grow=False, term_width=100, term_height=40, x_cells=90, y_cells=0)
+
+    assert box.fw == MIN_CELLS
+
+
+def test_resize_step_fw_clamps_at_terminal_edge():
+    # x_cells=97 in a 100-col terminal — at most 3 more columns before
+    # running off the right edge.
+    box = ModuleBox(name="bars", x=0.97, y=0.0, w=None, fw=3, h=0.7)
+
+    resize_step(box, "w", grow=True, term_width=100, term_height=40, x_cells=97, y_cells=0)
+
+    assert box.fw == 3  # already at the max (100 - 97), can't grow further
+
+
+def test_resize_step_h_is_unaffected_by_fw():
+    box = ModuleBox(name="bars", x=0.9, y=0.0, w=None, fw=8, h=0.7)
+
+    resize_step(box, "h", grow=True, term_width=100, term_height=40, x_cells=90, y_cells=0)
+
+    assert box.h == pytest.approx(0.725)
+    assert box.fw == 8  # untouched
 
 
 # ---------- move_step ----------
@@ -234,7 +331,7 @@ def test_enter_box_editing_snapshots_and_activates():
     assert state.active is True
     assert state.editing is True
     assert state.box is box
-    assert state.snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6}
+    assert state.snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6, "fw": None, "fh": None}
     assert state.dimension == "size"
     assert state.is_new_box is False
 

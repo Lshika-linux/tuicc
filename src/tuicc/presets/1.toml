@@ -1,14 +1,37 @@
 # Layout preset — defines where each panel sits on screen.
 #
-# Every box needs a name and x/y/w/h, each a ratio (0.0-1.0) of the
-# terminal's width (x, w) or height (y, h):
+# Every box needs a name, x/y (always a 0.0-1.0 ratio of the terminal's
+# width/height — top-left corner position), EXACTLY ONE of w or fw for
+# width, and EXACTLY ONE of h or fh for height — the two axes are
+# entirely independent, a box can mix ratio on one and fixed on the
+# other freely:
 #
-#   x, y = top-left corner position
-#   w, h = size
+#   w/h   = ratio (0.0-1.0), scales with the terminal
+#   fw/fh = fixed columns/rows — an absolute terminal-cell count, never scaled
 #
-# Boxes are completely independent — nothing here coordinates with
-# anything else. Resizing or repositioning one box never moves or
-# resizes another; what you configure is exactly what renders, always.
+# Most boxes below use fh: a module with a specific row count of real
+# content (control's toggle list, connectivity/media/sysmon's tables,
+# sessions/power_menu/launcher/rwb's own compact strips) needs THAT
+# MANY rows to look right — fewer and content gets clipped/unusable,
+# more and it's just wasted empty space, so scaling it proportionally
+# with the terminal is actively wrong. bars is the fw case: its
+# vertical gauges are meant to grow/shrink with the screen (stays ratio
+# height), but want an exact, unchanging COLUMN count to look right
+# regardless of terminal size — same reasoning as fh, just the other
+# axis. sidebar/preview stay ratio on both axes — they're the genuinely
+# elastic boxes, meant to grow/shrink with the screen entirely.
+#
+# Boxes are mostly independent, with three deliberate exceptions worked
+# out live (see layout_engine.py's own module docstring for the exact
+# algorithms): a fixed (fh/fw) box holds its own edge against the
+# terminal rather than getting clipped; a ratio box shrinks just enough
+# to stop intruding into a neighbor rather than overlapping it (down to
+# 0 size — simply not drawn — if truly squeezed out); and two fixed
+# boxes stacked directly against each other (like control/power_menu)
+# chain so the upper one sits flush above the lower rather than both
+# independently claiming the terminal's own edge. None of this changes
+# what you configure — it only affects what actually renders on a
+# terminal size different from the one a box was set up on.
 #
 # If a box looks wrong on a terminal size very different from the one
 # you set it up on, that's expected, not a bug — use tuicc's own
@@ -42,13 +65,20 @@
 # launcher fills the top strip with rwb in the corner, preview
 # dominates the center, bars runs the full height on the right edge,
 # and connectivity/media/sysmon share the bottom row.
+#
+# Every fh value below is that box's own real row count, and bars' fw
+# is its own real column count, on Rafi's own daily terminal (51 rows,
+# 192 cols) — converted from this preset's own previous ratio values
+# (every one of them landed on an exact integer against that size,
+# confirming that's genuinely what they were already tuned against by
+# hand, not a guess made converting them).
 
 [[box]]
 name = "sessions"
 x = 0.0
 y = 0.0
 w = 0.1875
-h = 0.098039
+fh = 5
 
 [[box]]
 name = "sidebar"
@@ -62,21 +92,21 @@ name = "control"
 x = 0.0
 y = 0.72549
 w = 0.189583
-h = 0.156863
+fh = 8
 
 [[box]]
 name = "power_menu"
 x = 0.0
 y = 0.882353
 w = 0.1875
-h = 0.117647
+fh = 6
 
 [[box]]
 name = "launcher"
 x = 0.1875
 y = 0.0
 w = 0.734375
-h = 0.078431
+fh = 4
 
 [[box]]
 name = "preview"
@@ -90,32 +120,32 @@ name = "connectivity"
 x = 0.1875
 y = 0.784314
 w = 0.197917
-h = 0.215686
+fh = 11
 
 [[box]]
 name = "media"
 x = 0.384375
 y = 0.784314
 w = 0.314583
-h = 0.215686
+fh = 11
 
 [[box]]
 name = "sysmon"
 x = 0.697917
 y = 0.784314
 w = 0.302083
-h = 0.215686
+fh = 11
 
 [[box]]
 name = "rwb"
 x = 0.921875
 y = 0.0
 w = 0.078125
-h = 0.082353
+fh = 4
 
 [[box]]
 name = "bars"
 x = 0.920833
 y = 0.086275
-w = 0.078125
+fw = 15
 h = 0.709804

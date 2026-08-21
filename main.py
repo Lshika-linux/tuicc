@@ -730,7 +730,7 @@ def main(stdscr):
                 # be the literal last thing drawn on its top/bottom
                 # rows this frame, not merely correctly drawn at some
                 # point during it.
-                if "sidebar" in boxes:
+                if "sidebar" in boxes and boxes["sidebar"][2] > 0 and boxes["sidebar"][3] > 0:
                     sidebar_mode.draw_hidden_indicators(stdscr, boxes["sidebar"], ctx, "sidebar")
 
                 if resize.editing and loop_state.active_module in boxes:

@@ -5,7 +5,11 @@ these tests catch a violation of that rule (e.g. a module registered in
 one dict but forgotten in the other).
 """
 
-from tuicc.render import MODULES, NAV_PROVIDERS, ACTION_HANDLERS
+from unittest.mock import Mock
+
+import tuicc.render as render
+from tuicc.render import MODULES, NAV_PROVIDERS, ACTION_HANDLERS, draw_all, collect_nav_items
+from tuicc.layout import Layout, ModuleBox
 from tuicc.modules import power_menu, quick_actions, sessions, control, media
 
 
@@ -65,3 +69,62 @@ def test_sysmon_handlers_registered():
     from tuicc.modules import sysmon
     assert ACTION_HANDLERS["sysmon_row"] is sysmon.handle_row
     assert ACTION_HANDLERS["sysmon_action"] is sysmon.handle_action
+
+
+# ---------- draw_all/collect_nav_items skip a box collapsed to 0 (see
+# layout_engine.py's flexible-box-shrink docstring) ----------
+
+def test_draw_all_skips_a_module_whose_box_has_zero_height(monkeypatch):
+    draw_fn = Mock()
+    monkeypatch.setattr(render, "MODULES", {"fake": draw_fn})
+    layout = Layout(boxes=[ModuleBox(name="fake", x=0.0, y=0.0, w=1.0, h=1.0)])
+    boxes = {"fake": (0, 0, 10, 0)}  # h=0 — squeezed out entirely
+
+    draw_all(stdscr=None, layout=layout, boxes=boxes, ctx=None)
+
+    draw_fn.assert_not_called()
+
+
+def test_draw_all_skips_a_module_whose_box_has_zero_width(monkeypatch):
+    draw_fn = Mock()
+    monkeypatch.setattr(render, "MODULES", {"fake": draw_fn})
+    layout = Layout(boxes=[ModuleBox(name="fake", x=0.0, y=0.0, w=1.0, h=1.0)])
+    boxes = {"fake": (0, 0, 0, 10)}
+
+    draw_all(stdscr=None, layout=layout, boxes=boxes, ctx=None)
+
+    draw_fn.assert_not_called()
+
+
+def test_draw_all_still_draws_a_module_with_a_normal_sized_box(monkeypatch):
+    draw_fn = Mock()
+    monkeypatch.setattr(render, "MODULES", {"fake": draw_fn})
+    layout = Layout(boxes=[ModuleBox(name="fake", x=0.0, y=0.0, w=1.0, h=1.0)])
+    boxes = {"fake": (0, 0, 10, 5)}
+
+    draw_all(stdscr="stdscr-sentinel", layout=layout, boxes=boxes, ctx="ctx-sentinel")
+
+    draw_fn.assert_called_once_with("stdscr-sentinel", (0, 0, 10, 5), "ctx-sentinel", "fake")
+
+
+def test_collect_nav_items_skips_a_module_whose_box_has_zero_height(monkeypatch):
+    nav_fn = Mock(return_value=["should never appear"])
+    monkeypatch.setattr(render, "NAV_PROVIDERS", {"fake": nav_fn})
+    layout = Layout(boxes=[ModuleBox(name="fake", x=0.0, y=0.0, w=1.0, h=1.0)])
+    boxes = {"fake": (0, 0, 10, 0)}
+
+    items = collect_nav_items(layout, boxes, ctx=None)
+
+    assert items == []
+    nav_fn.assert_not_called()
+
+
+def test_collect_nav_items_still_collects_from_a_normal_sized_box(monkeypatch):
+    nav_fn = Mock(return_value=["item"])
+    monkeypatch.setattr(render, "NAV_PROVIDERS", {"fake": nav_fn})
+    layout = Layout(boxes=[ModuleBox(name="fake", x=0.0, y=0.0, w=1.0, h=1.0)])
+    boxes = {"fake": (0, 0, 10, 5)}
+
+    items = collect_nav_items(layout, boxes, ctx=None)
+
+    assert items == ["item"]

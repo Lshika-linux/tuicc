@@ -27,20 +27,39 @@ MIN_CELLS = 3
 
 
 def enter_resize(box: ModuleBox) -> dict:
-    """Snapshots box's original x/y/w/h, for cancel_resize to restore —
-    a single resize-mode session can change both size and position
-    (toggled via move_toggle), so one Escape must undo all of it.
+    """Snapshots box's original x/y/w/h/fw/fh, for cancel_resize to
+    restore — a single resize-mode session can change both size and
+    position (toggled via move_toggle), so one Escape must undo all of
+    it. fw/fh are snapshotted alongside w/h even though a box only ever
+    has one of each live pair (see layout.py's own docstring) —
+    simplest to always carry all slots than to special-case which one a
+    given box actually uses.
     """
-    return {"x": box.x, "y": box.y, "w": box.w, "h": box.h}
+    return {"x": box.x, "y": box.y, "w": box.w, "h": box.h, "fw": box.fw, "fh": box.fh}
 
 
 def resize_step(box: ModuleBox, dimension: str, grow: bool,
                  term_width: int, term_height: int,
                  x_cells: int, y_cells: int) -> None:
-    """Moves box.w or box.h by one terminal cell (as a ratio), clamped
-    to a MIN_CELLS-cell minimum and to the terminal edge (can't grow
-    past term_size - origin, since x/y aren't touched here).
+    """Moves box.w or box.h by one terminal cell, clamped to a
+    MIN_CELLS-cell minimum and to the terminal edge (can't grow past
+    term_size - origin, since x/y aren't touched here). Each dimension
+    is a ratio UNLESS the box uses fw/fh (fixed columns/rows — see
+    layout.py's own docstring), in which case this adjusts the
+    absolute cell count directly instead of computing a ratio delta —
+    a fixed box stays fixed across the whole resize, never silently
+    converted to a ratio by touching it in F2.
     """
+    if dimension == "w" and box.fw is not None:
+        max_cells = term_width - x_cells
+        box.fw = min(max(box.fw + (STEP_CELLS if grow else -STEP_CELLS), MIN_CELLS), max_cells)
+        return
+
+    if dimension == "h" and box.fh is not None:
+        max_cells = term_height - y_cells
+        box.fh = min(max(box.fh + (STEP_CELLS if grow else -STEP_CELLS), MIN_CELLS), max_cells)
+        return
+
     if dimension == "w":
         term_size, origin, current = term_width, x_cells, box.w
     else:
@@ -87,6 +106,8 @@ def cancel_resize(box: ModuleBox, snapshot: dict) -> None:
     box.y = snapshot["y"]
     box.w = snapshot["w"]
     box.h = snapshot["h"]
+    box.fw = snapshot["fw"]
+    box.fh = snapshot["fh"]
 
 
 @dataclass

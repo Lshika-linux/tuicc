@@ -85,6 +85,14 @@ def draw_all(stdscr, layout, boxes, ctx):
         draw_fn = MODULES.get(module_box.name)
         if draw_fn is None:
             continue
+        x, y, w, h = boxes[module_box.name]
+        if w <= 0 or h <= 0:
+            # A flexible box squeezed out entirely by its neighbors —
+            # see layout_engine.py's compute_boxes() docstring. Nothing
+            # to draw into, so skip the module outright rather than
+            # handing it a degenerate box every draw()/draw_preview()
+            # would otherwise need to defend against individually.
+            continue
         draw_fn(stdscr, boxes[module_box.name], ctx, module_box.name)
 
 
@@ -93,6 +101,11 @@ def collect_nav_items(layout, boxes, ctx):
     for module_box in layout.boxes:
         nav_fn = NAV_PROVIDERS.get(module_box.name)
         if nav_fn is None:
+            continue
+        x, y, w, h = boxes[module_box.name]
+        if w <= 0 or h <= 0:
+            # Not drawn this frame (see draw_all above) — not
+            # navigable either, same reasoning.
             continue
         items.extend(nav_fn(boxes[module_box.name], ctx, module_box.name))
     return items

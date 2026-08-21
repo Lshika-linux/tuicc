@@ -17,13 +17,69 @@ This file only defines the *shape* of a layout. Combining presets with
 user overrides, and converting all of that into actual terminal
 rows/columns, happens in layout_engine.py.
 
-Every box is a plain, independent x/y/w/h ratio (0.0-1.0 of the
-terminal's width/height) — nothing here coordinates with anything
-else. Resizing or repositioning one box never moves or resizes
-another; what you configure is exactly what renders. If a box's ratio
-looks wrong on a very different terminal size than the one you set it
-up on, that's expected — interactive resize mode (main.py) is the
-fix-it-when-you-see-it mechanism, not an automatic guarantee.
+Every box is a plain, independent x/y ratio (0.0-1.0 of the terminal's
+width/height) — nothing here coordinates with anything else. Resizing
+or repositioning one box never moves or resizes another; what you
+configure is exactly what renders. If a box's ratio looks wrong on a
+very different terminal size than the one you set it up on, that's
+expected — interactive resize mode (main.py) is the fix-it-when-you-
+see-it mechanism, not an automatic guarantee.
+
+Width and height each have the same one exception, independently: a
+box can use `w`/`h` (ratio, as above) OR `fw`/`fh` (fixed columns/rows
+— an absolute terminal-cell count, never scaled). Found live (height
+first — width mirrors it exactly, added once the same real need showed
+up on that axis too): some modules (control's toggle list,
+connectivity/media/sysmon's fixed-row tables, sessions/power_menu/
+launcher/rwb's own compact strips) need a SPECIFIC row count to look
+right — fewer rows and real content gets clipped/unusable, more rows
+and it's just wasted empty space, so scaling them proportionally with
+the terminal is actively wrong, not just imprecise the way it's fine
+for a genuinely elastic box (sidebar, preview) to be; bars is the
+matching width case — meant to grow/shrink its HEIGHT freely but wants
+a specific, unchanging COLUMN count to look right regardless of
+terminal size. Exactly one of w/fw, and independently exactly one of
+h/fh, must be set per box — config.py's build_layout_from_preset()
+raises loudly on the box's name if either pair is both or neither
+given, same no-silent-fallback discipline as everywhere else in this
+codebase. A box can freely mix — fh height with ratio width, fw width
+with ratio height, or fw+fh on both axes at once — the two axes are
+handled completely independently throughout this whole file and
+layout_engine.py, never coupled.
+
+A second, related exception, for boxes that use `h`/`w` (a "flexible"
+box — genuinely elastic, meant to grow/shrink with the terminal): one
+can still end up intruding into a neighboring box on a terminal short
+enough to force it — most commonly a `fh`/`fw` neighbor, which never
+shrinks by definition, but any other box's rect works the same way.
+layout_engine.py's compute_boxes() detects this (2D rect overlap,
+restricted to boxes that share space on the OTHER axis — a box in a
+different column can't visually collide vertically regardless of its
+own y range, and likewise a box in a different row can't collide
+horizontally regardless of its own x range) and shrinks the flexible
+box just enough to stop intruding: cut from the top/left if the other
+box sits above/left, from the bottom/right if it sits below/right, both
+if sandwiched between two. If nothing is left (fully squeezed out), the
+box gets 0 size on that axis and doesn't draw at all that frame, rather
+than being silently clipped or drawn overlapping — see that function's
+own docstring for the exact algorithm. Still no coordination in the
+sense that matters (a box's OWN x/y/w/h/fw/fh in the preset never
+changes — this is purely a render-time consequence of the current
+terminal size, same category of exception as fh/fw's own edge-hold
+above, just applied to the other kind of box).
+
+A third exception, for two `fh` (or two `fw`) boxes stacked/lined-up
+directly against each other (e.g. control above power_menu; bars is the
+only fw box today and has no fw sibling yet, but the mechanism is
+general) — each one's edge-hold only knows about the terminal's own
+edge, not about a SIBLING fixed box also holding that same edge, so two
+independently edge-held fixed boxes can draw straight into each other
+on a short enough terminal. Also resolved in compute_boxes() (its own
+docstring has the exact chaining algorithm) — positional only, never
+resizes either box, since fh/fw can't shrink by definition either way.
+Height and width are chained completely independently (an fh chain
+never looks at fw boxes or vice versa) — a box that's fh on one axis
+and fw on the other participates in both chains separately.
 """
 
 from dataclasses import dataclass, field
@@ -34,8 +90,10 @@ class ModuleBox:
     name: str
     x: float   # ratio 0..1, scales with terminal width
     y: float   # ratio 0..1, scales with terminal height
-    w: float   # ratio 0..1, scales with terminal width
-    h: float   # ratio 0..1, scales with terminal height
+    w: float | None = None   # ratio 0..1, scales with terminal width — exactly one of w/fw is set
+    h: float | None = None   # ratio 0..1, scales with terminal height — exactly one of h/fh is set
+    fw: int | None = None    # fixed columns (absolute terminal cells) — see module docstring
+    fh: int | None = None    # fixed rows (absolute terminal cells) — see module docstring
     clickable: bool = True
 
 
@@ -49,8 +107,20 @@ def boxes_to_toml_data(boxes: list[ModuleBox]) -> dict:
     parsing loop — turns ModuleBox objects back into the {"box": [...]}
     shape a preset TOML file uses, so the result round-trips through
     that same parsing loop unchanged. Used by resize mode's save.
+    Writes back whichever of w/fw and h/fh the box actually uses (each
+    axis independently) — a box saved while in fh/fw mode stays in that
+    mode, never silently converted to a ratio (or vice versa).
     """
-    return {"box": [
-        {"name": box.name, "x": box.x, "y": box.y, "w": box.w, "h": box.h}
-        for box in boxes
-    ]}
+    data = []
+    for box in boxes:
+        entry = {"name": box.name, "x": box.x, "y": box.y}
+        if box.fw is not None:
+            entry["fw"] = box.fw
+        else:
+            entry["w"] = box.w
+        if box.fh is not None:
+            entry["fh"] = box.fh
+        else:
+            entry["h"] = box.h
+        data.append(entry)
+    return {"box": data}

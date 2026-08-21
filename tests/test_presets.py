@@ -158,6 +158,104 @@ def _sample_layout():
     ])
 
 
+# ---------- build_layout_from_preset: h/fh exclusivity ----------
+
+def test_build_layout_from_preset_accepts_fh_instead_of_h(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "control"\nx = 0.0\ny = 0.5\nw = 0.2\nfh = 10\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    layout = build_layout_from_preset(1)
+
+    assert layout.boxes[0].fh == 10
+    assert layout.boxes[0].h is None
+
+
+def test_build_layout_from_preset_rejects_both_h_and_fh(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "control"\nx = 0.0\ny = 0.5\nw = 0.2\nh = 0.1\nfh = 10\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    with pytest.raises(ValueError, match="control"):
+        build_layout_from_preset(1)
+
+
+def test_build_layout_from_preset_rejects_neither_h_nor_fh(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "control"\nx = 0.0\ny = 0.5\nw = 0.2\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    with pytest.raises(ValueError, match="control"):
+        build_layout_from_preset(1)
+
+
+# ---------- build_layout_from_preset: w/fw exclusivity ----------
+
+def test_build_layout_from_preset_accepts_fw_instead_of_w(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "bars"\nx = 0.9\ny = 0.0\nfw = 8\nh = 0.7\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    layout = build_layout_from_preset(1)
+
+    assert layout.boxes[0].fw == 8
+    assert layout.boxes[0].w is None
+
+
+def test_build_layout_from_preset_rejects_both_w_and_fw(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "bars"\nx = 0.9\ny = 0.0\nw = 0.08\nfw = 8\nh = 0.7\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    with pytest.raises(ValueError, match="bars"):
+        build_layout_from_preset(1)
+
+
+def test_build_layout_from_preset_rejects_neither_w_nor_fw(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "bars"\nx = 0.9\ny = 0.0\nh = 0.7\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    with pytest.raises(ValueError, match="bars"):
+        build_layout_from_preset(1)
+
+
 def test_save_new_preset_writes_a_readable_file(tmp_path, monkeypatch):
     packaged_dir = tmp_path / "packaged"
     packaged_dir.mkdir()
