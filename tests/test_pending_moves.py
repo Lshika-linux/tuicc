@@ -14,6 +14,7 @@ from pathlib import Path
 
 import tuicc.pending_moves as pending_moves
 from tuicc.model import Window
+from tuicc.procmon import _ProcSample
 from tuicc.pending_moves import (
     resolve_pending_move,
     PendingMovesQueue,
@@ -22,9 +23,11 @@ from tuicc.pending_moves import (
     promote_restore_queue,
     process,
     _enrich_pids,
+    _grow_known_pids,
     PID_GRACE_SECONDS,
     MOVE_TIMEOUT_SECONDS,
     RESTORE_STAGGER_SECONDS,
+    SETTLE_SECONDS,
 )
 
 
@@ -134,6 +137,42 @@ def test_pid_expected_appears_on_a_later_call_after_absent_earlier():
     assert resolve_pending_move(entry, tick_1, claimed=set()) is None
     result = resolve_pending_move(entry, tick_2, claimed=set())
     assert result.id == "2"
+
+
+# ---------- resolve_pending_move: known_pids (fork/exec descendant matching) ----------
+
+def test_known_pids_matches_a_descendant_pid_not_just_the_exact_captured_one():
+    # The real fork/exec case: entry's own "pid" (999, the captured
+    # updater) never appears on any window, but its real descendant
+    # (444, grown into known_pids by _grow_known_pids — see that
+    # function's own tests) does.
+    entry = {"known_ids": set(), "pid": 999, "known_pids": {999, 444}}
+    current = [_window("1", "kitty", pid=111), _window("2", "discord", pid=444)]
+
+    result = resolve_pending_move(entry, current, claimed=set())
+
+    assert result.id == "2"
+
+
+def test_known_pids_still_matches_the_exact_pid_when_present():
+    entry = {"known_ids": set(), "pid": 999, "known_pids": {999}}
+    current = [_window("1", "kitty", pid=111), _window("2", "discord", pid=999)]
+
+    result = resolve_pending_move(entry, current, claimed=set())
+
+    assert result.id == "2"
+
+
+def test_known_pids_missing_falls_back_to_exact_pid_only():
+    # An entry built by hand (no known_pids key at all — every other
+    # test in this file does this) behaves exactly as before this
+    # feature existed: only the exact captured pid matches.
+    entry = {"known_ids": set(), "pid": 999}
+    current = [_window("1", "kitty", pid=111), _window("2", "discord", pid=444)]
+
+    result = resolve_pending_move(entry, current, claimed=set())
+
+    assert result is None
 
 
 def test_pid_none_skips_pid_tier_entirely():
@@ -257,6 +296,7 @@ def test_queue_launcher_spawn_never_carries_floating_or_rect():
     entry = queue.entries[0]
     assert entry == {
         "target_region": "2", "known_ids": {"1"}, "pid": 99,
+        "root_pid": 99, "known_pids": {99},
         "app_id": "firefox", "started_at": 1.0, "log_path": None,
     }
 
@@ -376,7 +416,14 @@ def test_process_matches_and_moves_window():
     process(queue, provider, current, dismissed=False, now=1.0)
 
     assert provider.moved == [("1", "3")]
-    assert queue.entries == []
+    # Lingers (unconditionally — see process()'s own docstring for why
+    # this can't be gated on evidence that doesn't exist yet at match
+    # time) for SETTLE_SECONDS watching for a second window from the
+    # same spawn, rather than finalizing the instant the first one
+    # matches. test_process_settles_quietly_after_settle_seconds_with_
+    # no_further_match below covers the eventual quiet drain.
+    assert len(queue.entries) == 1
+    assert queue.entries[0]["last_matched_at"] == 1.0
 
 
 def test_process_focus_self_called_when_not_dismissed():
@@ -555,7 +602,11 @@ def test_process_claimed_ids_stay_populated_while_queue_not_fully_drained():
 
     process(queue, provider, current, dismissed=False, now=1.0)
 
-    assert queue.entries == [entry_b]
+    # entry_a now lingers too (matched, watching for a second window —
+    # see process()'s own docstring) rather than vanishing outright;
+    # entry_b is still waiting on its own first match. Both present.
+    assert entry_a in queue.entries
+    assert entry_b in queue.entries
     assert queue.claimed_ids == {"1"}
 
 
@@ -566,6 +617,11 @@ def test_process_claimed_ids_clear_once_queue_fully_drained():
     current = [_window("1", "kitty")]
 
     process(queue, provider, current, dismissed=False, now=1.0)
+    assert queue.claimed_ids == {"1"}  # not cleared yet — entry is lingering, watching for a second window
+
+    # No second window ever shows up; advance past SETTLE_SECONDS so
+    # the lingering entry finally settles and the queue fully drains.
+    process(queue, provider, current, dismissed=False, now=1.0 + SETTLE_SECONDS + 0.1)
 
     assert queue.entries == []
     assert queue.claimed_ids == set()
@@ -751,7 +807,7 @@ def test_process_matches_via_enriched_pid_on_a_provider_with_no_native_pid():
     process(queue, provider, current, dismissed=False, now=0.1)
 
     assert provider.moved == [("2", "3")]
-    assert queue.entries == []
+    assert len(queue.entries) == 1  # lingers, watching for a second window — see process()'s own docstring
 
 
 # ---------- process: quick-exit detection ----------
@@ -792,7 +848,7 @@ def test_process_exit_0_downgrades_pid_immediately_well_before_grace_period():
     result = process(queue, provider, current, dismissed=False, now=0.5)
 
     assert provider.moved == [("1", "3")]
-    assert queue.entries == []
+    assert len(queue.entries) == 1  # lingers, watching for a second window — see process()'s own docstring
     assert result.failure_messages == []
 
 
@@ -895,3 +951,197 @@ def test_check_quick_exit_does_not_call_waitpid_again_once_cached(monkeypatch):
 def test_check_quick_exit_returns_none_for_an_entry_with_no_pid():
     assert pending_moves._check_quick_exit({"pid": None}) is None
     assert pending_moves._check_quick_exit({}) is None
+
+
+# ---------- _grow_known_pids ----------
+
+def _sample(pid, ppid):
+    return _ProcSample(pid=pid, ppid=ppid, utime=0, stime=0)
+
+
+def test_grow_known_pids_adds_a_real_child_of_root_pid(monkeypatch):
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),  # real child of the captured "updater" pid
+    })
+    entry = {"root_pid": 100, "known_pids": {100}}
+    queue = PendingMovesQueue(entries=[entry])
+
+    _grow_known_pids(queue)
+
+    assert entry["known_pids"] == {100, 200}
+
+
+def test_grow_known_pids_accumulates_across_calls_even_after_reparenting(monkeypatch):
+    # First call: catches the real parent-child link while it's intact.
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),
+    })
+    entry = {"root_pid": 100, "known_pids": {100}}
+    queue = PendingMovesQueue(entries=[entry])
+    _grow_known_pids(queue)
+    assert 200 in entry["known_pids"]
+
+    # Second call: 100 has since exited, 200 reparented to init (1) — a
+    # fresh subtree walk from 100 alone would find nothing new, but 200
+    # must stay known from the first call (accumulate, never shrink).
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        200: _sample(200, ppid=1),
+    })
+    _grow_known_pids(queue)
+
+    assert entry["known_pids"] == {100, 200}
+
+
+def test_grow_known_pids_walks_grandchildren_too(monkeypatch):
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),
+        300: _sample(300, ppid=200),  # grandchild
+    })
+    entry = {"root_pid": 100, "known_pids": {100}}
+    queue = PendingMovesQueue(entries=[entry])
+
+    _grow_known_pids(queue)
+
+    assert entry["known_pids"] == {100, 200, 300}
+
+
+def test_grow_known_pids_skips_an_entry_with_no_root_pid(monkeypatch):
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {100: _sample(100, ppid=1)})
+    entry = {"known_ids": set()}  # a hand-built entry, same shape older tests in this file use
+    queue = PendingMovesQueue(entries=[entry])
+
+    _grow_known_pids(queue)  # must not raise
+
+    assert "known_pids" not in entry
+
+
+def test_grow_known_pids_does_nothing_with_an_empty_queue(monkeypatch):
+    def _boom():
+        raise AssertionError("scan_all_processes called with nothing pending")
+    monkeypatch.setattr(pending_moves, "scan_all_processes", _boom)
+    queue = PendingMovesQueue(entries=[])
+
+    _grow_known_pids(queue)  # must not scan /proc at all when there's nothing pending
+
+
+def test_grow_known_pids_unrelated_processes_are_not_pulled_in(monkeypatch):
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),
+        999: _sample(999, ppid=1),  # unrelated process, shares no ancestry with 100
+    })
+    entry = {"root_pid": 100, "known_pids": {100}}
+    queue = PendingMovesQueue(entries=[entry])
+
+    _grow_known_pids(queue)
+
+    assert 999 not in entry["known_pids"]
+
+
+# ---------- process: fork/exec pid-mismatch end to end ----------
+# CLAUDE/NOTES/known-limitations.md#fork-exec-pid-mismatch — live-confirmed
+# with Discord: an updater is captured, but the real app it launches is a
+# genuinely different process (forked, not exec-replaced), and its window's
+# app_id doesn't match the launcher's own .desktop-derived hint either.
+
+def test_process_matches_via_a_forked_descendant_pid_even_when_app_id_also_mismatches(monkeypatch):
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),
+    })
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": 100, "root_pid": 100, "known_pids": {100},
+        "app_id": "discord-updater",  # deliberately doesn't match the real window below
+    }
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "discord", pid=200)]  # real app's own, different pid
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.moved == [("1", "3")]
+    # Stays pending, watching for a SECOND window from the same known_pids
+    # tree (the real bug: the updater's own window matches first, then the
+    # real app's genuinely separate window shows up seconds later) —
+    # settling immediately here would silently reintroduce the exact
+    # failure this whole mechanism exists to fix.
+    assert len(queue.entries) == 1
+    assert queue.entries[0]["last_matched_at"] == 1.0
+
+
+def test_process_matches_a_second_window_from_the_same_known_pids_tree(monkeypatch):
+    # The real Discord scenario end to end: the updater's window matches
+    # on one frame, the real app's genuinely different window shows up
+    # a few seconds later on a LATER frame — must also match and move,
+    # via the same still-pending entry.
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),
+    })
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": 100, "root_pid": 100, "known_pids": {100},
+        "app_id": "discord-updater",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+
+    # Frame 1: only the updater's own window (pid 100) exists.
+    process(queue, provider, [_window("1", "discord-updater", pid=100)], dismissed=False, now=1.0)
+    assert provider.moved == [("1", "3")]
+    assert len(queue.entries) == 1
+
+    # Frame 2, a few seconds later (within SETTLE_SECONDS): the real
+    # app's window (pid 200, a known descendant by now) appears.
+    process(
+        queue, provider,
+        [_window("1", "discord-updater", pid=100), _window("2", "discord", pid=200)],
+        dismissed=False, now=3.0,
+    )
+
+    assert provider.moved == [("1", "3"), ("2", "3")]
+
+
+def test_process_settles_quietly_after_settle_seconds_with_no_further_match(monkeypatch):
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {
+        100: _sample(100, ppid=1),
+        200: _sample(200, ppid=100),
+    })
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": 100, "root_pid": 100, "known_pids": {100},
+        "app_id": "discord-updater",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+
+    process(queue, provider, [_window("1", "discord-updater", pid=100)], dismissed=False, now=1.0)
+    assert len(queue.entries) == 1
+
+    # No second window ever shows up; well past SETTLE_SECONDS since the
+    # last (only) match.
+    result = process(queue, provider, [_window("1", "discord-updater", pid=100)],
+                      dismissed=False, now=1.0 + pending_moves.SETTLE_SECONDS + 1)
+
+    assert queue.entries == []
+    assert result.failure_messages == []  # settling quietly is success, not a failure
+
+
+def test_process_still_matches_the_exact_pid_when_no_fork_happened(monkeypatch):
+    # The common case — must keep working unchanged.
+    monkeypatch.setattr(pending_moves, "scan_all_processes", lambda: {100: _sample(100, ppid=1)})
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": 100, "root_pid": 100, "known_pids": {100}, "app_id": "kitty",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty", pid=100)]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.moved == [("1", "3")]

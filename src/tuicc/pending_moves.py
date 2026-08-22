@@ -14,6 +14,17 @@ flight (e.g. restoring several windows at once) two pending entries can
 match the same new window without a shared "already claimed" set — see
 CLAUDE/NOTES/design-decisions.md#pending-move-tiers.
 
+The captured pid isn't always the window's real owning pid either — an
+updater/wrapper that forks a genuinely different process for the real
+app (rather than exec-replacing itself) leaves the captured pid
+correct but useless (CLAUDE/NOTES/known-limitations.md
+#fork-exec-pid-mismatch; live-confirmed with Discord). _grow_known_pids()
+tracks the captured pid's WHOLE observed descendant tree (via
+procmon.py's own subtree-walk, built for R6's per-window process
+aggregation) every frame, so a forked replacement matches the instant
+its window maps — no waiting on PID_GRACE_SECONDS/MOVE_TIMEOUT_SECONDS,
+and no dependence on app_id also happening to match.
+
 PendingMovesQueue and the functions below it are the session-level layer
 on top of resolve_pending_move's per-entry matching, replacing what
 main.py's loop used to hold as loose locals. Same "pure function over an
@@ -29,6 +40,7 @@ from pathlib import Path
 
 from tuicc.actions import spawn_detached
 from tuicc.model import Window
+from tuicc.procmon import scan_all_processes, build_children_map, subtree_pids
 
 SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
 
@@ -38,6 +50,16 @@ SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
 PID_GRACE_SECONDS = 6.0
 MOVE_TIMEOUT_SECONDS = 8.0
 RESTORE_STAGGER_SECONDS = 0.3
+# How long an entry that has ALREADY matched at least one window keeps
+# watching for a FURTHER one from the same spawn before it's considered
+# done — unconditional, applied after every match, not just ones that
+# already look like an updater-then-real-app pattern (fork/exec, see
+# process()'s own docstring for why gating this on known_pids already
+# showing a descendant doesn't work: the descendant often doesn't exist
+# yet at match time). The accepted cost is a few extra seconds of
+# ~50ms-cadence polling after every launcher spawn, not just the ones
+# that turn out to need it.
+SETTLE_SECONDS = 6.0
 
 
 def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: set[str]) -> Window | None:
@@ -57,8 +79,18 @@ def resolve_pending_move(entry: dict, current_windows: list[Window], claimed: se
     # CLAUDE/NOTES/design-decisions.md#pending-move-tiers for why.
     expected_pid = entry.get("pid")
     if expected_pid is not None:
+        # known_pids (grown by process() every frame — see its own
+        # docstring) is the captured pid's WHOLE observed descendant
+        # tree, not just the exact pid — an updater that forks/execs a
+        # different real process (CLAUDE/NOTES/known-limitations.md
+        # #fork-exec-pid-mismatch) still matches via its child, the
+        # instant that child's window maps, no PID_GRACE_SECONDS/
+        # MOVE_TIMEOUT_SECONDS wait needed. Falls back to just
+        # {expected_pid} if process() hasn't grown it yet (or a caller
+        # constructs an entry by hand, e.g. in tests).
+        known_pids = entry.get("known_pids") or {expected_pid}
         for w in new_windows:
-            if w.pid == expected_pid:
+            if w.pid in known_pids:
                 return w
         return None
 
@@ -108,11 +140,19 @@ def queue_restore_entry(
     reason (CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash);
     threading the same path through here means a fast nonzero-exit
     failure toast can reference it too, not just launcher spawns.
+    root_pid/known_pids: see resolve_pending_move()'s own docstring —
+    root_pid is the immutable seed process() walks the descendant tree
+    from every frame (independent of "pid" above, which DOES get
+    cleared on a tier downgrade); known_pids is what actually gets
+    matched against, grown (never shrunk) as real descendants are
+    observed.
     """
     entry = {
         "target_region": session_entry["target_region"],
         "known_ids": known_ids,
         "pid": pid,
+        "root_pid": pid,
+        "known_pids": {pid} if pid is not None else set(),
         "app_id": session_entry["app_id"],
         "started_at": now,
         "floating": session_entry.get("floating", False),
@@ -135,12 +175,15 @@ def queue_launcher_spawn(
     the caller captured spawn_detached()'s output) is read back by
     _quick_exit_failure_message() on a fast nonzero-exit give-up, so the
     user's failure toast can point at real captured stderr instead of
-    just an exit code.
+    just an exit code. root_pid/known_pids — see queue_restore_entry's
+    own docstring, same reasoning.
     """
     queue.entries.append({
         "target_region": target_region,
         "known_ids": known_ids,
         "pid": pid,
+        "root_pid": pid,
+        "known_pids": {pid} if pid is not None else set(),
         "app_id": app_id_hint,
         "started_at": now,
         "log_path": log_path,
@@ -192,6 +235,41 @@ def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Windo
     for w in current_windows:
         if w.pid is None and w.id not in known_to_any_entry and w.id not in queue.claimed_ids:
             w.pid = provider.resolve_pid(w.id)
+
+
+def _grow_known_pids(queue: PendingMovesQueue) -> None:
+    """Extends every entry's known_pids with whatever real descendants
+    root_pid has spawned since the last frame — see
+    resolve_pending_move()'s own docstring for what known_pids is used
+    for, and CLAUDE/NOTES/known-limitations.md#fork-exec-pid-mismatch
+    for the live bug (Discord: updater exits, real app relaunches as a
+    genuinely different process) this exists to catch fast instead of
+    falling through to app_id-tier/timeout.
+
+    ONE /proc scan for the whole queue, not one per entry — same
+    "aggregating N things costs one scan, not N" reasoning
+    scan_all_processes()'s own docstring gives for procmon.py's per-
+    window subtree walks. Accumulates (union), never replaces:
+    once a real descendant is observed under root_pid, it stays a
+    known match forever, even after root_pid itself exits and any
+    later /proc snapshot shows that pid reparented away (to init/a
+    subreaper) and no longer nested under root_pid at all — the
+    window for observing the TRUE parent-child link, while it's still
+    intact, is real but narrow (this queue is polled every ~50ms while
+    anything's pending; that's normally plenty of ticks before even a
+    fast updater exits, but isn't a hard guarantee for a
+    fork-then-immediately-exit under a millisecond, an accepted,
+    probabilistic gap in the same spirit as mark_self()'s own
+    focus-race fallback).
+    """
+    if not queue.entries:
+        return
+    children_map = build_children_map(scan_all_processes())
+    for entry in queue.entries:
+        root_pid = entry.get("root_pid")
+        if root_pid is None:
+            continue
+        entry.setdefault("known_pids", {root_pid}).update(subtree_pids(root_pid, children_map))
 
 
 @dataclass
@@ -268,20 +346,44 @@ def process(
     own_region_id: str | None = None,
 ) -> PendingMovesResult:
     """Resolves every entry in queue against current_windows: enriches
-    pids, downgrades pid- to app_id-matching either immediately (on a
-    confirmed quick clean exit — see _check_quick_exit) or after
-    PID_GRACE_SECONDS as a fallback for pids that never exit at all,
-    moves+floats a matched window, then reclaims focus unless dismissed
-    (must not un-hide a deliberately-dismissed tuicc). Entries whose
-    spawned process exits nonzero are dropped immediately; entries past
-    MOVE_TIMEOUT_SECONDS are dropped too — both still reclaim focus
-    first and both add a message to the returned failure_messages list.
+    pids, grows each entry's known_pids with any real descendants its
+    root_pid has spawned (see _grow_known_pids), downgrades pid- to
+    app_id-matching either immediately (on a confirmed quick clean exit
+    — see _check_quick_exit — but only when no real descendant was ever
+    observed, see that block's own comment) or after PID_GRACE_SECONDS
+    as a fallback for pids that never exit at all, moves+floats a
+    matched window, then reclaims focus unless dismissed (must not
+    un-hide a deliberately-dismissed tuicc).
+
+    A match does NOT finalize an entry: one spawn can legitimately
+    produce more than one window over time — an updater whose own
+    window maps and matches first, then backgrounds a genuinely
+    different process for the real app instead of exec-replacing
+    itself (CLAUDE/NOTES/known-limitations.md#fork-exec-pid-mismatch,
+    live-confirmed with Discord). Every entry, matched or not yet,
+    stays pending for SETTLE_SECONDS after its most recent match,
+    watching for one more — deliberately UNCONDITIONAL, not gated on
+    known_pids already showing a descendant: found live, testing
+    against this repo's own IFTNTSMWTISA.py fixture, that the
+    updater's own window matches almost instantly, long before the
+    real app's process has even been forked yet (that happens seconds
+    later, mid "checking for updates...") — there is no reliable
+    signal AT MATCH TIME that more windows are coming, since the only
+    such signal doesn't exist yet at the moment it would need to.
+    Entries whose spawned process exits nonzero are dropped
+    immediately; entries past MOVE_TIMEOUT_SECONDS with no match at all
+    are dropped too — both still reclaim focus first and both add a
+    message to the returned failure_messages list. Settling quietly
+    (SETTLE_SECONDS elapsed with no further match, the common case for
+    an ordinary single-window app) is a normal, successful end state,
+    not a failure — no message either way.
     own_region_id decides whether to request force_relayout (see
     CLAUDE/NOTES/wm-quirks.md#fullscreen-suppresses-layout). See
     CLAUDE/NOTES/design-decisions.md#pending-moves-process-contract for
     the full PendingMovesResult contract and the bugs it fixes.
     """
     _enrich_pids(queue, provider, current_windows)
+    _grow_known_pids(queue)
     reclaimed_focus = False
     resolved_target_regions = []
     failures = []
@@ -290,7 +392,18 @@ def process(
         if entry.get("pid") is not None:
             exit_code = _check_quick_exit(entry)
             if exit_code == 0:
-                entry["pid"] = None  # clean exit — hand off to app_id-tier now
+                # Only hand off to app_id-tier if we never actually
+                # observed a real descendant while the captured pid
+                # was alive (_grow_known_pids' own docstring) — if we
+                # did, known_pids-based matching is strictly more
+                # informative than app_id ever was, and clearing "pid"
+                # here would silently break the exact class this is
+                # for (CLAUDE/NOTES/known-limitations.md
+                # #fork-exec-pid-mismatch): an app whose real window's
+                # app_id ALSO doesn't match the launcher's own
+                # .desktop-derived hint.
+                if len(entry.get("known_pids") or ()) <= 1:
+                    entry["pid"] = None
             elif exit_code is not None:
                 failures.append(_quick_exit_failure_message(entry, exit_code))
                 if not dismissed:
@@ -313,6 +426,30 @@ def process(
                 force_relayout = own_region_id is not None and entry["target_region"] == own_region_id
                 provider.focus_self(fullscreen=fullscreen_only, force_relayout=force_relayout)
                 reclaimed_focus = True
+            # Deliberately UNCONDITIONAL, not gated on known_pids
+            # already showing a descendant — found live, testing
+            # against this repo's own IFTNTSMWTISA.py fixture: the
+            # updater's own window matches almost instantly, long
+            # before the real app's process has even been forked yet
+            # (that happens seconds later, mid "checking for
+            # updates..."). There is no reliable signal AT MATCH TIME
+            # that more windows are coming — the only signal (a real
+            # descendant appearing) doesn't exist yet at the moment
+            # that would need it. So every entry lingers for
+            # SETTLE_SECONDS after each match, watching for one more,
+            # not just entries that already look like a fork/exec
+            # pattern — the modest extra ~50ms-cadence polling after
+            # every spawn is the accepted cost of that (see this
+            # module's own docstring), same simplicity-over-
+            # performance call this whole codebase already makes
+            # elsewhere (main.py/GUIDE.md: "nothing is cached
+            # per-frame").
+            entry["last_matched_at"] = now
+            still_pending.append(entry)
+        elif entry.get("last_matched_at") is not None:
+            if now - entry["last_matched_at"] <= SETTLE_SECONDS:
+                still_pending.append(entry)
+            # else: settled — quietly done, not a failure, no message.
         elif now - entry["started_at"] <= MOVE_TIMEOUT_SECONDS:
             still_pending.append(entry)
         elif not dismissed:

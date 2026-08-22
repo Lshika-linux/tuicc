@@ -158,7 +158,14 @@ def scan_all_processes(proc_path: str = PROC_PATH) -> dict[int, _ProcSample]:
     return samples
 
 
-def _build_children_map(samples: dict[int, _ProcSample]) -> dict[int, list[int]]:
+def build_children_map(samples: dict[int, _ProcSample]) -> dict[int, list[int]]:
+    """ppid -> [child pids], from one scan_all_processes() snapshot.
+    Public (not module-private) — pending_moves.py's own fork/exec
+    pid-mismatch tracking (CLAUDE/NOTES/known-limitations.md
+    #fork-exec-pid-mismatch) reuses this and subtree_pids below
+    directly, the same subtree-walk this module built for R6's own
+    per-window process aggregation.
+    """
     children: dict[int, list[int]] = {}
     for pid, sample in samples.items():
         children.setdefault(sample.ppid, []).append(pid)
@@ -167,7 +174,7 @@ def _build_children_map(samples: dict[int, _ProcSample]) -> dict[int, list[int]]
 
 def subtree_pids(root_pid: int, children_map: dict[int, list[int]]) -> list[int]:
     """root_pid + every descendant, via children_map (see
-    _build_children_map) — a real process tree can't cycle, but the
+    build_children_map) — a real process tree can't cycle, but the
     `seen` guard costs nothing and makes this safe against a
     theoretically malformed map regardless.
     """
@@ -237,7 +244,7 @@ class ProcMonSampler:
 
     def poll(self, windows: list[WindowInfo], proc_path: str = PROC_PATH) -> list[WindowStat]:
         samples = scan_all_processes(proc_path)
-        children_map = _build_children_map(samples)
+        children_map = build_children_map(samples)
         now = time.monotonic()
         elapsed = (now - self._prev_time) if self._prev_time is not None else None
 
