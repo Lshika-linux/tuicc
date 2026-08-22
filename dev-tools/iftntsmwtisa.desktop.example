@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=IFTNTSMWTISA
+Comment=Mock fork/exec pid-mismatch test app for tuicc's pending_moves.py
+Exec=/usr/bin/env python3 /REPLACE/WITH/ABSOLUTE/PATH/TO/tuicc/dev-tools/IFTNTSMWTISA.py
+Terminal=false
+Categories=Development;
