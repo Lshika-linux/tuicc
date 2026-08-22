@@ -27,15 +27,18 @@ MIN_CELLS = 3
 
 
 def enter_resize(box: ModuleBox) -> dict:
-    """Snapshots box's original x/y/w/h/fw/fh, for cancel_resize to
-    restore — a single resize-mode session can change both size and
+    """Snapshots box's original x/y/w/h/fw/fh/fh_auto, for cancel_resize
+    to restore — a single resize-mode session can change both size and
     position (toggled via move_toggle), so one Escape must undo all of
     it. fw/fh are snapshotted alongside w/h even though a box only ever
     has one of each live pair (see layout.py's own docstring) —
     simplest to always carry all slots than to special-case which one a
-    given box actually uses.
+    given box actually uses. fh_auto is included so cancelling an
+    in-progress height resize also un-freezes it if resize_step()
+    already flipped it off this session (see that function's own
+    docstring for the freeze).
     """
-    return {"x": box.x, "y": box.y, "w": box.w, "h": box.h, "fw": box.fw, "fh": box.fh}
+    return {"x": box.x, "y": box.y, "w": box.w, "h": box.h, "fw": box.fw, "fh": box.fh, "fh_auto": box.fh_auto}
 
 
 def resize_step(box: ModuleBox, dimension: str, grow: bool,
@@ -49,6 +52,15 @@ def resize_step(box: ModuleBox, dimension: str, grow: bool,
     absolute cell count directly instead of computing a ratio delta —
     a fixed box stays fixed across the whole resize, never silently
     converted to a ratio by touching it in F2.
+
+    A height resize on a box with fh_auto set additionally freezes it
+    (fh_auto -> False) the moment it actually happens — see
+    layout.py's own ModuleBox.fh_auto docstring for the full "auto
+    until you touch it" model this is one half of. Deliberately here,
+    not in enter_box_editing()/do_enter_resize() — entering edit mode
+    on an auto box without ever pressing a grow/shrink key must NOT
+    freeze it (Escape right back out should leave it fully auto), only
+    an actual resize commits to freezing it.
     """
     if dimension == "w" and box.fw is not None:
         max_cells = term_width - x_cells
@@ -58,6 +70,7 @@ def resize_step(box: ModuleBox, dimension: str, grow: bool,
     if dimension == "h" and box.fh is not None:
         max_cells = term_height - y_cells
         box.fh = min(max(box.fh + (STEP_CELLS if grow else -STEP_CELLS), MIN_CELLS), max_cells)
+        box.fh_auto = False
         return
 
     if dimension == "w":
@@ -108,6 +121,7 @@ def cancel_resize(box: ModuleBox, snapshot: dict) -> None:
     box.h = snapshot["h"]
     box.fw = snapshot["fw"]
     box.fh = snapshot["fh"]
+    box.fh_auto = snapshot["fh_auto"]
 
 
 @dataclass

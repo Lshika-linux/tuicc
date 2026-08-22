@@ -11,9 +11,15 @@ target_kind dispatch.
 from types import SimpleNamespace
 
 import tuicc.modules.sessions as sessions_module
-from tuicc.modules.sessions import handle_row, handle_action, expanded_preview
+from tuicc.modules.sessions import handle_row, handle_action, expanded_preview, required_fh, SLOT_COUNT
 from tuicc.model import WMState, Region, Window
 from tuicc.session import save_session
+
+
+# ---------- required_fh ----------
+
+def test_required_fh_is_slot_count_plus_border():
+    assert required_fh(cfg=None) == SLOT_COUNT + 2  # not user-configurable today, see config.py's own SESSION_SLOT_COUNT
 
 
 class _FakeProvider:

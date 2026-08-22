@@ -68,10 +68,26 @@
 #
 # Every fh value below is that box's own real row count, and bars' fw
 # is its own real column count, on Rafi's own daily terminal (51 rows,
-# 192 cols) — converted from this preset's own previous ratio values
-# (every one of them landed on an exact integer against that size,
-# confirming that's genuinely what they were already tuned against by
-# hand, not a guess made converting them).
+# 192 cols).
+#
+# control/connectivity/media/sessions/rwb additionally set fh_auto —
+# their fh gets RECOMPUTED from each module's own real content every
+# launch (how many [[control.toggle]] entries are enabled, connectivity/
+# media's own visible_slots, rwb's always-reserved-either-way row 3),
+# instead of staying a number hand-tuned to Rafi's own config
+# specifically. See layout.py's own ModuleBox.fh_auto docstring for the
+# full model — in short, auto until F2 actually resizes that box's
+# height, at which point it freezes as a plain manual fh, same as any
+# other box. The fh values below are still real (recomputed to match
+# on load with the 3 example control.toggle entries defaults/config.toml
+# ships active — see that file's own comments), not placeholders —
+# useful if you're reading this file by hand. sidebar/control/launcher/
+# bars' current numbers reflect Rafi's own live F2 session (control
+# manually shrunk, sidebar grew to fill the space that freed up via
+# its own squeeze — see layout_engine.py's exception 2) more than the
+# original hand-derived "thesis screen" layout above — still the same
+# overall arrangement, just control/power_menu given less room and
+# sidebar/preview a bit more.
 
 [[box]]
 name = "sessions"
@@ -79,20 +95,22 @@ x = 0.0
 y = 0.0
 w = 0.1875
 fh = 5
+fh_auto = true
 
 [[box]]
 name = "sidebar"
 x = 0.0
 y = 0.098039
 w = 0.1875
-h = 0.627451
+h = 0.686274529
 
 [[box]]
 name = "control"
 x = 0.0
-y = 0.72549
+y = 0.784313529
 w = 0.189583
-fh = 8
+fh = 5
+fh_auto = true
 
 [[box]]
 name = "power_menu"
@@ -106,7 +124,7 @@ name = "launcher"
 x = 0.1875
 y = 0.0
 w = 0.734375
-fh = 4
+fh = 5
 
 [[box]]
 name = "preview"
@@ -121,6 +139,7 @@ x = 0.1875
 y = 0.784314
 w = 0.197917
 fh = 11
+fh_auto = true
 
 [[box]]
 name = "media"
@@ -128,6 +147,7 @@ x = 0.384375
 y = 0.784314
 w = 0.314583
 fh = 11
+fh_auto = true
 
 [[box]]
 name = "sysmon"
@@ -141,11 +161,12 @@ name = "rwb"
 x = 0.921875
 y = 0.0
 w = 0.078125
-fh = 4
+fh = 5
+fh_auto = true
 
 [[box]]
 name = "bars"
 x = 0.920833
-y = 0.086275
+y = 0.098039215
 fw = 15
-h = 0.709804
+h = 0.686274508

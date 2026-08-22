@@ -190,6 +190,16 @@ def build_layout_from_preset(preset_number: int) -> Layout:
                 f"exactly one of h (ratio) or fh (fixed rows), not "
                 f"{'both' if h is not None else 'neither'}"
             )
+        fh_auto = box_data.get("fh_auto", False)
+        # Only meaningful alongside fh — see layout.py's own module
+        # docstring. A ratio (h) box has no fh value for this to
+        # recompute in the first place.
+        if fh_auto and fh is None:
+            raise ValueError(
+                f"box {box_data['name']!r} in preset {preset_number} sets "
+                f"fh_auto but has no fh — fh_auto only makes sense on a "
+                f"box that's already using fh (fixed rows)"
+            )
         box = ModuleBox(
             name=box_data["name"],
             x=box_data["x"],
@@ -198,6 +208,7 @@ def build_layout_from_preset(preset_number: int) -> Layout:
             fw=fw,
             h=h,
             fh=fh,
+            fh_auto=fh_auto,
         )
         boxes.append(box)
 

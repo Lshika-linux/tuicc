@@ -207,6 +207,61 @@ def test_build_layout_from_preset_rejects_neither_h_nor_fh(tmp_path, monkeypatch
         build_layout_from_preset(1)
 
 
+# ---------- build_layout_from_preset: fh_auto ----------
+
+def test_build_layout_from_preset_accepts_fh_auto_alongside_fh(tmp_path, monkeypatch):
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "control"\nx = 0.0\ny = 0.5\nw = 0.2\nfh = 8\nfh_auto = true\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    layout = build_layout_from_preset(1)
+
+    assert layout.boxes[0].fh == 8
+    assert layout.boxes[0].fh_auto is True
+
+
+def test_build_layout_from_preset_defaults_fh_auto_to_false(tmp_path, monkeypatch):
+    # A plain fh box predating fh_auto's existence must not silently
+    # start auto-recomputing — same missing-key-is-off convention as
+    # everywhere else in this codebase.
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "control"\nx = 0.0\ny = 0.5\nw = 0.2\nfh = 8\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    layout = build_layout_from_preset(1)
+
+    assert layout.boxes[0].fh_auto is False
+
+
+def test_build_layout_from_preset_rejects_fh_auto_on_a_ratio_h_box(tmp_path, monkeypatch):
+    # fh_auto only means something alongside fh — a ratio box has
+    # nothing for it to recompute.
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "1.toml").write_text(
+        '[[box]]\nname = "control"\nx = 0.0\ny = 0.5\nw = 0.2\nh = 0.3\nfh_auto = true\n'
+    )
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    with pytest.raises(ValueError, match="control"):
+        build_layout_from_preset(1)
+
+
 # ---------- build_layout_from_preset: w/fw exclusivity ----------
 
 def test_build_layout_from_preset_accepts_fw_instead_of_w(tmp_path, monkeypatch):

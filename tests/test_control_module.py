@@ -7,8 +7,24 @@ own docstring for this repo's established stance on that).
 from types import SimpleNamespace
 
 from tuicc.modules.control import (
-    _state_index, _toggle_dot_color, _row_kind, _is_binary, _dot_glyph, _row_suffix, nav_items,
+    _state_index, _toggle_dot_color, _row_kind, _is_binary, _dot_glyph, _row_suffix, nav_items, required_fh,
 )
+
+
+# ---------- required_fh ----------
+
+def test_required_fh_is_toggle_count_plus_border():
+    cfg = SimpleNamespace(control_toggles=[{"label": "a"}, {"label": "b"}, {"label": "c"}])
+
+    assert required_fh(cfg) == 3 + 2
+
+
+def test_required_fh_with_zero_toggles_still_reserves_one_content_row():
+    # draw()'s own "(no toggles configured)" line still needs somewhere
+    # to go even with nothing configured.
+    cfg = SimpleNamespace(control_toggles=[])
+
+    assert required_fh(cfg) == 1 + 2
 
 
 # ---------- _is_binary ----------

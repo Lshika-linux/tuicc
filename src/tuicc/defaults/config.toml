@@ -522,24 +522,96 @@ shell_true = false
 # which of 3+ states it's in, only per-state color can (see
 # Performance Mode below).
 #
-# All commented out below — none of these run until you uncomment one
-# AND have the underlying tool installed. Several assume genuinely
-# arbitrary tools (tailscale, EasyEffects, ...) that most users won't
-# have; these six were picked as broadly-applicable examples, not a
-# "recommended defaults" list.
+# Five of these six stay commented out below — none of them run until
+# you uncomment one AND have the underlying tool installed. Several
+# assume genuinely arbitrary tools (tailscale, EasyEffects, ...) that
+# most users won't have; these six were picked as broadly-applicable
+# examples, not a "recommended defaults" list.
+#
+# Airplane Mode is the exception, active below by default: rfkill is a
+# bare kernel/util-linux tool, not a daemon — no location/notification/
+# power-profile service to configure or possibly not have installed,
+# same reasoning brightness.py/audio's own always-on modules already
+# lean on. Even with zero wireless hardware present, "rfkill block all"
+# against zero devices is a harmless no-op, not an error — so Control
+# ships with at least ONE real, working row out of the box on
+# virtually any machine, rather than every fresh install seeing "(no
+# toggles configured)" until they read this file. Two more, genuinely
+# harmless example toggles sit right below it — a real, visibly
+# flipping on/off switch and a 3-state cycle, both touching nothing
+# outside themselves — exist purely to show the mechanism (including
+# per-state color, the 3-state one only) and point at this file, not
+# to do anything meaningful.
 
-# [[control.toggle]]
-# label = "Airplane Mode"
-# shell_true = true
-#
-#   [[control.toggle.state]]
-#   name = "on"
-#   status_command = "rfkill list | grep -q 'Soft blocked: yes'"
-#   command = "rfkill block all"
-#
-#   [[control.toggle.state]]
-#   name = "off"
-#   command = "rfkill unblock all"
+[[control.toggle]]
+label = "Airplane Mode"
+shell_true = true
+
+  [[control.toggle.state]]
+  name = "on"
+  status_command = "rfkill list | grep -q 'Soft blocked: yes'"
+  command = "rfkill block all"
+
+  [[control.toggle.state]]
+  name = "off"
+  command = "rfkill unblock all"
+
+# State lives in whether /tmp/tuicc_example_toggle exists — test/touch/rm
+# are all standalone coreutils binaries (not shell builtins masquerading
+# as one), so this genuinely needs no shell and no dependency beyond
+# what every Linux system already has. Actually flips (unlike a fixed
+# `true`/`false` no-op pair would) so it demonstrates the real
+# poll-then-command toggle mechanism, while still doing nothing outside
+# one throwaway marker file in /tmp (which most systems clear on
+# reboot anyway, and is harmless either way even if they don't). Delete
+# this entry once you've added your own toggles; it's a placeholder,
+# not a recommendation.
+[[control.toggle]]
+label = "Example Toggle (edit config.toml)"
+shell_true = false
+
+  [[control.toggle.state]]
+  name = "on"
+  status_command = "test -f /tmp/tuicc_example_toggle"
+  command = "touch /tmp/tuicc_example_toggle"
+
+  [[control.toggle.state]]
+  name = "off"
+  command = "rm -f /tmp/tuicc_example_toggle"
+
+# Same idea as Example Toggle above, but 3 states instead of 2 — shows
+# the OTHER shape this contract supports (a plain on/off and an N-way
+# cycle like Performance Mode below are the exact same mechanism, see
+# this section's own opening comment). A 3+-state toggle can't rely on
+# just a filled/outline dot to show which state it's in (see that same
+# comment), so this is also the one example that actually demonstrates
+# BOTH the "[state]" suffix text AND per-state color (color is a plain
+# named/#hex/[R,G,B] value, same as [theme] above — NOT a [theme] role
+# reference like "accent"/"text"/"urgent"; blue/white/red here is the
+# exact same convention Performance Mode below already uses). shell_true
+# = true here (unlike Example Toggle) because state lives in one marker
+# file's CONTENT, not just its existence — needs real shell redirection
+# (`echo ... >`) to write it, not just a bare argv command.
+[[control.toggle]]
+label = "Example Cycle (edit config.toml)"
+shell_true = true
+
+  [[control.toggle.state]]
+  name = "one"
+  status_command = "grep -qx one /tmp/tuicc_example_cycle"
+  command = "echo one > /tmp/tuicc_example_cycle"
+  color = "blue"
+
+  [[control.toggle.state]]
+  name = "two"
+  status_command = "grep -qx two /tmp/tuicc_example_cycle"
+  command = "echo two > /tmp/tuicc_example_cycle"
+  color = "white"
+
+  [[control.toggle.state]]
+  name = "three"
+  command = "echo three > /tmp/tuicc_example_cycle"
+  color = "red"
 
 # [[control.toggle]]
 # label = "Night Light"

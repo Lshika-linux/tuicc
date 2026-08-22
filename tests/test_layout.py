@@ -135,3 +135,47 @@ def test_a_box_can_mix_fw_width_with_fh_height():
     data = boxes_to_toml_data(boxes)
 
     assert data == {"box": [{"name": "bars", "x": 0.9, "y": 0.1, "fw": 8, "fh": 20}]}
+
+
+# ---------- fh_auto ----------
+
+def test_boxes_to_toml_data_writes_fh_auto_when_true():
+    boxes = [ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=8, fh_auto=True)]
+
+    data = boxes_to_toml_data(boxes)
+
+    assert data == {"box": [{"name": "control", "x": 0.0, "y": 0.5, "w": 0.2, "fh": 8, "fh_auto": True}]}
+
+
+def test_boxes_to_toml_data_omits_fh_auto_when_false():
+    # A plain fh box's entry stays exactly as clean as before fh_auto
+    # existed — no "fh_auto = false" clutter on every box.
+    boxes = [ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=8, fh_auto=False)]
+
+    data = boxes_to_toml_data(boxes)
+
+    assert data == {"box": [{"name": "control", "x": 0.0, "y": 0.5, "w": 0.2, "fh": 8}]}
+
+
+def test_fh_auto_round_trips_through_build_layout_from_preset_parsing(tmp_path, monkeypatch):
+    import tomli_w
+    import tuicc.config as config_module
+    from tuicc.config import build_layout_from_preset
+
+    boxes = [ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=8, fh_auto=True)]
+    data = boxes_to_toml_data(boxes)
+
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    with open(user_dir / "1.toml", "wb") as f:
+        tomli_w.dump(data, f)
+
+    monkeypatch.setattr(config_module, "PACKAGED_PRESETS_DIR", packaged_dir)
+    monkeypatch.setattr(config_module, "USER_PRESETS_DIR", user_dir)
+
+    loaded = build_layout_from_preset(1)
+
+    assert loaded.boxes[0].fh_auto is True
+    assert loaded.boxes[0].fh == 8

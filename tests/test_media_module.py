@@ -16,8 +16,24 @@ from tuicc.audio.model import AudioSink
 from tuicc.modules.media import (
     _player_label, _body_label, _source_label, has_scrolling_content,
     _build_rows, nav_items, handle_row, is_expanded, collapse, _cava_row_level,
-    _selected_player_index, _selected_output_index,
+    _selected_player_index, _selected_output_index, required_fh,
 )
+
+
+# ---------- required_fh ----------
+
+def test_required_fh_is_two_sections_plus_border():
+    # Now Playing header + visible_slots + spacer + Output header +
+    # visible_slots, + 2 border — same shape as connectivity.py's own.
+    cfg = SimpleNamespace(media_visible_slots=3)
+
+    assert required_fh(cfg) == 2 * 3 + 5
+
+
+def test_required_fh_scales_with_visible_slots():
+    cfg = SimpleNamespace(media_visible_slots=4)
+
+    assert required_fh(cfg) == 2 * 4 + 5
 
 
 def _reset_module_state():

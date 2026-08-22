@@ -8,7 +8,7 @@ one dict but forgotten in the other).
 from unittest.mock import Mock
 
 import tuicc.render as render
-from tuicc.render import MODULES, NAV_PROVIDERS, ACTION_HANDLERS, draw_all, collect_nav_items
+from tuicc.render import MODULES, NAV_PROVIDERS, ACTION_HANDLERS, AUTO_FH_PROVIDERS, apply_auto_fh, draw_all, collect_nav_items
 from tuicc.layout import Layout, ModuleBox
 from tuicc.modules import power_menu, quick_actions, sessions, control, media
 
@@ -69,6 +69,53 @@ def test_sysmon_handlers_registered():
     from tuicc.modules import sysmon
     assert ACTION_HANDLERS["sysmon_row"] is sysmon.handle_row
     assert ACTION_HANDLERS["sysmon_action"] is sysmon.handle_action
+
+
+# ---------- AUTO_FH_PROVIDERS / apply_auto_fh ----------
+
+def test_auto_fh_providers_registered_for_the_5_list_modules():
+    from tuicc.modules import connectivity, rwb
+    assert AUTO_FH_PROVIDERS == {
+        "control": control.required_fh,
+        "connectivity": connectivity.required_fh,
+        "media": media.required_fh,
+        "sessions": sessions.required_fh,
+        "rwb": rwb.required_fh,
+    }
+
+
+def test_apply_auto_fh_recomputes_a_box_with_fh_auto_set(monkeypatch):
+    provider = Mock(return_value=9)
+    monkeypatch.setattr(render, "AUTO_FH_PROVIDERS", {"fake": provider})
+    box = ModuleBox(name="fake", x=0.0, y=0.0, w=0.2, h=None, fh=3, fh_auto=True)
+    layout = Layout(boxes=[box])
+
+    apply_auto_fh(layout, cfg="cfg-sentinel")
+
+    assert box.fh == 9
+    provider.assert_called_once_with("cfg-sentinel")
+
+
+def test_apply_auto_fh_leaves_a_manually_frozen_box_alone(monkeypatch):
+    provider = Mock(return_value=9)
+    monkeypatch.setattr(render, "AUTO_FH_PROVIDERS", {"fake": provider})
+    box = ModuleBox(name="fake", x=0.0, y=0.0, w=0.2, h=None, fh=3, fh_auto=False)
+    layout = Layout(boxes=[box])
+
+    apply_auto_fh(layout, cfg="cfg-sentinel")
+
+    assert box.fh == 3  # untouched
+    provider.assert_not_called()
+
+
+def test_apply_auto_fh_skips_a_module_with_no_provider(monkeypatch):
+    monkeypatch.setattr(render, "AUTO_FH_PROVIDERS", {})
+    box = ModuleBox(name="no_provider", x=0.0, y=0.0, w=0.2, h=None, fh=3, fh_auto=True)
+    layout = Layout(boxes=[box])
+
+    apply_auto_fh(layout, cfg="cfg-sentinel")  # must not raise
+
+    assert box.fh == 3  # nothing to compute it with, left as-is
 
 
 # ---------- draw_all/collect_nav_items skip a box collapsed to 0 (see

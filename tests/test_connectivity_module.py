@@ -59,7 +59,23 @@ from tuicc.modules.connectivity import (
     cancel_hidden_ssid_entry,
     handle_hidden_ssid_key,
     apply_hidden_ssid,
+    required_fh,
 )
+
+
+# ---------- required_fh ----------
+
+def test_required_fh_is_two_sections_plus_border():
+    # header + visible_slots + spacer + header + visible_slots, + 2 border.
+    cfg = SimpleNamespace(connectivity_visible_slots=3)
+
+    assert required_fh(cfg) == 2 * 3 + 5
+
+
+def test_required_fh_scales_with_visible_slots():
+    cfg = SimpleNamespace(connectivity_visible_slots=5)
+
+    assert required_fh(cfg) == 2 * 5 + 5
 
 
 def _ctx(wifi_networks=None, bluetooth_devices=None, wifi_error=None, bluetooth_error=None,

@@ -18,6 +18,28 @@ from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, centered_x, draw_width_safe
 
 
+def _weather_configured(cfg) -> bool:
+    """Whether [weather] is set up at all, derived from cfg alone (no
+    live RenderContext/status snapshot needed) — any of the three
+    location sources (lat/lon, geoclue, ip_approx) being set means it
+    is. Shared by required_fh() and draw()'s own row-3 hint below, so
+    both agree on the exact same condition.
+    """
+    return cfg.weather_geoclue or cfg.weather_ip_approx or cfg.weather_lat is not None
+
+
+def required_fh(cfg) -> int:
+    """Time + date + a third row, always — that third row shows real
+    weather when [weather] is configured, or a short "you can opt into
+    this" hint when it isn't (see draw()'s own row-3 handling), so
+    unlike most required_fh() functions this one is a plain constant
+    now: the row exists either way, only its CONTENT depends on
+    config. Plus 2 for the border. Used by render.py's apply_auto_fh()
+    for boxes with fh_auto set.
+    """
+    return 3 + 2
+
+
 def _weather_line(ctx):
     """Returns (text, color_pair) for the box's own compact weather
     line — icon + temperature, plus ctx.config.weather_city_code
@@ -128,6 +150,19 @@ def draw(stdscr, box, ctx, module_name):
         # a single addstr() call spanning one isn't safe even with
         # correct width math.
         draw_width_safe(stdscr, y + 3, weather_x, weather_line, weather_color)
+    elif not _weather_configured(ctx.config):
+        # Row 3 is reserved either way (see required_fh()) — when
+        # there's no real weather to show, use it to point at the
+        # opt-in instead of leaving it silently blank, so the box
+        # itself hints that this exists rather than only README/
+        # config.toml's own comments. Deliberately dim, not the
+        # accent/text colors real content uses — a hint, not a value.
+        hint = "cfg: weather"
+        hint_x = x + 1 + centered_x(0, inner_w, hint)
+        try:
+            stdscr.addstr(y + 3, hint_x, hint, theme.get("text", 0) | curses.A_DIM)
+        except curses.error:
+            pass
 
 
 def nav_items(box, ctx, module_name) -> list[NavItem]:

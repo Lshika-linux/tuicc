@@ -64,7 +64,7 @@ def test_enter_resize_snapshots_x_y_w_h():
 
     snapshot = enter_resize(box)
 
-    assert snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6, "fw": None, "fh": None}
+    assert snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6, "fw": None, "fh": None, "fh_auto": False}
 
 
 def test_cancel_resize_restores_the_snapshot():
@@ -177,6 +177,44 @@ def test_resize_step_w_is_unaffected_by_fh():
 
     assert box.w == pytest.approx(0.21)
     assert box.fh == 10  # untouched
+
+
+# ---------- resize_step: fh_auto freezes on an actual height resize ----------
+
+def test_resize_step_freezes_fh_auto_on_a_height_resize():
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=8, fh_auto=True)
+
+    resize_step(box, "h", grow=True, term_width=100, term_height=40, x_cells=0, y_cells=20)
+
+    assert box.fh == 9
+    assert box.fh_auto is False  # frozen — an explicit resize commits to a manual number
+
+
+def test_resize_step_width_resize_does_not_freeze_fh_auto():
+    # Only an actual HEIGHT resize touches fh_auto — width is a
+    # completely separate axis (see layout.py's own module docstring,
+    # fh_auto is height-only).
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=8, fh_auto=True)
+
+    resize_step(box, "w", grow=True, term_width=100, term_height=40, x_cells=0, y_cells=20)
+
+    assert box.fh_auto is True  # untouched
+
+
+def test_cancel_resize_restores_fh_auto():
+    # Entering edit mode and pressing a grow key, then Escaping out,
+    # must leave the box fully auto again — see resize_step's own
+    # docstring for why the freeze has to be undoable by cancel.
+    box = ModuleBox(name="control", x=0.0, y=0.5, w=0.2, h=None, fh=8, fh_auto=True)
+    snapshot = enter_resize(box)
+
+    resize_step(box, "h", grow=True, term_width=100, term_height=40, x_cells=0, y_cells=20)
+    assert box.fh_auto is False  # frozen mid-session
+
+    cancel_resize(box, snapshot)
+
+    assert box.fh_auto is True  # un-frozen — the resize never happened as far as the box is concerned
+    assert box.fh == 8
 
 
 # ---------- resize_step: fw (fixed columns) boxes ----------
@@ -331,7 +369,7 @@ def test_enter_box_editing_snapshots_and_activates():
     assert state.active is True
     assert state.editing is True
     assert state.box is box
-    assert state.snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6, "fw": None, "fh": None}
+    assert state.snapshot == {"x": 0.1, "y": 0.2, "w": 0.26, "h": 0.6, "fw": None, "fh": None, "fh_auto": False}
     assert state.dimension == "size"
     assert state.is_new_box is False
 

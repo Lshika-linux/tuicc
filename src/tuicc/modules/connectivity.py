@@ -89,6 +89,19 @@ def _selected_bt_index(devices, selected_id):
     return None
 
 
+def required_fh(cfg) -> int:
+    """How many rows this box needs: WiFi header + visible_slots WiFi
+    rows + a spacer + Bluetooth header + visible_slots Bluetooth rows,
+    plus 2 for the top/bottom border — 2*visible_slots + 5. Constant
+    regardless of how many real networks/devices actually exist (the
+    windowed-list section always renders exactly visible_slots rows,
+    real or "[empty]" placeholder), so this only depends on the
+    CONFIG value, never runtime state. Used by render.py's
+    apply_auto_fh() for boxes with fh_auto set.
+    """
+    return 2 * cfg.connectivity_visible_slots + 5
+
+
 def _connected_first(devices):
     """Bluetooth's own device list has no inherent relevance ordering
     the way WiFi's already does for free — iwd's Station.

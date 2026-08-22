@@ -51,7 +51,7 @@ from tuicc.navigation import (
     module_of_item,
     LAST_ITEM_QUERY,
 )
-from tuicc.render import draw_all, ACTION_HANDLERS, MODULES, NAV_PROVIDERS
+from tuicc.render import draw_all, ACTION_HANDLERS, MODULES, NAV_PROVIDERS, AUTO_FH_PROVIDERS, apply_auto_fh
 from tuicc.render_utils import draw_status_line
 from tuicc.theme import resolve_color
 from tuicc.theme_setup import reassign_theme_pairs, apply_background, assign_control_toggle_pairs
@@ -454,6 +454,11 @@ def do_cycle_preset(loop_state, cfg, resize):
         idx = numbers.index(cfg.preset_number) if cfg.preset_number in numbers else -1
         next_number = numbers[(idx + 1) % len(numbers)]
         cfg.layout = build_layout_from_preset(next_number)
+        # Same reasoning as build_app()'s own call — a freshly loaded
+        # preset can carry fh_auto boxes needing (re)computation, and
+        # cfg is already fully built here (a live running app switching
+        # presets), unlike load_config()'s own bootstrapping order.
+        apply_auto_fh(cfg.layout, cfg)
         set_active_preset(next_number)
         cfg.preset_number = next_number
         loop_state.active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
@@ -565,7 +570,15 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
 def handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize):
     choice = resize_mode.choose(spawn_picker, key)
     if choice is not None:
-        new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
+        # A module with an AUTO_FH_PROVIDERS entry spawns already sized
+        # to fit its own real content (fh_auto=True — see layout.py's
+        # own ModuleBox.fh_auto docstring), not the generic h=0.2 ratio
+        # every other module still gets.
+        if choice in AUTO_FH_PROVIDERS:
+            new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=None,
+                                 fh=AUTO_FH_PROVIDERS[choice](cfg), fh_auto=True)
+        else:
+            new_box = ModuleBox(name=choice, x=0.4, y=0.4, w=0.2, h=0.2)
         cfg.layout.boxes.append(new_box)
         loop_state.active_module = choice
         # Handoff: pop "spawn_picker" before pushing "resize_editing" —

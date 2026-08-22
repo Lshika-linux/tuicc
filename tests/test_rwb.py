@@ -9,9 +9,53 @@ underlying KeyError this reproduces at the module level.
 """
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
-from tuicc.modules.rwb import _weather_line, _build_weather_preview
+from tuicc.modules.rwb import _weather_line, _build_weather_preview, required_fh, _weather_configured
 from tuicc.weather import WeatherNow, DayForecast
+
+
+def _cfg(geoclue=False, ip_approx=False, lat=None):
+    return SimpleNamespace(weather_geoclue=geoclue, weather_ip_approx=ip_approx, weather_lat=lat)
+
+
+# ---------- required_fh ----------
+# Row 3 is reserved either way now — real weather when configured, an
+# opt-in hint (draw()'s own row-3 handling) when not — so required_fh()
+# is a plain constant regardless of whether weather is configured.
+
+def test_required_fh_is_constant_without_weather():
+    assert required_fh(_cfg()) == 3 + 2
+
+
+def test_required_fh_is_constant_with_lat_lon_configured():
+    assert required_fh(_cfg(lat=50.08)) == 3 + 2
+
+
+def test_required_fh_is_constant_with_geoclue_configured():
+    assert required_fh(_cfg(geoclue=True)) == 3 + 2
+
+
+def test_required_fh_is_constant_with_ip_approx_configured():
+    assert required_fh(_cfg(ip_approx=True)) == 3 + 2
+
+
+# ---------- _weather_configured ----------
+
+def test_weather_configured_false_by_default():
+    assert _weather_configured(_cfg()) is False
+
+
+def test_weather_configured_true_with_lat():
+    assert _weather_configured(_cfg(lat=50.08)) is True
+
+
+def test_weather_configured_true_with_geoclue():
+    assert _weather_configured(_cfg(geoclue=True)) is True
+
+
+def test_weather_configured_true_with_ip_approx():
+    assert _weather_configured(_cfg(ip_approx=True)) is True
 
 
 class _FakeStatus:

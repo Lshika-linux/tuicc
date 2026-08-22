@@ -43,6 +43,18 @@ SLOT_COUNT = 3
 ACTIONS = ["load", "save", "del", "name"]
 NAME_COL_WIDTH = 9  # fixed so every row's actions line up, regardless of that row's own name length
 
+def required_fh(cfg) -> int:
+    """One row per slot (always SLOT_COUNT — not user-configurable
+    today, see config.py's own SESSION_SLOT_COUNT docstring) plus 2
+    for the top/bottom border. Takes cfg for interface consistency
+    with the other required_fh() functions (render.py's
+    AUTO_FH_PROVIDERS calls all of them the same way) even though this
+    one doesn't currently read anything from it — if SLOT_COUNT ever
+    becomes configurable, this is where that would plug in.
+    """
+    return SLOT_COUNT + 2
+
+
 _expanded_slot = None   # int | None — which slot's actions are showing, if any
 _naming_slot = None      # int | None — which slot is mid-rename, if any
 _name_input = ""

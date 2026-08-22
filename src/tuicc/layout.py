@@ -80,6 +80,37 @@ resizes either box, since fh/fw can't shrink by definition either way.
 Height and width are chained completely independently (an fh chain
 never looks at fw boxes or vice versa) — a box that's fh on one axis
 and fw on the other participates in both chains separately.
+
+`fh_auto` (height only — no `fw_auto` yet, nothing's asked for it):
+opts a box that's already in `fh` mode into having that number
+RECOMPUTED from its own module's real content every time the layout is
+(re)built — see render.py's `AUTO_FH_PROVIDERS`/`apply_auto_fh()` for
+the actual computation, and each of control.py/connectivity.py/
+media.py/sessions.py/rwb.py's own `required_fh()` for what each one
+counts. Only meaningful alongside `fh` (raises if set on a `h`-ratio
+box — nothing to recompute). Found live: `fh` was originally just a
+number Rafi hand-tuned via F2 to fit his OWN config's content exactly
+(how many toggles he has enabled, how many wifi/bt slots he shows) —
+a fresh install with a different toggle count would get a box that's
+too big or too small for ITS content, undermining the whole "nobody
+except me gets a working layout out of the box" goal fh/fw were built
+for in the first place. `fh_auto` fixes that by construction: the
+value tracks content, not a one-time guess.
+
+**"Auto until you touch it," not "always auto":** the moment
+resize_mode.py's resize_step() actually resizes a box's height (not
+just enters editing — the user has to press a grow/shrink key on the
+h dimension), `fh_auto` flips to `False` and freezes whatever fh value
+the box had at that instant as a plain manual number from then on,
+exactly like a box that never had `fh_auto` at all. This was a real,
+explicit decision, not an obvious default — the alternative (auto
+always wins, every launch) would silently undo a deliberate F2 resize
+the next time control_toggles' count happened to change, which reads
+as "my resize got reverted for no reason" rather than the intended
+"tuicc keeps your list boxes sized to fit." A box that DOES want to
+track content forever (never F2-resized) just keeps working — nothing
+about launching, switching presets (F4), or content changing on its
+own ever flips the flag off; only an explicit height resize does.
 """
 
 from dataclasses import dataclass, field
@@ -94,6 +125,7 @@ class ModuleBox:
     h: float | None = None   # ratio 0..1, scales with terminal height — exactly one of h/fh is set
     fw: int | None = None    # fixed columns (absolute terminal cells) — see module docstring
     fh: int | None = None    # fixed rows (absolute terminal cells) — see module docstring
+    fh_auto: bool = False    # fh gets recomputed from the module's own content — see module docstring
     clickable: bool = True
 
 
@@ -109,7 +141,11 @@ def boxes_to_toml_data(boxes: list[ModuleBox]) -> dict:
     that same parsing loop unchanged. Used by resize mode's save.
     Writes back whichever of w/fw and h/fh the box actually uses (each
     axis independently) — a box saved while in fh/fw mode stays in that
-    mode, never silently converted to a ratio (or vice versa).
+    mode, never silently converted to a ratio (or vice versa). fh_auto
+    is only written when true (a plain fh box's TOML entry stays exactly
+    as clean as before this existed) — saving a box that's still in
+    auto mode preserves that, saving one resize_step() already froze
+    just writes its now-plain fh number, same as any other fh box.
     """
     data = []
     for box in boxes:
@@ -120,6 +156,8 @@ def boxes_to_toml_data(boxes: list[ModuleBox]) -> dict:
             entry["w"] = box.w
         if box.fh is not None:
             entry["fh"] = box.fh
+            if box.fh_auto:
+                entry["fh_auto"] = True
         else:
             entry["h"] = box.h
         data.append(entry)

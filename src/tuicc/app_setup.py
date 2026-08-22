@@ -15,6 +15,7 @@ docstring).
 from dataclasses import dataclass
 
 from tuicc.config import load_config, Config
+from tuicc.render import apply_auto_fh
 from tuicc.theme_setup import setup_theme, assign_control_toggle_pairs
 from tuicc.actions import ActionContext
 from tuicc.providers.base import Provider
@@ -84,6 +85,11 @@ def build_app(preset_override: int | None = None) -> AppContext:
     deliberately stdscr-free otherwise (see this module's own docstring).
     """
     cfg = load_config(preset_override=preset_override)
+    # See render.py's apply_auto_fh()/layout.py's ModuleBox.fh_auto own
+    # docstrings — must run after cfg is fully built (required_fh()
+    # reads control_toggles/visible_slots/weather fields off it), so it
+    # can't happen inside load_config() itself.
+    apply_auto_fh(cfg.layout, cfg)
     theme_pairs = setup_theme(cfg.theme)
     # Second curses-pair range, for [[control.toggle]] colors — must
     # start past theme_pairs' own range or the two collide. cfg.theme's

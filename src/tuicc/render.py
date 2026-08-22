@@ -15,6 +15,12 @@ that populates NavItem.preview_data needs an entry here; see
 navigation.py's own preview_data docstring and CLAUDE/NOTES/
 design-decisions.md#module-self-sufficiency-vs-preview for why this
 exists as a registry rather than a field on NavItem itself.
+
+AUTO_FH_PROVIDERS is a fourth, OPTIONAL registry (module_name -> a
+`(cfg) -> int` function) — only a module whose box can use `fh_auto`
+needs an entry; see layout.py's own ModuleBox.fh_auto docstring for
+the full model this implements, and each listed module's own
+required_fh() for what it actually counts.
 """
 
 from tuicc.modules import (
@@ -71,6 +77,14 @@ PREVIEW_RENDERERS = {
     "connectivity": connectivity.draw_preview,
 }
 
+AUTO_FH_PROVIDERS = {
+    "control": control.required_fh,
+    "connectivity": connectivity.required_fh,
+    "media": media.required_fh,
+    "sessions": sessions.required_fh,
+    "rwb": rwb.required_fh,
+}
+
 ACTION_HANDLERS = dict(BASE_HANDLERS)
 ACTION_HANDLERS[quick_actions.TARGET_KIND] = quick_actions.handle
 ACTION_HANDLERS[power_menu.TARGET_KIND] = power_menu.handle
@@ -94,6 +108,31 @@ def draw_all(stdscr, layout, boxes, ctx):
             # would otherwise need to defend against individually.
             continue
         draw_fn(stdscr, boxes[module_box.name], ctx, module_box.name)
+
+
+def apply_auto_fh(layout, cfg):
+    """For every box with fh_auto set, recomputes its fh from
+    AUTO_FH_PROVIDERS[box.name](cfg) — see layout.py's own
+    ModuleBox.fh_auto docstring for the "auto until resize_step()
+    touches it" model this is one half of (the other half,
+    freezing fh_auto to False on an actual height resize, lives in
+    resize_mode.py). Called once after cfg is fully built — app_setup.py's
+    build_app() right after load_config(), and main.py's
+    do_cycle_preset() (F4) after loading the newly-selected preset —
+    never from inside config.py itself, since required_fh() needs a
+    real, finished Config (control_toggles, visible_slots, weather
+    fields), which doesn't exist yet partway through building one.
+    A module name with no AUTO_FH_PROVIDERS entry is silently skipped
+    (fh_auto only makes sense on the 5 modules that actually have
+    list-shaped, config-driven content — nothing stops a preset from
+    setting it elsewhere, but there's nothing to compute).
+    """
+    for box in layout.boxes:
+        if not box.fh_auto:
+            continue
+        provider = AUTO_FH_PROVIDERS.get(box.name)
+        if provider is not None:
+            box.fh = provider(cfg)
 
 
 def collect_nav_items(layout, boxes, ctx):

@@ -195,6 +195,18 @@ def _reconcile_expanded_state(players: list) -> None:
 # now lives in windowed_list.py, shared with modules/sysmon.py.
 
 
+def required_fh(cfg) -> int:
+    """Same shape as connectivity.py's own required_fh() — Now Playing
+    header + visible_slots player rows + a spacer + Output header +
+    visible_slots sink rows, plus 2 for the border — 2*visible_slots+5.
+    Constant regardless of how many players/sinks actually exist right
+    now (fixed-slot-plus-scroll windowing), so only the CONFIG value
+    matters. Used by render.py's apply_auto_fh() for boxes with
+    fh_auto set.
+    """
+    return 2 * cfg.media_visible_slots + 5
+
+
 def _selected_player_index(players: list, selected_id: str | None, expanded_bus_name: str | None) -> int | None:
     """Which index into `players` the current selection corresponds to,
     if any — used to anchor _window_start so navigating to (or

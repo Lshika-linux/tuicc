@@ -21,6 +21,18 @@ from tuicc.render_utils import draw_box_outline
 from tuicc import control
 
 
+def required_fh(cfg) -> int:
+    """How many rows this box needs to show every configured toggle
+    without clipping or wasted space — one row per cfg.control_toggles
+    entry, plus 2 for the top/bottom border, minimum 1 content row even
+    with zero toggles configured (draw()'s own "(no toggles
+    configured)" line still needs somewhere to go). Used by
+    render.py's apply_auto_fh() for boxes with fh_auto set — see
+    layout.py's own module docstring for the full fh_auto model.
+    """
+    return max(len(cfg.control_toggles), 1) + 2
+
+
 def _state_index(states: list[dict], current_name: str | None) -> int | None:
     if current_name is None:
         return None
