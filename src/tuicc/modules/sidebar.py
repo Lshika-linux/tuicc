@@ -27,8 +27,36 @@ from tuicc.render_utils import draw_box_outline, display_width, wc_truncate, mar
 from tuicc.title_condense import condense_title
 
 
-def _slot_height(region, preview_count=0):
-    base = 2 if region is None else 2 + len(region.windows)
+def _grouped_window_rows(windows, cfg):
+    """Pure logic: collapse windows that would show the exact same row
+    (app_id + condensed detail) into one row with a count, instead of
+    repeating it once per window — found live, an autotiling spiral
+    gone deep (16+ plain "kitty ~" shells, this session's own machine)
+    wastes a whole screen's worth of sidebar height on rows that say
+    nothing different from each other. Genuinely different windows of
+    the same app (one running htop, say) stay their own row — only
+    EXACT duplicates collapse, so nothing actually informative gets
+    hidden.
+
+    Returns [(app_id, detail, count), ...], one entry per distinct
+    (app_id, detail) pair, in first-seen order. count is always >= 1;
+    the caller only appends a "×N" suffix when it's > 1 (see draw()'s
+    own call site) — a count of exactly 1 renders identically to the
+    original, uncollapsed row.
+    """
+    groups = {}
+    order = []
+    for window in windows:
+        key = (window.app_id, condense_title(window.app_id, window.title, cfg))
+        if key not in groups:
+            groups[key] = 0
+            order.append(key)
+        groups[key] += 1
+    return [(app_id, detail, groups[(app_id, detail)]) for app_id, detail in order]
+
+
+def _slot_height(region, cfg, preview_count=0):
+    base = 2 if region is None else 2 + len(_grouped_window_rows(region.windows, cfg))
     return base + preview_count
 
 
@@ -158,7 +186,7 @@ def _slot_data(ctx):
     data = []
     for ws_id, region in _build_slots(ctx):
         preview_apps = _preview_apps_for(ctx, ws_id)
-        data.append((ws_id, region, preview_apps, _slot_height(region, len(preview_apps))))
+        data.append((ws_id, region, preview_apps, _slot_height(region, ctx.config, len(preview_apps))))
     return data
 
 
@@ -229,13 +257,16 @@ def draw(stdscr, box, ctx, module_name):
 
         existing_count = 0
         if region is not None:
-            for i, window in enumerate(region.windows):
-                app = window.app_id
-                detail = condense_title(app, window.title, ctx.config)
+            # Collapses windows that would show the exact same row
+            # (e.g. many plain "kitty ~" shells) into one — see
+            # _grouped_window_rows()'s own docstring.
+            grouped = _grouped_window_rows(region.windows, ctx.config)
+            for i, (app, detail, count) in enumerate(grouped):
+                app_label = f"{app} ×{count}" if count > 1 else app
                 available = max(w - 4, 0)
 
                 try:
-                    chunk = wc_truncate(app, available)
+                    chunk = wc_truncate(app_label, available)
                     stdscr.addstr(item_y + 1 + i, x + 2, chunk, text_color | curses.A_BOLD)
                     cx = x + 2 + display_width(chunk)
                     # row_end, not end — `end` is this function's own
@@ -254,7 +285,7 @@ def draw(stdscr, box, ctx, module_name):
                         stdscr.addstr(item_y + 1 + i, cx, f" {scrolled}", text_color | curses.A_DIM)
                 except curses.error:
                     pass
-            existing_count = len(region.windows)
+            existing_count = len(grouped)
 
         # Apps a currently-expanded (see sessions.py) session slot would
         # spawn HERE if loaded — not yet real, so urgent (same role

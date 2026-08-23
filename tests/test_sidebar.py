@@ -11,14 +11,18 @@ from tuicc.navigation import LAST_ITEM_QUERY
 from tuicc.modules.sidebar import (
     nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
     _visible_slot_range, _selected_slot_index, _hidden_summary,
-    _fitting_title, _right_aligned_overlay_col,
+    _fitting_title, _right_aligned_overlay_col, _grouped_window_rows,
 )
+
+
+def _cfg():
+    return SimpleNamespace(terminal_apps=set(), browser_apps=set(), browser_title_names=set())
 
 
 def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
     return SimpleNamespace(
         state=WMState(regions=regions),
-        config=SimpleNamespace(total_workspaces=total_workspaces),
+        config=SimpleNamespace(total_workspaces=total_workspaces, **vars(_cfg())),
         selected_id=selected_id,
         session_preview=session_preview,
         typing_mode=False,
@@ -26,30 +30,82 @@ def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
     )
 
 
-def _window(id, app_id):
-    return Window(id=id, app_id=app_id, title="", focused=False, rect=(0, 0, 1, 1))
+def _window(id, app_id, title=""):
+    return Window(id=id, app_id=app_id, title=title, focused=False, rect=(0, 0, 1, 1))
 
 
 # ---------- _slot_height ----------
 
 def test_slot_height_empty_region_is_two():
-    assert _slot_height(None) == 2
+    assert _slot_height(None, _cfg()) == 2
 
 
 def test_slot_height_grows_with_window_count():
     region = Region(id="1", name="1", windows=[_window("w1", "a"), _window("w2", "b")])
 
-    assert _slot_height(region) == 4
+    assert _slot_height(region, _cfg()) == 4
 
 
 def test_slot_height_grows_with_preview_count_too():
     region = Region(id="1", name="1", windows=[_window("w1", "a")])
 
-    assert _slot_height(region, preview_count=2) == 5
+    assert _slot_height(region, _cfg(), preview_count=2) == 5
 
 
 def test_slot_height_preview_count_on_empty_region():
-    assert _slot_height(None, preview_count=3) == 5
+    assert _slot_height(None, _cfg(), preview_count=3) == 5
+
+
+def test_slot_height_collapses_identical_windows_into_one_row():
+    # Two "a" windows with the same (empty) title collapse into a
+    # single row — see _grouped_window_rows()'s own docstring. Height
+    # reflects the collapsed row count (1), not the raw window count
+    # (2): base 2 + 1 distinct row = 3, not 4.
+    region = Region(id="1", name="1", windows=[_window("w1", "a"), _window("w2", "a")])
+
+    assert _slot_height(region, _cfg()) == 3
+
+
+# ---------- _grouped_window_rows ----------
+
+def test_grouped_window_rows_no_duplicates_stays_one_row_per_window():
+    windows = [_window("w1", "a"), _window("w2", "b")]
+
+    assert _grouped_window_rows(windows, _cfg()) == [("a", "", 1), ("b", "", 1)]
+
+
+def test_grouped_window_rows_collapses_exact_duplicates_with_a_count():
+    windows = [_window("w1", "kitty"), _window("w2", "kitty"), _window("w3", "kitty")]
+
+    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 3)]
+
+
+def test_grouped_window_rows_different_titles_stay_separate_even_for_the_same_app():
+    # Same app_id, but condense_title() produces a genuinely different
+    # detail for each (a real title, not the empty default) — must NOT
+    # collapse together, or real distinguishing info (what's actually
+    # running) would silently vanish.
+    cfg = SimpleNamespace(terminal_apps={"kitty"}, browser_apps=set(), browser_title_names=set())
+    windows = [_window("w1", "kitty", title="htop"), _window("w2", "kitty", title="nvim main.py")]
+
+    result = _grouped_window_rows(windows, cfg)
+
+    assert len(result) == 2
+    assert all(count == 1 for _app, _detail, count in result)
+
+
+def test_grouped_window_rows_mixed_some_duplicate_some_not():
+    windows = [_window("w1", "kitty"), _window("w2", "kitty"), _window("w3", "firefox")]
+
+    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 2), ("firefox", "", 1)]
+
+
+def test_grouped_window_rows_preserves_first_seen_order():
+    windows = [_window("w1", "c"), _window("w2", "a"), _window("w3", "c"), _window("w4", "b")]
+
+    result = _grouped_window_rows(windows, _cfg())
+
+    assert [app for app, _detail, _count in result] == ["c", "a", "b"]
 
 
 # ---------- _preview_apps_for ----------

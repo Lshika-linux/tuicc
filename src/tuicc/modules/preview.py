@@ -164,15 +164,59 @@ def draw(stdscr, box, ctx, module_name):
         _draw_dashed_outline(stdscr, y + 1, x + 1, h - 2, w - 2, dim)
         return
 
-    for window in tiled:
+    # Tiled windows are laid out together, in one pass — the only way
+    # to guarantee every pair of adjacent siblings gets exactly one
+    # gap cell between them, see _layout_tiled_windows()'s own
+    # docstring. Floating windows stay fully independent (deliberately
+    # allowed to overlap tiled ones, see this module's own top
+    # docstring), so they keep using _window_screen_rect() per window.
+    tiled_rects, too_small_groups = _layout_tiled_windows(tiled, x, y, w, h)
+    tiled_by_id = {window.id: window for window in tiled}
+    for window_id, (win_x, win_y, win_w, win_h) in tiled_rects.items():
+        window = tiled_by_id[window_id]
         is_selected = f"preview:{window.id}" == ctx.selected_id
         border_color = theme.get("selected", 0) if is_selected else theme.get("border", 0)
-        _draw_window(stdscr, window, x, y, w, h, border_color, theme.get("text", 0), ctx.config)
+        _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, theme.get("text", 0), ctx.config)
 
     for window in floating:
         is_selected = f"preview:{window.id}" == ctx.selected_id
         color = theme.get("selected", 0) if is_selected else theme.get("accent", 0)
-        _draw_window(stdscr, window, x, y, w, h, color, color, ctx.config, filled=True)
+        win_x, win_y, win_w, win_h = _window_screen_rect(window, x, y, w, h)
+        if _detail_tier(win_w, win_h) == "none":
+            # No sibling-tree scale to match for a floating window (see
+            # this module's own top docstring) — its own independent
+            # rect is the group, same as any other single-window group.
+            too_small_groups.append((win_x, win_y, win_w, win_h, [window]))
+        else:
+            _draw_window(stdscr, window, win_x, win_y, win_w, win_h, color, color, ctx.config, filled=True)
+
+    # Every too-small window (see _detail_tier()'s own docstring) still
+    # HAS a real nav target — it just didn't get its own drawn box, a
+    # crammed handful of overlapping tags reading as noise, not detail.
+    # ONE dashed placeholder PER COLLAPSED GROUP (same helper the
+    # empty-workspace placeholder already uses), each already sized to
+    # match its own real allocated cell — see _layout_tiled_windows()'s
+    # own docstring for why that's the whole point of collapsing at the
+    # CELL level instead of after the fact: a group's box visibly
+    # matches the scale of whatever real sibling sits next to it,
+    # rather than shrink-wrapping just its own (much tinier)
+    # individual windows' post-split rects. Leaving them as unexplained
+    # blank space instead (no placeholder at all) read as a rendering
+    # bug the first time it was seen live, not "intentionally
+    # condensed".
+    if too_small_groups:
+        urgent_color = theme.get("urgent", 0)
+        for gx, gy, gw, gh, _members in too_small_groups:
+            _draw_dashed_outline(stdscr, gy, gx, gh, gw, urgent_color)
+
+        # Bottom-right of the WHOLE outer preview box, near its own
+        # corner marks — one aggregate count, not one label per group.
+        total_count = sum(len(members) for _gx, _gy, _gw, _gh, members in too_small_groups)
+        message = f"+{total_count} window{'s' if total_count != 1 else ''}, too small"
+        try:
+            stdscr.addstr(y + h - 1, x + w - display_width(message) - 2, message, urgent_color)
+        except curses.error:
+            pass
 
 
 def _window_label(window, cfg):
@@ -202,6 +246,294 @@ def _corner_label(window):
     app_id = window.app_id or ""
     letter = app_id[0].upper() if app_id else "?"
     return f"[{letter}]"
+
+
+def _partition_windows(windows, x0, x1, y0, y1):
+    """Pure logic: reconstruct the recursive guillotine-cut split tree
+    a set of tiled windows must have come from, using nothing but each
+    window's own flat rect (window.rect — a 0..1 fraction of its
+    region; model.py's Window carries no parent/sibling structure from
+    the real WM tree at all, so this is genuinely all there is to work
+    from). Sway/i3 tiling is ALWAYS a binary space partition — every
+    split is a plain left/right or top/bottom cut, never a "pinwheel"
+    arrangement — so for any real set of tiled-window rects, there is
+    always SOME single axis-aligned line that cleanly separates them
+    into two non-straddling groups; recursing on each side is exact,
+    not a heuristic, for genuine WM data.
+
+    Returns a tree of plain tuples:
+      ("leaf", window)                        — one window
+      ("split", "x"|"y", [child, child, ...])  — a real guillotine cut
+      ("unsplit", windows, x0, x1, y0, y1)     — fallback: no clean cut
+        found among these windows at all (should never happen for real
+        sway/i3 data; kept only so a future bug elsewhere degrades to
+        "each window placed independently" instead of crashing).
+
+    x0/x1/y0/y1 are search bounds (0..1, in the ORIGINAL whole-region
+    coordinate space) for the recursive call, not carried in "leaf"/
+    "split" nodes — a leaf is exactly its own window regardless of
+    where the search happened to narrow to, and a split's own bounds
+    are implicit in its children's.
+    """
+    if len(windows) == 1:
+        return ("leaf", windows[0])
+
+    eps = 1e-4
+    xs = sorted({w.rect[0] for w in windows} | {w.rect[0] + w.rect[2] for w in windows})
+    for xc in xs:
+        if xc <= x0 + eps or xc >= x1 - eps:
+            continue
+        left = [w for w in windows if w.rect[0] + w.rect[2] <= xc + eps]
+        right = [w for w in windows if w.rect[0] >= xc - eps]
+        if left and right and len(left) + len(right) == len(windows):
+            return ("split", "x", [
+                _partition_windows(left, x0, xc, y0, y1),
+                _partition_windows(right, xc, x1, y0, y1),
+            ])
+
+    ys = sorted({w.rect[1] for w in windows} | {w.rect[1] + w.rect[3] for w in windows})
+    for yc in ys:
+        if yc <= y0 + eps or yc >= y1 - eps:
+            continue
+        top = [w for w in windows if w.rect[1] + w.rect[3] <= yc + eps]
+        bottom = [w for w in windows if w.rect[1] >= yc - eps]
+        if top and bottom and len(top) + len(bottom) == len(windows):
+            return ("split", "y", [
+                _partition_windows(top, x0, x1, y0, yc),
+                _partition_windows(bottom, x0, x1, yc, y1),
+            ])
+
+    return ("unsplit", windows, x0, x1, y0, y1)
+
+
+def _node_extent(node, axis):
+    """Pure logic: how much of the given axis (0..1, whole-region
+    fraction) a partition-tree node spans — a leaf's own rw/rh, a
+    split ALONG this axis sums its children's extents (they cover the
+    combined span sequentially), and a split along the OTHER axis just
+    reads its first child's extent (every child of a cut along the
+    other axis spans the same range on THIS one — the guillotine
+    invariant _partition_windows() itself relies on to find that cut
+    in the first place).
+    """
+    idx = 2 if axis == "x" else 3
+    kind = node[0]
+    if kind == "leaf":
+        return node[1].rect[idx]
+    if kind == "unsplit":
+        x0, x1, y0, y1 = node[2], node[3], node[4], node[5]
+        return (x1 - x0) if axis == "x" else (y1 - y0)
+    _, split_axis, children = node
+    if split_axis == axis:
+        return sum(_node_extent(c, axis) for c in children)
+    return _node_extent(children[0], axis)
+
+
+def _allocate_axis(sizes, total_cells, gap=1):
+    """Pure logic: divide total_cells terminal cells among len(sizes)
+    siblings, proportionally to their real relative sizes, while
+    reserving EXACTLY `gap` cells between each pair of neighbors —
+    never LESS than that (gap=1's own zero-cell case is the original
+    "windows glued together" bug) and never more either (found live: a
+    first fix guaranteed "at least one" by shaving each window's own
+    width independently, which left visibly DIFFERENT gap widths
+    across different splits of the very same real layout, since
+    leftover rounding slack isn't reserved anywhere in particular — it
+    just piles up whichever window's own rounding happened to go up).
+    Largest-remainder rounding: every size gets its rounded-down
+    proportional share first, then whichever siblings lost the most to
+    flooring get the few cells still left over, one each — the
+    allocations always sum to EXACTLY total_cells - (n-1)*gap, never
+    drifting over or under.
+
+    gap defaults to 1, but _layout_tiled_windows() calls this with
+    gap=0 for row-splits (y axis) specifically — found live, a real
+    terminal character cell is taller than it is wide (fonts commonly
+    run something like 1:2 width:height), so a "1 row" gap reads as
+    visibly THICKER on screen than a "1 column" gap even though both
+    are "1 cell" in the abstract grid; two windows' own border LINES
+    (top window's bottom border, bottom window's own top border) already
+    read as clearly separate rows on their own, with no blank row
+    needed between them the way a blank COLUMN is needed between two
+    side-by-side windows' vertical border lines.
+
+    Degrades to 1 cell each (ignoring real proportions, but still
+    never letting two windows touch when gap > 0) when there isn't
+    even room for that — a curses.error guard at the real draw call
+    site already tolerates writing past the box's own edge in that
+    case, same tolerance every other degenerate-box case in this file
+    leans on.
+    """
+    n = len(sizes)
+    if n == 1:
+        return [max(total_cells, 1)]
+    available = total_cells - (n - 1) * gap
+    if available < n:
+        return [1] * n
+    total = sum(sizes) or 1.0
+    raw = [s / total * available for s in sizes]
+    floors = [int(r) for r in raw]
+    remainder = available - sum(floors)
+    order = sorted(range(n), key=lambda i: raw[i] - floors[i], reverse=True)
+    for i in order[:remainder]:
+        floors[i] += 1
+    return floors
+
+
+def _subtree_windows(node):
+    """Pure logic: every real window under a partition-tree node, in
+    tree order — used to know which window ids a collapsed subtree
+    (see _layout_tiled_windows()'s own "too small" handling) actually
+    stands in for.
+    """
+    kind = node[0]
+    if kind == "leaf":
+        return [node[1]]
+    if kind == "unsplit":
+        return list(node[1])
+    return [w for child in node[2] for w in _subtree_windows(child)]
+
+
+def _layout_tiled_windows(windows, x, y, w, h):
+    """Pure logic: lay out a region's whole set of TILED windows into
+    terminal-cell sub-rects together, in one pass — the only way to
+    guarantee every pair of adjacent siblings gets EXACTLY one gap
+    cell between them regardless of the preview box's own size (see
+    _allocate_axis()'s own docstring for why doing this per-window,
+    independently, can't guarantee that). NOT used for floating
+    windows — those are deliberately allowed to overlap tiled ones
+    (see this module's own top docstring), so they keep using
+    _window_screen_rect()'s simpler, fully independent placement.
+
+    Returns ({window.id: (win_x, win_y, win_w, win_h)}, too_small_groups)
+    — the second element is a list of (win_x, win_y, win_w, win_h,
+    [window, ...]) for every subtree collapsed as a whole (see below);
+    windows inside one of those groups do NOT get an entry in the
+    first dict at all, draw()'s own call site is what turns each group
+    into one combined placeholder box instead of drawing them
+    individually.
+
+    A node — leaf OR a whole split subtree — collapses into ONE group
+    the moment its own ALLOCATED cell drops below the "letter" detail
+    threshold (_detail_tier()), checked BEFORE recursing any further,
+    not after computing each individual leaf's own (much tinier) rect
+    and only THEN noticing they're all too small. This matters for
+    more than just efficiency: found live, bounding just the leaves'
+    own tiny post-split rects produces a placeholder box far SMALLER
+    than what that whole branch actually occupies in the real tiling —
+    every cell a deep spiral's later splits ate into stays outside the
+    box, reading as "some random small area is too small", not "this
+    whole branch, the same size as its own sibling, is". Collapsing at
+    the CELL level instead means the placeholder is exactly as large
+    as an un-recursed leaf in that same spot would have been — visibly
+    matching scale with whatever real sibling sits next to it.
+    """
+    if not windows:
+        return {}, []
+
+    tree = _partition_windows(windows, 0.0, 1.0, 0.0, 1.0)
+    inner_w, inner_h = max(w - 2, 0), max(h - 2, 0)
+    result = {}
+    too_small_groups = []
+
+    def walk(node, cell_x, cell_y, cell_w, cell_h):
+        kind = node[0]
+        win_x, win_y = x + 1 + cell_x, y + 1 + cell_y
+        win_w, win_h = max(cell_w, 1), max(cell_h, 1)
+
+        if kind != "leaf" and _detail_tier(win_w, win_h) == "none":
+            too_small_groups.append((win_x, win_y, win_w, win_h, _subtree_windows(node)))
+            return
+        if kind == "leaf":
+            window = node[1]
+            if _detail_tier(win_w, win_h) == "none":
+                too_small_groups.append((win_x, win_y, win_w, win_h, [window]))
+                return
+            result[window.id] = (win_x, win_y, win_w, win_h)
+            return
+        if kind == "unsplit":
+            group, gx0, gx1, gy0, gy1 = node[1], node[2], node[3], node[4], node[5]
+            span_x, span_y = (gx1 - gx0) or 1.0, (gy1 - gy0) or 1.0
+            for window in group:
+                rx, ry, rw, rh = window.rect
+                leaf_x = x + 1 + cell_x + round((rx - gx0) / span_x * cell_w)
+                leaf_y = y + 1 + cell_y + round((ry - gy0) / span_y * cell_h)
+                # -1 shave on x only, none on y — same asymmetry as the
+                # real split path's x/y gap split, see _allocate_axis()'s
+                # own docstring.
+                leaf_w = max(round(rw / span_x * cell_w) - 1, 1)
+                leaf_h = max(round(rh / span_y * cell_h), 1)
+                result[window.id] = (leaf_x, leaf_y, leaf_w, leaf_h)
+            return
+        _, axis, children = node
+        gap = 1 if axis == "x" else 0  # see _allocate_axis()'s own docstring for why y gets 0
+        sizes = [_node_extent(c, axis) for c in children]
+        allocs = _allocate_axis(sizes, cell_w if axis == "x" else cell_h, gap=gap)
+        offset = 0
+        for child, alloc in zip(children, allocs):
+            if axis == "x":
+                walk(child, cell_x + offset, cell_y, alloc, cell_h)
+            else:
+                walk(child, cell_x, cell_y + offset, cell_w, alloc)
+            offset += alloc + gap
+
+    walk(tree, 0, 0, inner_w, inner_h)
+
+    # Live-found, deep autotiling spirals (28+ windows on this
+    # session's own real machine): _partition_windows()'s eps-based
+    # boundary matching can drop a window from the tree entirely at
+    # deep enough nesting (real crash confirmed live — nav_items()
+    # doing tiled_rects[window.id] on a dropped id raised KeyError,
+    # bringing tuicc's whole main loop down). Root cause not fully
+    # nailed down (probably eps being either too big relative to
+    # extremely small deeply-nested fractions, or too small relative
+    # to real accumulated per-split pixel rounding — a fixed constant
+    # can't be right for both), but a whole-group layout can NEVER be
+    # allowed to crash the app over a cosmetic gap-consistency
+    # feature — any window missing after the real walk (from either
+    # result or a too_small_groups entry) is placed via the simpler,
+    # always-safe per-window _window_screen_rect() instead of just
+    # failing silently or raising.
+    grouped_ids = {w.id for _x, _y, _w, _h, group in too_small_groups for w in group}
+    for window in windows:
+        if window.id not in result and window.id not in grouped_ids:
+            result[window.id] = _window_screen_rect(window, x, y, w, h)
+
+    return result, too_small_groups
+
+
+def _window_screen_rect(window, x, y, w, h):
+    """Pure logic: convert a window's real relative rect (window.rect —
+    0..1 fractions of its region, from the WM) into terminal-cell
+    coordinates within this preview box, fully independently of any
+    sibling. Used for FLOATING windows only — genuinely, deliberately
+    allowed to overlap tiled ones (see this module's own top
+    docstring), so there's no "siblings" concept to reconcile against
+    the way _layout_tiled_windows() has to for tiled ones. nav_items()
+    also uses this for floating windows, so the box actually drawn and
+    the rect Tab-navigation uses to select it always agree.
+
+    win_w/win_h are NOT round(rw * (w-2)) directly — a lone rounding of
+    the width alone doesn't guard against a floating window's own edge
+    landing flush against a real pixel-thin real gap the same way
+    tiled windows originally could (see CLAUDE/NOTES/known-limitations.md,
+    and _layout_tiled_windows()'s own docstring for the fuller story
+    of why tiled windows needed a whole-group fix instead of this
+    simpler per-window one). Deriving win_w from where the window's
+    own right edge (rx+rw) itself rounds to — the SAME formula used
+    for win_x — rather than rounding rw on its own, then subtracting 1
+    from that, guarantees a real gap cell survives whenever two
+    floating windows happen to sit right at each other's edge, without
+    needing to know anything about siblings at all.
+    """
+    rx, ry, rw, rh = window.rect
+    win_x = x + 1 + round(rx * (w - 2))
+    win_y = y + 1 + round(ry * (h - 2))
+    right = x + 1 + round((rx + rw) * (w - 2))
+    bottom = y + 1 + round((ry + rh) * (h - 2))
+    win_w = max(right - win_x - 1, 1)
+    win_h = max(bottom - win_y - 1, 1)
+    return win_x, win_y, win_w, win_h
 
 
 def _corner_positions(win_y, win_x, win_h, win_w, label_len):
@@ -257,18 +589,71 @@ def _draw_dashed_outline(stdscr, y, x, h, w, color):
         pass
 
 
-def _draw_window(stdscr, window, x, y, w, h, border_color, text_color, cfg, filled=False):
-    rx, ry, rw, rh = window.rect
+_MIN_FULL_DETAIL_W = 10
+_MIN_FULL_DETAIL_H = 4
+_MIN_LETTER_DETAIL_W = 5
+_MIN_LETTER_DETAIL_H = 3
 
-    win_x = x + 1 + round(rx * (w - 2))
-    win_y = y + 1 + round(ry * (h - 2))
-    win_w = round(rw * (w - 2))
-    win_h = round(rh * (h - 2))
+
+def _detail_tier(win_w, win_h):
+    """Pure logic: how much detail a window's own scaled-down box has
+    genuine room for — found live, an autotiling spiral gone deep
+    enough (16+ real windows, this session's own machine) shrinks
+    boxes to the point where the ORIGINAL always-draw-everything
+    behavior reads as pure garbage: four corner "[K]" tags AND a
+    word-wrapped center label, all crammed into a handful of cells,
+    overlapping each other and neighboring windows into noise, not
+    "identifying detail" anymore.
+
+    "full" — real room for both: the word-wrapped center label AND
+    all 4 corner tags (today's original behavior, unchanged above
+    these thresholds).
+    "letter" — only room for one clean, single, centered "[K]" tag —
+    corner tags dropped entirely (four of them crammed into a box
+    this small just overlap each other, no better than the center
+    label they'd be replacing).
+    "none" — not even that: no real content (no corner tags, no center
+    label — see _draw_window()'s own "none" branch for what it draws
+    INSTEAD: a plain red dashed placeholder box, not nothing — a
+    window silently occupying no visible space at all read as a
+    rendering bug, not "intentionally condensed", once seen live).
+    The caller (draw()) also tallies "none" windows into one aggregate
+    "+N windows, too small" line, so the exact count is legible even
+    when several of these dashed boxes overlap or sit too close to
+    count individually by eye.
+    """
+    if win_w >= _MIN_FULL_DETAIL_W and win_h >= _MIN_FULL_DETAIL_H:
+        return "full"
+    if win_w >= _MIN_LETTER_DETAIL_W and win_h >= _MIN_LETTER_DETAIL_H:
+        return "letter"
+    return "none"
+
+
+def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_color, cfg, filled=False):
+    detail = _detail_tier(win_w, win_h)
+    if detail == "none":
+        # Drawn as nothing HERE, deliberately — see draw()'s own call
+        # site: too-small windows get ONE combined dashed placeholder
+        # covering their whole shared area, not one box each (tried
+        # live, one-per-window read as its own kind of clutter once
+        # several of them sat close together).
+        return
 
     if filled:
         draw_filled_box(stdscr, win_y, win_x, win_h, win_w, border_color)
 
     draw_box_outline(stdscr, win_y, win_x, win_h, win_w, border_color)
+
+    if detail == "letter":
+        # One clean, centered "[K]" — see _detail_tier()'s own
+        # docstring for why corner tags are dropped at this size
+        # rather than kept alongside it.
+        label = wc_truncate(_corner_label(window), max(win_w - 2, 0))
+        try:
+            stdscr.addstr(win_y + win_h // 2, centered_x(win_x + 1, max(win_w - 2, 0), label), label, text_color)
+        except curses.error:
+            pass
+        return
 
     # Corner labels (dimmed — identifying detail, not something that
     # should visually compete with the window's own border/selection
@@ -318,14 +703,28 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     if focused_region is None:
         return []
 
+    # Same tiled/floating split as draw() — tiled windows' rects come
+    # from the one shared whole-group layout (so Tab-navigation always
+    # highlights exactly the box actually drawn), floating windows
+    # stay independent.
+    tiled = [win for win in focused_region.windows if not win.floating]
+    tiled_rects, too_small_groups = _layout_tiled_windows(tiled, x, y, w, h)
+    # Every window inside a collapsed group (see _layout_tiled_windows()'s
+    # own docstring) shares that ONE group's rect for navigation too —
+    # there's only the one placeholder box actually drawn for all of
+    # them, so Tab-selecting any window in the group highlights it.
+    grouped_rects = {w.id: (gx, gy, gw, gh) for gx, gy, gw, gh, members in too_small_groups for w in members}
+
     items = []
     for window in focused_region.windows:
-        rx, ry, rw, rh = window.rect
-
-        win_x = x + 1 + round(rx * (w - 2))
-        win_y = y + 1 + round(ry * (h - 2))
-        win_w = round(rw * (w - 2))
-        win_h = round(rh * (h - 2))
+        if window.floating:
+            win_x, win_y, win_w, win_h = _window_screen_rect(window, x, y, w, h)
+            if window.id in grouped_rects:
+                win_x, win_y, win_w, win_h = grouped_rects[window.id]
+        elif window.id in tiled_rects:
+            win_x, win_y, win_w, win_h = tiled_rects[window.id]
+        else:
+            win_x, win_y, win_w, win_h = grouped_rects[window.id]
 
         items.append(NavItem(
             id=f"preview:{window.id}",
