@@ -25,6 +25,8 @@ from tuicc.modules.connectivity import (
     _is_header_action_flashing,
     _preview_available,
     flash_header_action,
+    guarantee_scan_blink,
+    is_scan_blink_guaranteed,
     _wifi_preview_tables,
     _bt_adapter_info_table,
     _bt_preview_tables,
@@ -1671,6 +1673,49 @@ def test_is_header_action_flashing_false_when_never_flashed():
     connectivity_module._flash_until.clear()
 
     assert _is_header_action_flashing("bluetooth", "pairable") is False
+
+
+# ---------- guarantee_scan_blink / is_scan_blink_guaranteed ----------
+# A fixed-count reassurance blink, deliberately NOT tied to real
+# is_scanning() — see guarantee_scan_blink's own docstring for why (a
+# real scan completes too fast on real hardware for is_scanning() to
+# ever visibly read True). _scan_guarantee_until is module-level state,
+# same "clear by hand" convention as _flash_until's own tests above.
+
+def test_guarantee_scan_blink_is_guaranteed_immediately_after(monkeypatch):
+    connectivity_module._scan_guarantee_until.clear()
+    monkeypatch.setattr(connectivity_module.time, "monotonic", lambda: 100.0)
+
+    guarantee_scan_blink("wifi")
+
+    assert is_scan_blink_guaranteed("wifi") is True
+
+
+def test_guarantee_scan_blink_expires_after_scan_guarantee_seconds(monkeypatch):
+    connectivity_module._scan_guarantee_until.clear()
+    now = [100.0]
+    monkeypatch.setattr(connectivity_module.time, "monotonic", lambda: now[0])
+
+    guarantee_scan_blink("wifi")
+    now[0] += connectivity_module.SCAN_GUARANTEE_SECONDS + 0.1
+
+    assert is_scan_blink_guaranteed("wifi") is False
+
+
+def test_guarantee_scan_blink_only_guarantees_the_matching_section(monkeypatch):
+    connectivity_module._scan_guarantee_until.clear()
+    monkeypatch.setattr(connectivity_module.time, "monotonic", lambda: 100.0)
+
+    guarantee_scan_blink("wifi")
+
+    assert is_scan_blink_guaranteed("wifi") is True
+    assert is_scan_blink_guaranteed("bluetooth") is False
+
+
+def test_is_scan_blink_guaranteed_false_when_never_triggered():
+    connectivity_module._scan_guarantee_until.clear()
+
+    assert is_scan_blink_guaranteed("bluetooth") is False
 
 
 def test_wifi_header_status_segments_flashes_only_the_pressed_group():

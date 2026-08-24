@@ -131,6 +131,10 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         else:
             status_worker.request_action("bluetooth", "discover", None)
         connectivity_mode.flash_header_action(section, "scan")
+        # Real is_scanning() completes too fast on real hardware to be
+        # a reliable "something is happening" signal on its own — see
+        # guarantee_scan_blink()'s own docstring.
+        connectivity_mode.guarantee_scan_blink(section)
         return True
     # wifi-only keys below — forgetting/hidden-connect are wifi
     # concepts, no bluetooth equivalent was asked for (see this

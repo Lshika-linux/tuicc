@@ -165,9 +165,19 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         wifi_agent.mailbox.has_pending()
         or (bluez_agent is not None and bluez_agent.mailbox.has_pending())
     )
+    # connectivity.py's own guaranteed scan-reassurance blink (see
+    # guarantee_scan_blink()'s docstring) needs the same fast tick a
+    # real pending action gets — its own window outlives
+    # status_worker.has_pending() by design (a real scan completes
+    # almost instantly; the reassurance blink deliberately doesn't).
+    scan_blink_guaranteed = (
+        connectivity_mode.is_scan_blink_guaranteed("wifi")
+        or connectivity_mode.is_scan_blink_guaranteed("bluetooth")
+    )
     stdscr.timeout(
         50 if (moves.entries or action_ctx.restore_queue or status_worker.has_pending()
-               or loop_state.resize_message is not None or agent_has_pending)
+               or loop_state.resize_message is not None or agent_has_pending
+               or scan_blink_guaranteed)
         else int(media_mode.CAVA_REDRAW_SECONDS * 1000) if cava_reader.is_running()
         else int(media_mode.MARQUEE_STEP_SECONDS * 1000) if marquee_active
         # 300, not 1000: draw() reruns unconditionally every frame

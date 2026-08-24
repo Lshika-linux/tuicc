@@ -443,6 +443,39 @@ def _is_header_action_flashing(section: str, action: str) -> bool:
     return deadline is not None and time.monotonic() < deadline
 
 
+# ---------- scan: a guaranteed reassurance blink, not a real-state readout ----------
+# _scanning_dot's own blink is driven by real is_scanning() — honest,
+# but found live to be functionally invisible on real hardware: NM/iwd
+# both complete a rescan fast enough that is_scanning() reads False
+# again before this app's own next poll ever catches a True, so
+# mashing the scan key looked like it was doing nothing even though
+# every press genuinely fired a RequestScan()/Scan(). Rafi's own
+# explicit call, after trying a keypress-confirmation redesign
+# (reverse-video "punch" flash) that read as a visual glitch instead of
+# a fix: a fixed-count reassurance blink instead — guaranteed to blink
+# 3 times after every scan/discover press, deliberately NOT tied to
+# whether a real scan is still running. is_scan_blink_guaranteed()
+# feeds into the exact same "scanning" bool _scanning_dot/the header
+# segments already render off of, so it's visually indistinguishable
+# from a real long-running scan — reassurance, not a lie about a
+# specific technical state the user would ever act on differently.
+_scan_guarantee_until = {}  # {section: monotonic deadline}
+# 3 blinks at _pending_blink_style's own 2Hz rate (0.5s per on+off
+# cycle) = 1.5s — also folded into frame_update.py's fast-tick
+# condition (see its own comment) so this actually renders smoothly
+# instead of relying on the idle 300ms cadence to happen to catch it.
+SCAN_GUARANTEE_SECONDS = 1.5
+
+
+def guarantee_scan_blink(section: str) -> None:
+    _scan_guarantee_until[section] = time.monotonic() + SCAN_GUARANTEE_SECONDS
+
+
+def is_scan_blink_guaranteed(section: str) -> bool:
+    deadline = _scan_guarantee_until.get(section)
+    return deadline is not None and time.monotonic() < deadline
+
+
 def next_browsing_selection(section: str, items: list, current_selected_id: str | None, direction: int) -> str:
     """The next/previous item's own "connectivity:<section>:<key>" id,
     wrapping at both ends (same convention same_row_neighbor(wrap=True)
@@ -954,6 +987,9 @@ def draw(stdscr, box, ctx, module_name):
             is_controllable = is_browsing() and browsing_section() == section
             scanning_domain = "wifi_scanning" if is_wifi else "bluetooth_discovering"
             scanning = ctx.status is not None and bool(ctx.status.get(scanning_domain))
+            # Real is_scanning() OR the guaranteed reassurance window —
+            # see is_scan_blink_guaranteed()'s own docstring for why.
+            scanning = scanning or is_scan_blink_guaranteed(section)
             if is_wifi:
                 adapter = ctx.status.get("wifi_adapter") if ctx.status is not None else None
                 status_segments = _wifi_header_status_segments(
