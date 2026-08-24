@@ -3,6 +3,10 @@ fixture data shaped like real NetworkManager D-Bus reply bodies, no
 mocks, same discipline as test_connectivity.py/test_iwd_agent.py.
 """
 
+import pytest
+from jeepney import DBusAddress, HeaderFields, MessageType, new_error, new_method_call
+from jeepney.low_level import Header, Message, MessageFlag
+
 from tuicc.connectivity.networkmanager import (
     NM_AP_FLAG_PRIVACY,
     NM_AP_SEC_KEY_MGMT_802_1X,
@@ -15,6 +19,7 @@ from tuicc.connectivity.networkmanager import (
     NM_ACTIVE_CONNECTION_STATE_DEACTIVATED,
     NM_DEVICE_STATE_REASON_NO_SECRETS,
     NM_DEVICE_TYPE_WIFI,
+    NetworkManagerBackend,
     _activation_outcome,
     _build_wifi_network,
     _epoch_to_iso,
@@ -331,3 +336,67 @@ def test_failure_reason_message_known_code():
 def test_failure_reason_message_unknown_code_includes_raw_code():
     message = _failure_reason_message(9999)
     assert "9999" in message
+
+
+# ---- _wait_for_activation: the vanished-ActiveConnection-object race ----
+# Reproduces a real live bug, not a hypothetical one: a wrong passphrase
+# fails fast enough that NetworkManager tears the ActiveConnection
+# object down before this loop's next poll — landing on an already-gone
+# object instead of ever seeing State go to "failed" on it. Before
+# dbus_call()'s own ERROR-checking fix this silently misbehaved a
+# different way; now it correctly raises DBusErrorResponse, which this
+# loop must treat as an equivalent failure signal, not let leak out as
+# a raw D-Bus error.
+
+class _SequenceConnection:
+    """Replies from a fixed queue, one per send_and_get_reply call, in
+    call order — enough to drive _wait_for_activation() through a
+    specific two-call sequence without needing a real connection."""
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+
+    def send_and_get_reply(self, message, *, timeout=None):
+        return self._replies.pop(0)
+
+
+def _fake_request():
+    addr = DBusAddress("/x", bus_name="org.freedesktop.NetworkManager")
+    return new_method_call(addr, "Get")
+
+
+def _error_reply(error_name, message_text):
+    return new_error(_fake_request(), error_name, "s", (message_text,))
+
+
+def _method_return_reply(body):
+    request = _fake_request()
+    header = Header(
+        endianness=request.header.endianness, message_type=MessageType.method_return,
+        flags=MessageFlag.no_reply_expected, protocol_version=1, body_length=0,
+        serial=2, fields={HeaderFields.reply_serial: request.header.serial},
+    )
+    return Message(header, body)
+
+
+def test_wait_for_activation_vanished_object_falls_back_to_device_state_reason():
+    # First poll: GetAll on the (already torn down) ActiveConnection
+    # object raises, matching the real repro's own error exactly.
+    vanished_error = _error_reply(
+        "org.freedesktop.DBus.Error.UnknownMethod",
+        'Object does not exist at path "/org/freedesktop/NetworkManager/ActiveConnection/5"',
+    )
+    # Fallback: the device's own StateReason, which survives. Get()
+    # wraps the property in a variant (sig, value) — value here is
+    # itself the (state, reason) struct _wait_for_activation() unpacks.
+    state_reason = _method_return_reply((("uu", (0, NM_DEVICE_STATE_REASON_NO_SECRETS)),))
+    connection = _SequenceConnection([vanished_error, state_reason])
+    backend = NetworkManagerBackend()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        backend._wait_for_activation(
+            connection, "/org/freedesktop/NetworkManager/ActiveConnection/5",
+            "/org/freedesktop/NetworkManager/Devices/2", "Ultima",
+        )
+
+    assert "wrong passphrase" in str(excinfo.value)

@@ -17,6 +17,7 @@ vs. genuinely unverified.
 import time
 from datetime import datetime, timezone
 
+from jeepney import DBusErrorResponse
 from jeepney.io.blocking import open_dbus_connection
 
 from tuicc import netinfo
@@ -508,10 +509,26 @@ class NetworkManagerBackend(WifiBackend):
     def _wait_for_activation(self, connection, active_connection_path, device_path, ssid):
         deadline = time.monotonic() + CONNECT_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            props = _call(
-                connection, active_connection_path, IFACE_PROPERTIES, "GetAll", "s", (IFACE_ACTIVE_CONNECTION,),
-            )[0]
-            outcome = _activation_outcome(props["State"][1])
+            try:
+                props = _call(
+                    connection, active_connection_path, IFACE_PROPERTIES, "GetAll", "s", (IFACE_ACTIVE_CONNECTION,),
+                )[0]
+            except DBusErrorResponse:
+                # A real race, not a hypothetical one — found live with
+                # a wrong passphrase: NetworkManager tears the
+                # ActiveConnection object down almost immediately once
+                # activation fails, so the NEXT poll iteration can land
+                # on an already-vanished object ("UnknownMethod: Object
+                # does not exist at path ...") before this loop ever
+                # gets to see State go to "failed" on it. The object
+                # being gone IS the failure signal here — fall through
+                # to the exact same StateReason lookup the real
+                # "failure" outcome below already uses (device_path is
+                # the physical device, not this per-attempt object, so
+                # it's still there to ask).
+                outcome = "failure"
+            else:
+                outcome = _activation_outcome(props["State"][1])
             if outcome == "success":
                 return
             if outcome == "failure":
