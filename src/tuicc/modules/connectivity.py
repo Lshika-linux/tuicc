@@ -103,20 +103,29 @@ def required_fh(cfg) -> int:
 
 
 def _connected_first(devices):
-    """Bluetooth's own device list has no inherent relevance ordering
-    the way WiFi's already does for free — iwd's Station.
-    GetOrderedNetworks() (get_networks()'s own D-Bus call) already
-    hands back the connected network sorted first, confirmed live, no
-    client-side sort needed there. bluez's GetManagedObjects() walk
-    (get_devices()) has no such guarantee — devices come back in
-    whatever order the D-Bus object tree happens to iterate, arbitrary
-    from tuicc's own point of view. Sorts connected devices first so
-    the one actually in use doesn't get pushed below the fold by the
-    fixed-slot windowed list — found live, Rafi's own report: a
-    connected device sitting third in a 3-slot view. `None` stays
+    """Neither WiFi nor Bluetooth has an inherent relevance ordering
+    guaranteed across every backend — this client-side sort is what
+    actually provides it, applied uniformly to both rather than relied
+    on being "free" from any one daemon. Originally written Bluetooth-
+    only: bluez's GetManagedObjects() walk (get_devices()) returns
+    devices in whatever order the D-Bus object tree happens to
+    iterate, arbitrary from tuicc's own point of view, while iwd's
+    Station.GetOrderedNetworks() (IwdBackend.get_networks()'s own
+    D-Bus call) DOES hand back the connected network sorted first on
+    its own — confirmed live, no client-side sort needed there, which
+    is why this used to be called only for ctx.bluetooth_devices.
+    Found live testing the NetworkManager backend for real: its own
+    get_networks() (a manual per-BSSID walk + merge, no equivalent
+    "ordered" D-Bus call to lean on — see networkmanager.py's own
+    module docstring for why its whole approach differs from iwd's)
+    carries no such guarantee either, so a connected network could
+    just as easily land third in a 3-slot view as bluez's own devices
+    once did (found live, Rafi's own report, the original reason this
+    function exists at all) — now applied to WiFi too, harmless on iwd
+    since sorting an already-sorted list changes nothing. `None` stays
     `None` (a poll error, nothing to sort); Python's own sorted() is
-    stable, so devices tied on `connected` keep their original
-    relative order rather than being shuffled for no reason.
+    stable, so items tied on `connected` keep their original relative
+    order rather than being shuffled for no reason.
     """
     if devices is None:
         return None
@@ -132,7 +141,7 @@ def _build_rows(ctx, box_h):
     #connectivity-module-design. box_h is accepted for signature
     symmetry with media.py's _build_rows but unused here.
     """
-    wifi_networks = ctx.wifi_networks
+    wifi_networks = _connected_first(ctx.wifi_networks)
     bluetooth_devices = _connected_first(ctx.bluetooth_devices)
     visible_slots = ctx.config.connectivity_visible_slots
 
@@ -1807,7 +1816,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     x, y, w, h = box
     theme = ctx.theme or {}
     cfg = ctx.config
-    wifi_networks = ctx.wifi_networks or []
+    wifi_networks = _connected_first(ctx.wifi_networks) or []
     bluetooth_devices = _connected_first(ctx.bluetooth_devices) or []
     # Computed once here, not per-row inside the loop below — needed by
     # every wifi row (level 2, see _wifi_row_nav_item's own comment on
@@ -1851,7 +1860,14 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
             in_wifi_section = True
             wifi_header_item = NavItem(
                 id="connectivity:wifi:header", rect=(x + 1, row, w - 2, 1), target_kind="wifi_browse",
-                preview_text=_wifi_scan_preview_text(ctx.wifi_networks, ctx.wifi_error, theme, ctx.status, adapter_info),
+                # ctx.wifi_networks via _connected_first (which preserves
+                # None unchanged), not the local wifi_networks variable
+                # above — that one's already "or []"-normalized, which
+                # would silently turn a real poll failure into "no
+                # networks found" here instead of the real error, same
+                # None-vs-[] distinction the bt_header_item right below
+                # already protects the identical way.
+                preview_text=_wifi_scan_preview_text(_connected_first(ctx.wifi_networks), ctx.wifi_error, theme, ctx.status, adapter_info),
                 preview_footer=_header_enter_hint_footer(theme, cfg, "networks"),
                 # No preview_data (Device/Connection tables) at level 1
                 # — Rafi's own call, 2026-08-17: those tables are about

@@ -157,11 +157,15 @@ def test_bluetooth_genuinely_empty_list_renders_same_as_cold_start():
 
 
 # ---------- _connected_first / connected devices sort to the top ----------
-# WiFi's own get_networks() (iwd's GetOrderedNetworks) already hands
-# back the connected network first, confirmed live — no client-side
-# sort needed there. bluez's GetManagedObjects() walk has no such
-# guarantee, so bluetooth needs its own sort — found live, Rafi's own
-# report: a connected device sitting third in a 3-slot windowed view.
+# Applied to BOTH wifi and bluetooth (see _connected_first's own
+# docstring for the full "why" and its history) — bluez's
+# GetManagedObjects() walk has no inherent ordering guarantee (found
+# live, Rafi's own report: a connected device sitting third in a
+# 3-slot windowed view), and neither does NetworkManager's own
+# get_networks() (found live testing that backend for real — unlike
+# iwd's GetOrderedNetworks, which already hands back the connected
+# network first on its own, no client-side sort needed there, but
+# harmless to also run this sort over an already-sorted iwd list).
 
 def test_connected_first_sorts_connected_device_to_front():
     a = BluetoothDevice(id="AA", name="A", connected=False)
@@ -194,6 +198,32 @@ def test_build_rows_bluetooth_connected_device_sorts_first():
     bt_items = [payload for kind, payload in rows if kind == "bt_item"]
 
     assert bt_items[0].name == "MAJOR IV"
+
+
+def test_connected_first_sorts_connected_wifi_network_to_front():
+    # The NetworkManager backend's own get_networks() (unlike iwd's
+    # GetOrderedNetworks) has no inherent ordering — found live testing
+    # it for real, same class of gap bluez's own device list already
+    # had.
+    a = WifiNetwork(ssid="Guest", connected=False)
+    b = WifiNetwork(ssid="Home", connected=True)
+    c = WifiNetwork(ssid="Neighbor", connected=False)
+
+    assert _connected_first([a, b, c]) == [b, a, c]
+
+
+def test_build_rows_wifi_connected_network_sorts_first():
+    networks = [
+        WifiNetwork(ssid="Guest", connected=False),
+        WifiNetwork(ssid="Home", connected=True),
+        WifiNetwork(ssid="Neighbor", connected=False),
+    ]
+    ctx = _ctx(wifi_networks=networks, visible_slots=3)
+
+    rows = _build_rows(ctx, box_h=20)
+    wifi_items = [payload for kind, payload in rows if kind == "wifi_item"]
+
+    assert wifi_items[0].ssid == "Home"
 
 
 # ---------- both domains erroring independently ----------
