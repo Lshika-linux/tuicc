@@ -168,6 +168,7 @@ _passphrase_input = ""
 # round-trip to the final success/error.
 _passphrase_waiting = False
 _passphrase_error = None  # str | None — the most recent failed attempt's real error message
+_passphrase_visible = False  # show-hide toggle (Tab, see toggle_passphrase_visibility())
 
 
 def is_entering_passphrase() -> bool:
@@ -190,11 +191,12 @@ def start_passphrase_entry(ssid: str) -> None:
     — always resets back to a fresh typing state, discarding whatever
     was typed/shown before.
     """
-    global _entering_passphrase_ssid, _passphrase_input, _passphrase_waiting, _passphrase_error
+    global _entering_passphrase_ssid, _passphrase_input, _passphrase_waiting, _passphrase_error, _passphrase_visible
     _entering_passphrase_ssid = ssid
     _passphrase_input = ""
     _passphrase_waiting = False
     _passphrase_error = None
+    _passphrase_visible = False
 
 
 def cancel_passphrase_entry() -> None:
@@ -204,11 +206,12 @@ def cancel_passphrase_entry() -> None:
     main.py's own tier) and on main.py noticing the daemon itself
     already cancelled the request (IwdAgent.mailbox.has_pending() went
     False on its own — see agent_mailbox.py's module docstring)."""
-    global _entering_passphrase_ssid, _passphrase_input, _passphrase_waiting, _passphrase_error
+    global _entering_passphrase_ssid, _passphrase_input, _passphrase_waiting, _passphrase_error, _passphrase_visible
     _entering_passphrase_ssid = None
     _passphrase_input = ""
     _passphrase_waiting = False
     _passphrase_error = None
+    _passphrase_visible = False
 
 
 def handle_passphrase_key(key: int) -> bool:
@@ -229,6 +232,28 @@ def handle_passphrase_key(key: int) -> bool:
     if 32 <= key <= 126:
         _passphrase_input += chr(key)
     return True
+
+
+def toggle_passphrase_visibility() -> None:
+    """Bound to wifi_passphrase_visibility_toggle (default Tab — see
+    that keybind's own comment in defaults/config.toml for why Tab and
+    not, say, a Ctrl+ combo: this overlay is a full mode_stack tier
+    that swallows every key, and any printable character typed here
+    becomes part of the passphrase itself via handle_passphrase_key
+    above, so the toggle can't be a plain letter without also typing
+    itself into the field. Global_shortcuts fire before module-local
+    keys ever see them (main.py's loop order — see GUIDE.md), so a
+    Ctrl+<letter> pick would risk silently triggering an unrelated
+    power_menu action (e.g. Ctrl+R already means Reboot) instead of
+    ever reaching here — Tab carries no such risk and, being a fully
+    modal overlay, doesn't compete with Tab's usual next-item meaning
+    either."""
+    global _passphrase_visible
+    _passphrase_visible = not _passphrase_visible
+
+
+def is_passphrase_visible() -> bool:
+    return _passphrase_visible
 
 
 def apply_passphrase() -> str | None:
@@ -815,9 +840,13 @@ def draw(stdscr, box, ctx, module_name):
             lines.append((f"⚠ {_passphrase_error}", theme.get("urgent", 0)))
             lines.append((f"{key_label(ctx.config.keybinds['confirm'])} to retry, Esc to cancel", theme.get("text", 0) | curses.A_DIM))
         else:
-            masked = "•" * len(_passphrase_input)
-            lines.append((f"{masked}_", theme.get("text", 0)))
-            lines.append((f"{key_label(ctx.config.keybinds['confirm'])} to connect, Esc to cancel", theme.get("text", 0) | curses.A_DIM))
+            shown = _passphrase_input if _passphrase_visible else "•" * len(_passphrase_input)
+            lines.append((f"{shown}_", theme.get("text", 0)))
+            toggle_label = key_label(ctx.config.keybinds["wifi_passphrase_visibility_toggle"])
+            toggle_verb = "hide" if _passphrase_visible else "show"
+            dim = theme.get("text", 0) | curses.A_DIM
+            lines.append((f"{key_label(ctx.config.keybinds['confirm'])} to connect, Esc to cancel", dim))
+            lines.append((f"{toggle_label} to {toggle_verb}", dim))
         draw_centered_lines(stdscr, box, lines)
         return
 

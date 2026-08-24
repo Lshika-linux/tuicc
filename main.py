@@ -241,6 +241,9 @@ def handle_connectivity_passphrase(key, cfg, wifi_agent):
         connectivity_mode.cancel_passphrase_entry()
         wifi_agent.cancel_current()
         return False
+    elif key == cfg.keybinds["wifi_passphrase_visibility_toggle"]:
+        connectivity_mode.toggle_passphrase_visibility()
+        return True
     elif not connectivity_mode.handle_passphrase_key(key):
         connectivity_mode.cancel_passphrase_entry()
         return False

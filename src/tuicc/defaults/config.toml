@@ -76,6 +76,18 @@ wifi_power_toggle = "p"
 bt_power_toggle = "p"
 bt_pairable_toggle = "a"
 
+# Only live while actually typing a wifi passphrase (the R4 overlay
+# that opens after Enter on an unknown/secured network) — shows/hides
+# the typed characters. Deliberately Tab, not a plain letter (every
+# printable key typed there becomes part of the passphrase itself, so
+# the toggle can't be one without also typing itself into the field)
+# and not a Ctrl+ combo (reserved for power_menu-style global actions
+# elsewhere — Ctrl+R in particular already means Reboot, and
+# global_shortcuts fire before this overlay's own keys ever see them).
+# The overlay has nothing to navigate, so Tab's usual next-item
+# meaning is free to reuse here.
+wifi_passphrase_visibility_toggle = "Tab"
+
 # Only used when vim_mode = true below (ambient typing is disabled in
 # that mode specifically so h/j/k/l etc. don't collide with it) —
 # press this to start typing into the launcher instead.

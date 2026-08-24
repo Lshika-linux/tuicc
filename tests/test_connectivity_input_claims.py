@@ -24,6 +24,7 @@ from tuicc.modules.connectivity import (
     is_confirming_pairing,
     is_entering_passphrase,
     is_pairing_waiting,
+    is_passphrase_visible,
     is_passphrase_waiting,
     mark_pairing_submitted,
     mark_passphrase_submitted,
@@ -33,6 +34,7 @@ from tuicc.modules.connectivity import (
     set_passphrase_error,
     start_pairing_confirm,
     start_passphrase_entry,
+    toggle_passphrase_visibility,
 )
 
 
@@ -126,6 +128,42 @@ def test_start_passphrase_entry_resets_input_from_a_previous_entry():
 
     assert apply_passphrase() == ""
     assert entering_passphrase_ssid() == "Office"
+
+
+# ---------- passphrase entry: show/hide visibility toggle ----------
+
+def test_not_visible_by_default():
+    start_passphrase_entry("Home")
+
+    assert is_passphrase_visible() is False
+
+
+def test_toggle_passphrase_visibility_flips_it():
+    start_passphrase_entry("Home")
+
+    toggle_passphrase_visibility()
+    assert is_passphrase_visible() is True
+
+    toggle_passphrase_visibility()
+    assert is_passphrase_visible() is False
+
+
+def test_start_passphrase_entry_resets_visibility_from_a_previous_entry():
+    start_passphrase_entry("Home")
+    toggle_passphrase_visibility()
+
+    start_passphrase_entry("Office")
+
+    assert is_passphrase_visible() is False
+
+
+def test_cancel_passphrase_entry_resets_visibility():
+    start_passphrase_entry("Home")
+    toggle_passphrase_visibility()
+
+    cancel_passphrase_entry()
+
+    assert is_passphrase_visible() is False
 
 
 # ---------- passphrase entry: waiting / error (the actual bug fix) ----------

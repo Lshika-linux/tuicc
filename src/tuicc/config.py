@@ -756,6 +756,16 @@ def load_config(preset_override: int | None = None) -> Config:
     # one shared letter to read correctly for both sections at once.
     keybinds.setdefault("bt_power_toggle", resolve_key("p"))
     keybinds.setdefault("bt_pairable_toggle", resolve_key("a"))
+    # Show/hide the typed characters while entering a wifi passphrase
+    # (connectivity.py's R4 overlay). Deliberately Tab, not a plain
+    # letter (every printable key typed there becomes part of the
+    # passphrase itself) and not a Ctrl+ combo (reserved for
+    # power_menu-style global actions elsewhere — see keybinds.py's own
+    # module docstring; Ctrl+R in particular already means Reboot,
+    # global_shortcuts firing ahead of any module-local key). The
+    # overlay is a full mode_stack tier with nothing else to navigate,
+    # so Tab's usual next-item meaning is free to reuse here.
+    keybinds.setdefault("wifi_passphrase_visibility_toggle", resolve_key("Tab"))
     # Same reasoning again — cycles theme presets from anywhere (not
     # just the F1 Colors page's own cycle_preset-bound F4), added after
     # bt_pairable_toggle above. Deliberately its own key rather than
