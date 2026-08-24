@@ -9,11 +9,18 @@ poll loop) are documented in
 CLAUDE/NOTES/design-decisions.md#networkmanager-vs-iwd — read that
 before touching this file.
 
-NOT YET CONFIRMED against a real, running NetworkManager (built on a
-machine that runs iwd) — see that same note for what's fixture-tested
-vs. genuinely unverified.
+Live-confirmed against a real, running NetworkManager (2026-08-24 —
+list/connect/disconnect/forget/power toggle/wrong-password error path/
+diagnostics all exercised on real hardware; see CLAUDE/NOTES/known-
+limitations.md#nm-failure-reason-race for the one open gap found doing
+so). Originally built on a machine that only ran iwd, hence the
+fixture-only testing discipline this file still follows throughout —
+see CLAUDE/NOTES/design-decisions.md#networkmanager-vs-iwd for what
+that means in practice.
 """
 
+import re
+import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -126,8 +133,10 @@ def frequency_to_channel(freq_mhz):
     `_adapter_info_table`). Returns None for anything outside the
     three real 802.11 bands (a bogus/unexpected Frequency) rather than
     a nonsense channel number — same "honest gap over a wrong guess"
-    discipline as rssi/cipher/rx_bitrate right below this function's
-    own caller.
+    discipline as cipher (the one field of the three this docstring
+    used to group together that's still a real gap — see
+    _read_iw_link()'s own docstring for why rssi/rx_bitrate no longer
+    are).
     """
     if freq_mhz is None:
         return None
@@ -140,6 +149,57 @@ def frequency_to_channel(freq_mhz):
     if 5955 <= freq_mhz <= 7115:  # 6 GHz, Wi-Fi 6E
         return (freq_mhz - 5950) // 5
     return None
+
+
+_IW_SIGNAL_RE = re.compile(r"^\s*signal:\s*(-?\d+)\s*dBm", re.MULTILINE)
+_IW_RX_BITRATE_RE = re.compile(r"^\s*rx bitrate:\s*([\d.]+)\s*MBit/s", re.MULTILINE)
+
+
+def parse_iw_link_output(output):
+    """Pure parsing of `iw dev <iface> link`'s plain-text output ->
+    (rssi, rx_bitrate) as (int dBm, float Mb/s) — either None if that
+    line isn't present (not connected, or a future `iw` version
+    changes its own text format — never guess, never crash on an
+    unexpected shape). Kept separate from _read_iw_link()'s own
+    subprocess call so it's fixture-testable with real captured `iw`
+    output and no live process needed.
+    """
+    signal_match = _IW_SIGNAL_RE.search(output)
+    rssi = int(signal_match.group(1)) if signal_match else None
+    rx_match = _IW_RX_BITRATE_RE.search(output)
+    rx_bitrate = float(rx_match.group(1)) if rx_match else None
+    return rssi, rx_bitrate
+
+
+def _read_iw_link(iface):
+    """(rssi, rx_bitrate) via `iw dev <iface> link` — NetworkManager's
+    own D-Bus API has neither (see get_connection_diagnostics()'s own
+    docstring: Device.Wireless exposes a single undifferentiated
+    Bitrate, and nothing at all for signal strength), but the kernel's
+    nl80211 layer genuinely has both — confirmed live, this session,
+    against this machine's own real connection (`iw dev wlan0 link`
+    showing distinct rx/tx bitrates and a real dBm signal reading NM
+    itself never surfaces). Same "reuse the one already-correct tool"
+    precedent brightness.py's brightnessctl and sysmon's `sensors -j`
+    already set, rather than reimplementing nl80211 parsing from
+    scratch. (None, None) on anything that goes wrong — missing `iw`
+    binary, a hang, a non-zero exit, not currently connected: this is
+    optional enhancement data layered on top of an otherwise-complete
+    D-Bus-sourced ConnectionDiagnostics (frequency/channel/security/
+    tx_bitrate all still work with no `iw` installed at all), not a
+    hard requirement the way get_percent()'s own brightnessctl call is
+    for ITS domain — so unlike that one's deliberate no-internal-
+    try/except discipline, a missing/failing `iw` here is a real,
+    accepted degrade, same tolerance cava.py's own CavaReader already
+    has for a missing `cava` binary.
+    """
+    try:
+        result = subprocess.run(["iw", "dev", iface, "link"], capture_output=True, text=True, timeout=2)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None, None
+    if result.returncode != 0:
+        return None, None
+    return parse_iw_link_output(result.stdout)
 
 
 def find_wifi_device_path(device_types):
@@ -378,18 +438,44 @@ def _nm_device_state_label(state_code):
     return f"state {state_code}"
 
 
-def _build_adapter_info(device_props, wireless_props, wireless_enabled):
+def _last_scan_to_iso(last_scan_ms, boottime_offset):
+    """Device.Wireless.LastScan is NOT Unix-epoch milliseconds despite
+    looking like one — confirmed live, empirically, not just from NM's
+    own (easy-to-misread-this-way) docs: it's milliseconds since
+    CLOCK_BOOTTIME (the same monotonic-since-boot clock AccessPoint.
+    LastSeen also uses), so a first version treating it as wall-clock
+    epoch ms/1000 produced a bogus "1970-01-05" reading on this
+    session's own real machine (4+ days of uptime) — caught by
+    comparing the raw value against `/proc/uptime` directly, ~409s
+    apart, matching a real recent scan, not ~56 years apart the way a
+    genuine 1970 timestamp would be. `boottime_offset` (wall-clock
+    epoch seconds MINUS CLOCK_BOOTTIME seconds, read live exactly once
+    by get_adapter_info() below) converts it to a real wall-clock
+    instant; passed in explicitly rather than read live inside here so
+    this stays a pure, fixture-testable function, same discipline
+    every other conversion in this file already follows. -1 (never
+    scanned since power-up) stays None, same honest-gap treatment as
+    everywhere else.
+    """
+    if last_scan_ms is None or last_scan_ms < 0:
+        return None
+    return _epoch_to_iso(boottime_offset + last_scan_ms / 1000)
+
+
+def _build_adapter_info(device_props, wireless_props, wireless_enabled, boottime_offset):
     """Pure logic half of get_adapter_info() — testable without a real
     D-Bus connection. model/vendor/supported_modes stay None: no
     NetworkManager D-Bus property carries either concept (see
     AdapterInfo's own docstring for why that's a real backend gap, not
-    an oversight here)."""
+    an oversight here). boottime_offset: see _last_scan_to_iso()'s own
+    docstring."""
     return AdapterInfo(
         name=device_props.get("Interface", (None, None))[1],
         address=wireless_props.get("PermHwAddress", (None, None))[1],
         mode=_nm_wifi_mode_label(wireless_props.get("Mode", (None, None))[1]),
         powered=wireless_enabled,
         state=_nm_device_state_label(device_props.get("State", (None, NM_DEVICE_STATE_UNKNOWN))[1]),
+        last_scan=_last_scan_to_iso(wireless_props.get("LastScan", (None, -1))[1], boottime_offset),
     )
 
 
@@ -665,7 +751,10 @@ class NetworkManagerBackend(WifiBackend):
             wireless_enabled = _call(
                 connection, ROOT_PATH, IFACE_PROPERTIES, "Get", "ss", (IFACE_ROOT, "WirelessEnabled"),
             )[0][1]
-            return _build_adapter_info(device_props, wireless_props, wireless_enabled)
+            # See _last_scan_to_iso()'s own docstring for why LastScan
+            # needs this — it's CLOCK_BOOTTIME-relative, not wall-clock.
+            boottime_offset = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
+            return _build_adapter_info(device_props, wireless_props, wireless_enabled, boottime_offset)
         finally:
             connection.close()
 
@@ -695,20 +784,22 @@ class NetworkManagerBackend(WifiBackend):
         this backend genuinely has no second, potentially-different
         answer to reconcile for a transition-mode AP, classify_security()
         already makes the identical "psk wins" simplification either
-        way. rssi/cipher stay None — no directly equivalent
-        NetworkManager property for either without deeper Active
-        Connection/802.1X introspection this pass didn't build; an
-        honest gap, not a silently wrong guess. channel, unlike those
-        two, IS derived — see frequency_to_channel()'s own docstring
-        for why NM needs that where iwd doesn't.
+        way. cipher stays None — no directly equivalent NetworkManager
+        property without deeper 802.1X introspection this pass didn't
+        build; an honest gap, not a silently wrong guess. channel IS
+        derived — see frequency_to_channel()'s own docstring for why NM
+        needs that where iwd doesn't.
 
         tx_bitrate: Device.Wireless's own "Bitrate" property, already
         Kb/s (divided by 1000 here for ConnectionDiagnostics' Mb/s
-        unit) — a single value, no TX/RX split the way iwd's
-        GetDiagnostics has, so rx_bitrate stays None, same honest-gap
-        treatment as rssi/cipher above. ip_address: resolved the exact
-        same way iwd.py's own get_connection_diagnostics() does, via
-        netinfo.get_ipv4_address() keyed off this device's own
+        unit). rssi/rx_bitrate: NOT from D-Bus at all (NetworkManager's
+        own API has neither — see _read_iw_link()'s own docstring) —
+        `iw dev <iface> link`, the kernel's own nl80211 view, best-
+        effort and optional (None, None on anything from a missing `iw`
+        binary to just not being connected, never breaking the rest of
+        this otherwise-D-Bus-sourced result). ip_address: resolved the
+        exact same way iwd.py's own get_connection_diagnostics() does,
+        via netinfo.get_ipv4_address() keyed off this device's own
         "Interface" property.
         """
         connection = open_dbus_connection(bus="SYSTEM")
@@ -728,6 +819,7 @@ class NetworkManagerBackend(WifiBackend):
             )[0][1]
             bitrate_kbps = wireless_props.get("Bitrate", (None, None))[1]
             frequency = ap_props.get("Frequency", (None, None))[1]
+            rssi, rx_bitrate = _read_iw_link(iface_name) if iface_name else (None, None)
             return ConnectionDiagnostics(
                 frequency=frequency,
                 channel=frequency_to_channel(frequency),
@@ -736,7 +828,9 @@ class NetworkManagerBackend(WifiBackend):
                     ap_props.get("WpaFlags", (None, 0))[1],
                     ap_props.get("RsnFlags", (None, 0))[1],
                 ),
+                rssi=rssi,
                 tx_bitrate=bitrate_kbps / 1000 if bitrate_kbps else None,
+                rx_bitrate=rx_bitrate,
                 ip_address=netinfo.get_ipv4_address(iface_name) if iface_name else None,
             )
         finally:

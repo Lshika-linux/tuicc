@@ -21,8 +21,11 @@ from tuicc.connectivity.networkmanager import (
     NM_DEVICE_TYPE_WIFI,
     NetworkManagerBackend,
     _activation_outcome,
+    _build_adapter_info,
     _build_wifi_network,
     _epoch_to_iso,
+    _last_scan_to_iso,
+    parse_iw_link_output,
     _failure_reason_message,
     _scan_completed,
     _scan_timed_out,
@@ -253,6 +256,104 @@ def test_epoch_to_iso_round_trips_through_format_timestamp():
     formatted = _format_timestamp(iso)
     assert formatted != ""
     assert formatted is not None
+
+
+# ---- _last_scan_to_iso ----
+# Device.Wireless.LastScan is milliseconds since CLOCK_BOOTTIME, NOT
+# Unix-epoch milliseconds despite looking like one — found live,
+# empirically: a first version treating it as epoch ms/1000 produced a
+# bogus "1970-01-05" reading on a real machine with 4+ days of uptime.
+# boottime_offset (wall-clock epoch seconds minus CLOCK_BOOTTIME
+# seconds) is passed explicitly rather than read live, so these stay
+# deterministic — a fixed, made-up offset of 0 makes "milliseconds
+# since boottime" line up 1:1 with "epoch seconds" for the math, no
+# real clock needed to test the conversion logic itself.
+
+def test_last_scan_to_iso_converts_milliseconds_and_applies_offset():
+    # 1700000000000 ms since boottime + a 0 offset == epoch 1700000000.
+    assert _last_scan_to_iso(1700000000000, boottime_offset=0) == _epoch_to_iso(1700000000)
+
+
+def test_last_scan_to_iso_applies_a_nonzero_offset():
+    assert _last_scan_to_iso(0, boottime_offset=1700000000) == _epoch_to_iso(1700000000)
+
+
+def test_last_scan_to_iso_negative_one_means_never_scanned():
+    assert _last_scan_to_iso(-1, boottime_offset=0) is None
+
+
+def test_last_scan_to_iso_none_stays_none():
+    assert _last_scan_to_iso(None, boottime_offset=0) is None
+
+
+# ---- parse_iw_link_output ----
+# Real captured `iw dev wlan0 link` output, this session's own machine
+# — genuinely connected, not hand-invented, so the exact line shapes
+# (extra HE-MCS/HE-NSS/... trailing fields on the bitrate lines) are
+# real, not a guess at what iw might print.
+
+_REAL_IW_LINK_OUTPUT = """Connected to 50:91:e3:3d:7a:cb (on wlan0)
+\tSSID: LSHK-WLAN
+\tfreq: 5240.0
+\tRX: 58558043 bytes (65773 packets)
+\tTX: 133913006 bytes (16686 packets)
+\tsignal: -37 dBm
+\trx bitrate: 960.7 MBit/s 80MHz HE-MCS 9 HE-NSS 2 HE-GI 0 HE-DCM 0
+\ttx bitrate: 1200.9 MBit/s 80MHz HE-MCS 11 HE-NSS 2 HE-GI 0 HE-DCM 0
+\tbss flags:\tshort-slot-time
+\tdtim period:\t1
+\tbeacon int:\t100
+"""
+
+_NOT_CONNECTED_IW_LINK_OUTPUT = "Not connected.\n"
+
+
+def test_parse_iw_link_output_real_capture():
+    rssi, rx_bitrate = parse_iw_link_output(_REAL_IW_LINK_OUTPUT)
+    assert rssi == -37
+    assert rx_bitrate == 960.7
+
+
+def test_parse_iw_link_output_not_connected_is_none_none():
+    rssi, rx_bitrate = parse_iw_link_output(_NOT_CONNECTED_IW_LINK_OUTPUT)
+    assert rssi is None
+    assert rx_bitrate is None
+
+
+def test_parse_iw_link_output_empty_string_is_none_none():
+    rssi, rx_bitrate = parse_iw_link_output("")
+    assert rssi is None
+    assert rx_bitrate is None
+
+
+def test_parse_iw_link_output_positive_signal_still_parses():
+    # dBm is conventionally negative but the regex must not assume so
+    # (a `-?` sign, not a hardcoded minus).
+    rssi, _rx = parse_iw_link_output("\tsignal: 5 dBm\n")
+    assert rssi == 5
+
+
+# ---- _build_adapter_info ----
+
+def test_build_adapter_info_includes_last_scan():
+    device_props = {"Interface": ("s", "wlan0")}
+    wireless_props = {"LastScan": ("x", 1700000000000)}
+    info = _build_adapter_info(device_props, wireless_props, wireless_enabled=True, boottime_offset=0)
+    assert info.last_scan == _epoch_to_iso(1700000000)
+
+
+def test_build_adapter_info_never_scanned_is_none():
+    device_props = {"Interface": ("s", "wlan0")}
+    wireless_props = {"LastScan": ("x", -1)}
+    info = _build_adapter_info(device_props, wireless_props, wireless_enabled=True, boottime_offset=0)
+    assert info.last_scan is None
+
+
+def test_build_adapter_info_missing_last_scan_property_is_none():
+    device_props = {"Interface": ("s", "wlan0")}
+    wireless_props = {}
+    info = _build_adapter_info(device_props, wireless_props, wireless_enabled=True, boottime_offset=0)
+    assert info.last_scan is None
 
 
 # ---- _build_wifi_network ----

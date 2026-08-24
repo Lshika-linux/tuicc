@@ -33,7 +33,7 @@ single source of truth both functions iterate over.
 
 import curses
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, draw_centered_lines, draw_table_box, display_width, wc_truncate
@@ -1189,6 +1189,37 @@ def _format_timestamp(iso_string):
         return iso_string
 
 
+def _format_relative_ago(iso_string):
+    """iso_string (UTC) -> "Ns ago"/"Nm ago"/"Nh ago"/"Nd ago" — unlike
+    _format_timestamp's absolute date+time (right for "Last connected",
+    which can be days or months old), AdapterInfo.last_scan is almost
+    always seconds-to-minutes old, so "how long ago" is the actually
+    useful reading, not a calendar date. Recomputed fresh every render
+    (draw() reruns every frame regardless of redraw cadence — see
+    frame_update.py's own comment) so it live-updates with no polling
+    of its own needed. Negative deltas (clock skew, or reading a
+    timestamp from the same instant it was produced) clamp to 0 rather
+    than printing "-1s ago". Same raw-string fallback on anything that
+    doesn't parse as _format_timestamp already has — a display nicety
+    must never crash the render loop.
+    """
+    try:
+        then = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+        seconds = max(0, int((datetime.now(timezone.utc) - then).total_seconds()))
+    except ValueError:
+        return iso_string
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
+
+
 def _yes_no(value):
     return "yes" if value else "no"
 
@@ -1292,6 +1323,8 @@ def _adapter_info_table(adapter, scanning):
     if adapter.state:
         columns.append(("State", adapter.state))
     columns.append(("Scanning", _yes_no(scanning)))
+    if adapter.last_scan:
+        columns.append(("Last scan", _format_relative_ago(adapter.last_scan)))
     if adapter.address:
         columns.append(("Address", adapter.address))
     if adapter.model:

@@ -64,6 +64,17 @@ class AdapterInfo:
     mode: str | None = None  # "station"/"ap"/"ad-hoc"
     powered: bool | None = None
     state: str | None = None  # raw backend string ("connected"/"disconnected"/...), not normalized
+    # ISO8601 UTC string, same backend-normalized shape as WifiNetwork.
+    # last_connected — NetworkManager-only in practice (Device.Wireless.
+    # LastScan), added specifically because is_scanning() alone turned
+    # out to be a near-useless signal on real hardware: a rescan
+    # completes fast enough that the boolean almost never reads True by
+    # the time this app's own poll catches it (found live — see
+    # modules/connectivity.py's guarantee_scan_blink() for the UI side
+    # of the same discovery). iwd exposes no equivalent property —
+    # stays None there, same honest-gap precedent model/vendor/
+    # supported_modes already set the other way around above.
+    last_scan: str | None = None
 
 
 @dataclass
@@ -100,7 +111,18 @@ class ConnectionDiagnostics:
     against the same reply's own RxMode/RxMCS ("802.11n"/14) for a
     plausibility match, not just trusted blind. NetworkManager's own
     Device.Wireless.Bitrate is a single value (already Kb/s, no TX/RX
-    split) — rx_bitrate stays None there, an honest gap, not a guess.
+    split) — genuinely nothing for rx_bitrate (or rssi) there. Fixed
+    2026-08-24: rather than leave both as an honest gap on the NM
+    backend, networkmanager.py's own get_connection_diagnostics() now
+    shells out to `iw dev <iface> link` for these two specifically (the
+    kernel's own nl80211 view, confirmed live against this same
+    session's real connection) — best-effort, optional, (None, None)
+    on anything from a missing `iw` binary to just not being connected,
+    never breaking the rest of an otherwise-D-Bus-sourced result. See
+    networkmanager.py's own _read_iw_link() docstring for the full
+    reasoning. cipher remains a real gap on that backend (no directly
+    equivalent property, `iw`'s own output doesn't cleanly carry it
+    either) — see get_connection_diagnostics()'s own docstring there.
 
     ip_address: NOT reachable from either backend's own D-Bus tree at
     all (see netinfo.py's own docstring) — both backends fetch it the
@@ -113,7 +135,7 @@ class ConnectionDiagnostics:
     rssi: int | None = None  # signed dBm
     cipher: str | None = None  # e.g. "CCMP-128" — NetworkManager backend leaves this None, see get_connection_diagnostics()'s own docstring there
     tx_bitrate: float | None = None  # Mb/s
-    rx_bitrate: float | None = None  # Mb/s — NetworkManager backend leaves this None, no TX/RX split in its own Bitrate property
+    rx_bitrate: float | None = None  # Mb/s — NetworkManager backend gets this from `iw dev <iface> link`, not D-Bus (which has no TX/RX split in its own Bitrate property)
     ip_address: str | None = None  # IPv4, dotted-quad — see netinfo.get_ipv4_address()
 
 

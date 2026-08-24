@@ -38,6 +38,7 @@ from tuicc.modules.connectivity import (
     _connected_first,
     _bt_discover_preview_text,
     _bt_preview_text,
+    _format_relative_ago,
     _format_timestamp,
     _header_enter_hint_footer,
     _security_label,
@@ -1325,6 +1326,44 @@ def test_adapter_info_table_omits_absent_fields():
     labels = [label for label, _value in columns]
 
     assert labels == ["Name", "Scanning"]
+
+
+def test_adapter_info_table_includes_last_scan_when_present():
+    from datetime import datetime, timezone
+    adapter = AdapterInfo(name="wlan0", last_scan=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    columns = dict(_adapter_info_table(adapter, scanning=False))
+
+    assert "Last scan" in columns
+    assert columns["Last scan"].endswith("ago")
+
+
+def test_format_relative_ago_seconds():
+    from datetime import datetime, timedelta, timezone
+    then = (datetime.now(timezone.utc) - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert _format_relative_ago(then) == "5s ago"
+
+
+def test_format_relative_ago_minutes():
+    from datetime import datetime, timedelta, timezone
+    then = (datetime.now(timezone.utc) - timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert _format_relative_ago(then) == "3m ago"
+
+
+def test_format_relative_ago_hours():
+    from datetime import datetime, timedelta, timezone
+    then = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert _format_relative_ago(then) == "2h ago"
+
+
+def test_format_relative_ago_days():
+    from datetime import datetime, timedelta, timezone
+    then = (datetime.now(timezone.utc) - timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert _format_relative_ago(then) == "4d ago"
+
+
+def test_format_relative_ago_invalid_string_falls_back_to_raw():
+    assert _format_relative_ago("not a timestamp") == "not a timestamp"
 
 
 def test_wifi_scan_preview_no_longer_carries_adapter_info():

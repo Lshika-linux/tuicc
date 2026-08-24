@@ -299,7 +299,7 @@ def test_nm_build_adapter_info_reads_device_and_wireless_props():
     device_props = {"Interface": ("s", "wlan0"), "State": ("u", 100)}
     wireless_props = {"PermHwAddress": ("s", "D0:C6:37:61:24:D4"), "Mode": ("u", 2)}
 
-    info = nm_build_adapter_info(device_props, wireless_props, True)
+    info = nm_build_adapter_info(device_props, wireless_props, True, boottime_offset=0)
 
     assert info.name == "wlan0"
     assert info.address == "D0:C6:37:61:24:D4"
@@ -311,7 +311,7 @@ def test_nm_build_adapter_info_reads_device_and_wireless_props():
 def test_nm_build_adapter_info_model_vendor_supported_modes_always_none():
     # No NetworkManager D-Bus property carries any of the three — a
     # real backend gap (see AdapterInfo's own docstring), not a bug.
-    info = nm_build_adapter_info({}, {}, False)
+    info = nm_build_adapter_info({}, {}, False, boottime_offset=0)
 
     assert info.model is None
     assert info.vendor is None
