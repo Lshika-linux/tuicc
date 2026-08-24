@@ -24,6 +24,7 @@ from tuicc.connectivity.networkmanager import (
     classify_security,
     find_known_profile_for_ssid,
     find_wifi_device_path,
+    frequency_to_channel,
     known_profile_fields,
     merge_access_points_by_ssid,
 )
@@ -46,6 +47,39 @@ def test_find_wifi_device_path_no_wifi_device_returns_none():
 
 def test_find_wifi_device_path_empty_list_returns_none():
     assert find_wifi_device_path([]) is None
+
+
+# ---- frequency_to_channel ----
+
+def test_frequency_to_channel_5ghz():
+    # Real value captured live off this session's own machine (a real
+    # NetworkManager connection to a 5GHz AP) — 5240 MHz is channel 48.
+    assert frequency_to_channel(5240) == 48
+
+
+def test_frequency_to_channel_2_4ghz():
+    assert frequency_to_channel(2412) == 1  # channel 1
+    assert frequency_to_channel(2437) == 6  # channel 6
+
+
+def test_frequency_to_channel_2_4ghz_channel_14_special_case():
+    # Channel 14 (Japan-only) breaks the linear 5MHz-per-channel
+    # spacing every other 2.4GHz channel follows.
+    assert frequency_to_channel(2484) == 14
+
+
+def test_frequency_to_channel_6ghz():
+    assert frequency_to_channel(5955) == 1
+
+
+def test_frequency_to_channel_none_passthrough():
+    assert frequency_to_channel(None) is None
+
+
+def test_frequency_to_channel_out_of_band_returns_none():
+    # An honest gap, not a nonsense channel number, for anything that
+    # isn't a real 802.11 band.
+    assert frequency_to_channel(1000) is None
 
 
 # ---- classify_security ----

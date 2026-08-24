@@ -113,6 +113,34 @@ def _call(connection, path, interface, member, signature="", body=(), timeout=5)
     return dbus_call(connection, BUS_NAME, path, interface, member, signature, body, timeout)
 
 
+def frequency_to_channel(freq_mhz):
+    """IEEE 802.11 frequency (MHz) -> channel number, standard band
+    formulas. NetworkManager's AccessPoint exposes Frequency directly
+    but, unlike iwd's own GetDiagnostics, no equivalent Channel
+    property — found live testing this backend for real: without this,
+    get_connection_diagnostics()'s Channel stayed silently None on
+    every NM connection even though Frequency was right there, a real,
+    user-visible gap (modules/connectivity.py's own preview table
+    only ever renders the Channel row when it's not None — see
+    `_adapter_info_table`). Returns None for anything outside the
+    three real 802.11 bands (a bogus/unexpected Frequency) rather than
+    a nonsense channel number — same "honest gap over a wrong guess"
+    discipline as rssi/cipher/rx_bitrate right below this function's
+    own caller.
+    """
+    if freq_mhz is None:
+        return None
+    if freq_mhz == 2484:
+        return 14
+    if 2412 <= freq_mhz <= 2472:
+        return (freq_mhz - 2407) // 5
+    if 5000 <= freq_mhz <= 5895:
+        return (freq_mhz - 5000) // 5
+    if 5955 <= freq_mhz <= 7115:  # 6 GHz, Wi-Fi 6E
+        return (freq_mhz - 5950) // 5
+    return None
+
+
 def find_wifi_device_path(device_types):
     """Pure logic: given `[(path, device_type_int), ...]` — one entry
     per device path from `NetworkManager.GetAllDevices()`, each paired
@@ -653,7 +681,9 @@ class NetworkManagerBackend(WifiBackend):
         way. rssi/cipher stay None — no directly equivalent
         NetworkManager property for either without deeper Active
         Connection/802.1X introspection this pass didn't build; an
-        honest gap, not a silently wrong guess.
+        honest gap, not a silently wrong guess. channel, unlike those
+        two, IS derived — see frequency_to_channel()'s own docstring
+        for why NM needs that where iwd doesn't.
 
         tx_bitrate: Device.Wireless's own "Bitrate" property, already
         Kb/s (divided by 1000 here for ConnectionDiagnostics' Mb/s
@@ -680,8 +710,10 @@ class NetworkManagerBackend(WifiBackend):
                 connection, device_path, IFACE_PROPERTIES, "Get", "ss", (IFACE_DEVICE, "Interface"),
             )[0][1]
             bitrate_kbps = wireless_props.get("Bitrate", (None, None))[1]
+            frequency = ap_props.get("Frequency", (None, None))[1]
             return ConnectionDiagnostics(
-                frequency=ap_props.get("Frequency", (None, None))[1],
+                frequency=frequency,
+                channel=frequency_to_channel(frequency),
                 security=classify_security(
                     ap_props.get("Flags", (None, 0))[1],
                     ap_props.get("WpaFlags", (None, 0))[1],
