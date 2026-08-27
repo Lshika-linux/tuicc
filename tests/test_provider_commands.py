@@ -48,6 +48,26 @@ def test_sway_focus_region():
     assert conn.commands == ["workspace 3"]
 
 
+def test_sway_leave_fullscreen_self(monkeypatch):
+    """CLAUDE/NOTES/wm-quirks.md#workspace-switch-fullscreen-invisible —
+    see leave_fullscreen_self's own docstring for why this exists and
+    why the sleep is real. Sleep itself mocked out here so the test
+    doesn't actually pay the 50ms.
+    """
+    import os
+    import tuicc.providers.sway as sway_mod
+
+    slept = []
+    monkeypatch.setattr(sway_mod.time, "sleep", lambda s: slept.append(s))
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    provider.leave_fullscreen_self()
+
+    assert conn.commands == [f"[con_mark={SWAY_MARK_PREFIX}{os.getpid()}] fullscreen disable"]
+    assert slept == [0.05]
+
+
 def test_sway_focus_window():
     conn = FakeConnection()
     provider = SwayProvider(conn=conn)

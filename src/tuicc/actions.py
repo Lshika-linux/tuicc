@@ -133,11 +133,15 @@ def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
 
 
 def _handle_region(ctx, item, cfg):
+    # leave_fullscreen_self() BEFORE the switch, not after — see its
+    # own docstring (providers/base.py) for why the ordering matters.
+    ctx.provider.leave_fullscreen_self()
     ctx.provider.focus_region(item.focus_target)
     return True, None
 
 
 def _handle_window(ctx, item, cfg):
+    ctx.provider.leave_fullscreen_self()
     ctx.provider.focus_window(item.focus_target)
     return True, None
 

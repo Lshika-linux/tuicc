@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 
 from i3ipc import Connection
 
@@ -126,6 +127,40 @@ class SwayProvider(Provider):
 
     def focus_region(self, region_id: str) -> None:
         self.conn.command(f"workspace {region_id}")
+
+    def leave_fullscreen_self(self) -> None:
+        """See base.py's docstring for the calling contract. swayfx 0.6/
+        sway 1.12: switching workspace focus away from a fullscreen (or
+        plain floating, pinned-to-full-output) container leaves the
+        DESTINATION workspace fully invisible — real windows, correct
+        `rect`, `visible: true` in `get_tree` — until something forces
+        a real redraw. Two mitigations were tried and rejected before
+        this one, both live-tested this session (2026-08-27): bouncing
+        through a third workspace AFTER switching (unreliable — likely
+        because the three `workspace` IPC commands fire faster than
+        sway can settle each transition, coalescing into what's
+        effectively still a single direct switch) and nudging the
+        pointer (confirmed live to do nothing at all — some swayfx
+        decoration/shadow layer redraws, the actual window content
+        never does). What Rafi confirmed live DOES work, reliably: turn
+        fullscreen off on the about-to-be-hidden window and let that
+        settle BEFORE ever switching workspace — matches a working
+        theory (not verified against wlroots/swayfx source) that a
+        fullscreen surface gets handed to the output via direct
+        scanout, bypassing normal scene-graph compositing, and leaving
+        that mode cleanly (before asking the output to show something
+        else entirely) is what today's `fullscreen enable`/`disable`-
+        only paths (`focus_self`'s own fullscreen kwarg included) never
+        triggered — see CLAUDE/NOTES/wm-quirks.md
+        #workspace-switch-fullscreen-invisible for the full
+        investigation. The sleep is a real, deliberate blocking call
+        (this runs on the main thread, synchronously, same one-off
+        magnitude as the pending-moves loop's own 50ms poll tick) —
+        without it the following focus_region() call races the same
+        way the rejected bounce did.
+        """
+        self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] fullscreen disable")
+        time.sleep(0.05)
 
     def focus_window(self, window_id: str) -> None:
         self.conn.command(f"[con_id={window_id}] focus")

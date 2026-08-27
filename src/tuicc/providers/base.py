@@ -79,6 +79,28 @@ class Provider(ABC):
         """
         pass
 
+    def leave_fullscreen_self(self) -> None:
+        """Drop tuicc's own window out of fullscreen, and give the WM a
+        beat to actually settle that transition, BEFORE switching focus
+        away to another region. Called right before focus_region() for
+        a region/window target_kind action (see actions.py's
+        _handle_region/_handle_window) — always, unconditionally, not
+        only when tuicc is actually fullscreen (a no-op against an
+        already-non-fullscreen window is harmless, and tuicc has no
+        cheap way to know its own fullscreen state without a fresh
+        get_state() round-trip just to decide whether to skip this).
+
+        Exists for CLAUDE/NOTES/wm-quirks.md
+        #workspace-switch-fullscreen-invisible — leaving fullscreen
+        AFTER switching (or bouncing through a third workspace
+        afterward) both proved unreliable; doing it BEFORE the switch,
+        live-confirmed by Rafi, works every time. Optional, default
+        no-op: only implemented where the underlying bug is confirmed
+        (sway/swayfx) — see SwayProvider's own docstring for why this
+        is deliberately NOT mirrored onto I3Provider.
+        """
+        pass
+
     def focus_self(self, fullscreen: bool = False, force_relayout: bool = False) -> None:
         """Reclaim keyboard focus for tuicc's own window — called by
         pending_moves.process() right after moving a spawned/restored
