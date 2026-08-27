@@ -27,6 +27,18 @@ from tuicc.providers.base import Provider
 # correctly excludes every OTHER tuicc window too, not just its own.
 MARK_PREFIX = "_tuicc_self_"
 
+# leave_fullscreen_self()'s settle wait — polled, not a blind sleep, and
+# bounded generously. A fixed 50ms sleep was tried first and live-found
+# to be unreliable specifically on the FIRST call after a fresh launch
+# (workspace switched, but tuicc's own window kept rendering as a stale
+# fullscreen ghost until an unrelated later event forced a repaint) —
+# consistent with cold-connection/first-IPC-round-trip latency being
+# higher than any later call over the same, by-then-warm Connection.
+# Polling get_tree() until the change is actually confirmed removes the
+# guesswork entirely instead of just picking a bigger magic number.
+LEAVE_FULLSCREEN_POLL_INTERVAL_SECONDS = 0.01
+LEAVE_FULLSCREEN_TIMEOUT_SECONDS = 0.3
+
 
 def _leaf_to_window(leaf, ws_rect, floating):
     x = (leaf.rect.x - ws_rect.x) / ws_rect.width
@@ -82,6 +94,26 @@ def _stale_self_marks(tree) -> list:
     return stale
 
 
+def _self_still_fullscreen(tree, mark: str) -> bool:
+    """True only if the marked window is found AND still fullscreen_mode
+    == 1. False both when it's genuinely not fullscreen anymore and
+    when the mark isn't found at all (nothing to wait for either way).
+    Pure, tree-walking — same style/traversal as _stale_self_marks()
+    above, so leave_fullscreen_self()'s poll loop can be driven by a
+    plain get_tree() call without any IPC of its own.
+    """
+    def walk(node):
+        if mark in node.marks:
+            return node.fullscreen_mode == 1
+        for child in node.nodes + node.floating_nodes:
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+
+    return bool(walk(tree))
+
+
 def parse_tree(tree) -> WMState:
     """Convert an i3ipc tree into tuicc's generic WMState.
     
@@ -134,33 +166,40 @@ class SwayProvider(Provider):
         plain floating, pinned-to-full-output) container leaves the
         DESTINATION workspace fully invisible — real windows, correct
         `rect`, `visible: true` in `get_tree` — until something forces
-        a real redraw. Two mitigations were tried and rejected before
-        this one, both live-tested this session (2026-08-27): bouncing
-        through a third workspace AFTER switching (unreliable — likely
-        because the three `workspace` IPC commands fire faster than
-        sway can settle each transition, coalescing into what's
-        effectively still a single direct switch) and nudging the
-        pointer (confirmed live to do nothing at all — some swayfx
-        decoration/shadow layer redraws, the actual window content
-        never does). What Rafi confirmed live DOES work, reliably: turn
-        fullscreen off on the about-to-be-hidden window and let that
-        settle BEFORE ever switching workspace — matches a working
-        theory (not verified against wlroots/swayfx source) that a
-        fullscreen surface gets handed to the output via direct
-        scanout, bypassing normal scene-graph compositing, and leaving
-        that mode cleanly (before asking the output to show something
-        else entirely) is what today's `fullscreen enable`/`disable`-
-        only paths (`focus_self`'s own fullscreen kwarg included) never
-        triggered — see CLAUDE/NOTES/wm-quirks.md
+        a real redraw. Root cause, confirmed directly against source
+        (not just theorized): scenefx's fork of wlr_scene.c drops the
+        whole-output damage call upstream wlroots fires when a frame
+        exits direct scan-out — see CLAUDE/NOTES/wm-quirks.md
         #workspace-switch-fullscreen-invisible for the full
-        investigation. The sleep is a real, deliberate blocking call
-        (this runs on the main thread, synchronously, same one-off
-        magnitude as the pending-moves loop's own 50ms poll tick) —
-        without it the following focus_region() call races the same
-        way the rejected bounce did.
+        investigation, including two rejected mitigations (bouncing
+        through a third workspace, nudging the pointer — neither worked
+        reliably). What DOES work, live-confirmed by Rafi: turn
+        fullscreen off on the about-to-be-hidden window and let that
+        settle BEFORE ever switching workspace, so the actual switch is
+        a normal composited-to-composited transition rather than the
+        buggy scanout-exit one.
+
+        The settle wait is polled (_self_still_fullscreen(), bounded by
+        LEAVE_FULLSCREEN_TIMEOUT_SECONDS), not a blind sleep — a fixed
+        50ms sleep was tried first and live-found to be unreliable
+        specifically on the FIRST call after a fresh tuicc launch
+        (workspace switched, but tuicc's own window kept rendering as a
+        stale fullscreen ghost until an unrelated later event forced a
+        repaint — plausibly a cold-connection/first-IPC-round-trip
+        latency spike that later, warmed-up calls don't hit). Polling
+        the real tree until the change is actually confirmed removes
+        that guesswork instead of just picking a bigger magic number.
+        Still a real, deliberate blocking call on the main thread — the
+        ordering (send the command, THEN confirm, THEN let focus_region
+        run) is what matters, not any particular sleep duration.
         """
-        self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] fullscreen disable")
-        time.sleep(0.05)
+        mark = f"{MARK_PREFIX}{os.getpid()}"
+        self.conn.command(f"[con_mark={mark}] fullscreen disable")
+        deadline = time.monotonic() + LEAVE_FULLSCREEN_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            if not _self_still_fullscreen(self.conn.get_tree(), mark):
+                return
+            time.sleep(LEAVE_FULLSCREEN_POLL_INTERVAL_SECONDS)
 
     def focus_window(self, window_id: str) -> None:
         self.conn.command(f"[con_id={window_id}] focus")
