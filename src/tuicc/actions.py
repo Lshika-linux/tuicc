@@ -133,15 +133,18 @@ def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
 
 
 def _handle_region(ctx, item, cfg):
-    # leave_fullscreen_self() BEFORE the switch, not after — see its
-    # own docstring (providers/base.py) for why the ordering matters.
-    ctx.provider.leave_fullscreen_self()
+    # dismiss_self() BEFORE the switch, not after — see
+    # CLAUDE/NOTES/wm-quirks.md#workspace-switch-fullscreen-invisible.
+    # main.py's own dismiss_self() call (after should_dismiss=True comes
+    # back) still runs too — a harmless no-op repeat, not skipped, so
+    # its dismissed=True bookkeeping stays intact.
+    ctx.provider.dismiss_self()
     ctx.provider.focus_region(item.focus_target)
     return True, None
 
 
 def _handle_window(ctx, item, cfg):
-    ctx.provider.leave_fullscreen_self()
+    ctx.provider.dismiss_self()
     ctx.provider.focus_window(item.focus_target)
     return True, None
 

@@ -33,8 +33,8 @@ class _FakeProvider:
         self.focused_region_id = None
         self.calls = []
 
-    def leave_fullscreen_self(self):
-        self.calls.append("leave_fullscreen_self")
+    def dismiss_self(self):
+        self.calls.append("dismiss_self")
 
     def focus_region(self, region_id):
         self.calls.append("focus_region")
@@ -59,7 +59,7 @@ def test_region_handler_calls_focus_region():
     should_exit, pending = BASE_HANDLERS["region"](ctx, item, cfg=None)
 
     assert provider.focused_region == "workspace-3"
-    assert provider.calls == ["leave_fullscreen_self", "focus_region"]
+    assert provider.calls == ["dismiss_self", "focus_region"]
     assert should_exit is True
     assert pending is None
 
@@ -72,7 +72,7 @@ def test_window_handler_calls_focus_window():
     should_exit, pending = BASE_HANDLERS["window"](ctx, item, cfg=None)
 
     assert provider.focused_window == "window-42"
-    assert provider.calls == ["leave_fullscreen_self", "focus_window"]
+    assert provider.calls == ["dismiss_self", "focus_window"]
     assert should_exit is True
     assert pending is None
 
