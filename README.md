@@ -55,7 +55,7 @@ Summon TUICC with a key-combo, and get modules that help you see and control the
 
 ### SYSTEM MONITOR
 **System gives you a live per-window resource readout, plus what's actually wrong on the machine.** CPU/RAM per open window (with CLOSE/KILL/NICE actions), a compact CPU/RAM/DISK/LOAD/temperature/swap stats grid, and a one-line diagnostics summary — failed systemd units, OOM kills, and deduped journal errors — that expands on hover into the real detail behind each issue.
-I like this because I like when my PC tells me what broke :D
+I like this because I appreciate when my PC tells me what broke :D
 
 ![System module's per-window stats and diagnostics summary, with an expanded issue detail](./screenshots/system-info.png)
 
