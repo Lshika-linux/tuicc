@@ -1,11 +1,11 @@
 # TUI Command Center
 ## Status: early / experimental
 
-Minimal UI design, maximal control over everyday tasks. 
-
-Built on a core that communicates with the WM (see lower, or wiki..), with everything else as **swappable modules**.
+one keybind - one place - one central point to control the system.
 
 Controlled with Tab/Shift+Tab, arrows and Enter
+
+Every box you see can be moved, resized, deleted. Most are configurable somehow in .config
 
 ![tuicc's packaged default layout — sidebar, sessions, launcher, preview, connectivity, power menu, media, system, bars and control all on screen at once](./screenshot.png)
 
