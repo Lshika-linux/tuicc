@@ -28,26 +28,32 @@ Summon TUICC with a key-combo, and get modules that help you see and control the
 
 ## A closer look
 
+### CONTROL
 **Control shows you the exact command before it runs.** Hover any toggle and the preview shows what will actually execute — including whether it goes through a real shell (`shell_true`), not just the friendly label.
 
 ![Control module's hover preview showing the exact shell command about to run, with a SHELL=TRUE warning](./screenshots/control-preview.png)
 
+### POWERMENU
 **Destructive actions ask first.** Anything with `confirm = true` — shutdown, reboot, logout, or your own quick actions — shows a plain Y/N prompt before it runs anything.
 
 ![Power menu's Y/N confirmation before shutting down](./screenshots/power-menu-confirm.png)
 
+### SESSIONS
 **Loading a session tells you exactly what's about to change.** Windows that would spawn show up in red under the workspace they're headed for, right alongside what's already there — so you know before you commit whether a workspace's existing windows are about to get replaced.
 
 ![Sessions module previewing incoming windows in red against each workspace's current contents](./screenshots/sessions-preview.png)
 
+### CONNECTIVITY
 **Hover the WiFi header for the full scan list.** The list itself only shows a few rows at a time, but hovering "WiFi" shows every network tuicc currently sees.
 
 ![Hovering WiFi's header to preview all available networks at once](./screenshots/wifi-available-networks.png)
 
+### MEDIA
 **Media's lists scroll too.** Now Playing and Output both use the same fixed-slot-plus-scroll list every scrollable module here shares — 3 visible rows by default, independently configurable per module via `visible_slots` in `config.toml`.
 
 ![Media module's Now Playing and Output lists](./screenshots/media-scrollable.png)
 
+### SYSTEM MONITOR
 **System gives you a live per-window resource readout, plus what's actually wrong on the machine.** CPU/RAM per open window (with CLOSE/KILL/NICE actions), a compact CPU/RAM/DISK/LOAD/temperature/swap stats grid, and a one-line diagnostics summary — failed systemd units, OOM kills, and deduped journal errors — that expands on hover into the real detail behind each issue.
 I like this because I like when my PC tells me what broke :D
 
