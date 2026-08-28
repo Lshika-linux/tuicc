@@ -9,7 +9,8 @@ Every box you see can be moved, resized, deleted. Most are configurable somehow 
 
 ![tuicc's packaged default layout — sidebar, sessions, launcher, preview, connectivity, power menu, media, system, bars and control all on screen at once](./screenshot.png)
 
-You summon tuicc with a key-combo, and you get modules to see and control the system from one place —
+Summon TUICC with a key-combo, and get modules that help you see and control the system/wm —
+
 - your workspaces and what's in them (sidebar.py);
 - a live overview of what's on screen (preview.py);
 - an integrated app launcher (launcher.py);
