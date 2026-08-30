@@ -72,6 +72,8 @@ class Config:
     tab_order: str
     provider_name: str
     total_workspaces: int
+    workspace_mode: str
+    workspace_names: list | None
     self_app_id: str | None
     return_to_origin: bool
     fullscreen_only: bool
@@ -715,6 +717,28 @@ def load_config(preset_override: int | None = None) -> Config:
     tab_order_mode = user_data["navigation"]["tab_order"]
     provider_name = user_data["wm"]["provider"]
     total_workspaces = user_data["wm"]["total_workspaces"]
+    # New key, added after workspace_mode="autodetect" (get_config()
+    # parsing — see wm_config_parser.py) already existed as the only
+    # behavior — .get()-with-default so an existing config.toml that
+    # predates this doesn't crash on load, same "unconfigurable-but-
+    # working fallback" treatment self_app_id/fullscreen_only below
+    # already get. "manual" is the escape hatch for whatever
+    # autodetect genuinely can't see (a dynamically exec-generated
+    # binding, no static declaration at all) — an explicit,
+    # user-declared list, still unioned against whatever real regions
+    # exist (sidebar.py's slot_ids()), same as autodetect's own list.
+    workspace_mode = user_data["wm"].get("workspace_mode", "autodetect")
+    workspace_names = user_data["wm"].get("workspace_names")
+    if workspace_mode not in ("autodetect", "manual"):
+        raise ValueError(
+            f'[wm] workspace_mode must be "autodetect" or "manual", got {workspace_mode!r}'
+        )
+    if workspace_mode == "manual" and not workspace_names:
+        raise ValueError(
+            '[wm] workspace_mode = "manual" but workspace_names is empty or not set — '
+            "list the workspace names/numbers to show, e.g. "
+            'workspace_names = ["1", "2", "chat"]'
+        )
     self_app_id = user_data["wm"].get("self_app_id") or None
     return_to_origin = user_data["wm"].get("return_to_origin", False)
     fullscreen_only = user_data["wm"].get("fullscreen_only", False)
@@ -872,6 +896,8 @@ def load_config(preset_override: int | None = None) -> Config:
         tab_order=tab_order_mode,
         provider_name=provider_name,
         total_workspaces=total_workspaces,
+        workspace_mode=workspace_mode,
+        workspace_names=workspace_names,
         self_app_id=self_app_id,
         return_to_origin=return_to_origin,
         fullscreen_only=fullscreen_only,

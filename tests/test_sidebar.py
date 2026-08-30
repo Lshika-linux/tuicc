@@ -24,7 +24,10 @@ def _cfg():
 def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None, wm_config=None):
     return SimpleNamespace(
         state=WMState(regions=regions),
-        config=SimpleNamespace(total_workspaces=total_workspaces, **vars(_cfg())),
+        config=SimpleNamespace(
+            total_workspaces=total_workspaces, workspace_mode="autodetect", workspace_names=None,
+            **vars(_cfg()),
+        ),
         selected_id=selected_id,
         session_preview=session_preview,
         typing_mode=False,
@@ -411,6 +414,28 @@ def test_slot_ids_falls_back_to_numeric_range_when_wm_config_has_no_names():
 def test_slot_ids_uses_wm_config_names_when_present():
     wm_config = WmConfigInfo(workspace_names=["10", "20", "chat"])
     assert slot_ids([], wm_config, total_workspaces=3) == ["10", "20", "chat"]
+
+
+def test_slot_ids_manual_mode_uses_manual_names_even_with_wm_config_present():
+    # manual outranks autodetect entirely when explicitly chosen -
+    # config.py already refuses to load "manual" with an empty list,
+    # so manual_workspace_names being real is a given whenever this
+    # branch is taken.
+    wm_config = WmConfigInfo(workspace_names=["10", "20"])
+    ids = slot_ids(
+        [], wm_config, total_workspaces=3,
+        workspace_mode="manual", manual_workspace_names=["a", "b"],
+    )
+    assert ids == ["a", "b"]
+
+
+def test_slot_ids_manual_mode_still_unions_real_regions():
+    regions = [_region("c")]
+    ids = slot_ids(
+        regions, wm_config=None, total_workspaces=3,
+        workspace_mode="manual", manual_workspace_names=["a", "b"],
+    )
+    assert ids == ["a", "b", "c"]
 
 
 def test_slot_ids_unions_real_regions_not_covered_by_the_base_list():

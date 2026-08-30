@@ -40,7 +40,10 @@ def _build_slots(ctx):
     sidebar variants can never drift apart on which slots exist.
     """
     by_id = {region.id: region for region in ctx.state.regions}
-    ids = slot_ids(ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces)
+    ids = slot_ids(
+        ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces,
+        ctx.config.workspace_mode, ctx.config.workspace_names,
+    )
     return [(ws_id, by_id.get(ws_id)) for ws_id in ids]
 
 

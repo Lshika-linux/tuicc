@@ -73,7 +73,7 @@ def _preview_apps_for(ctx, ws_id):
     return ctx.session_preview.get(ws_id, [])
 
 
-def slot_ids(regions, wm_config, total_workspaces) -> list[str]:
+def slot_ids(regions, wm_config, total_workspaces, workspace_mode="autodetect", manual_workspace_names=None) -> list[str]:
     """The ordered, de-duplicated set of workspace identities to show
     as slots — real regions are always included (union), never
     silently hidden regardless of source. See GitHub issue #9 /
@@ -82,19 +82,29 @@ def slot_ids(regions, wm_config, total_workspaces) -> list[str]:
     ONLY source, so a workspace named "20" or "chat" (anything outside
     "1".."total_workspaces") simply never appeared.
 
-    Base ordering comes from wm_config.workspace_names (parsed from the
-    WM's own config text — bindsym/for_window/assign, see
-    wm_config_parser.py) when that's available and non-empty; falls
-    back to the old "1".."total_workspaces" guess otherwise
-    (unparseable/unsupported WM config — exactly today's behavior,
-    unchanged). Either way, any region that genuinely exists right now
+    Three possible sources for the base list, in priority order:
+    1. workspace_mode="manual": manual_workspace_names, verbatim — the
+       explicit escape hatch for whatever autodetect genuinely can't
+       see (a dynamically exec-generated binding, no static
+       declaration anywhere at all). config.py already refuses to
+       load with this mode set and an empty/missing list, so a real
+       value is guaranteed here whenever this branch is taken.
+    2. wm_config.workspace_names (parsed from the WM's own config text
+       — bindsym/for_window/assign, see wm_config_parser.py) when
+       that's available and non-empty — the "autodetect" default.
+    3. The old "1".."total_workspaces" guess — unparseable/unsupported
+       WM config, exactly the original behavior, unchanged.
+
+    Whichever source wins, any region that genuinely exists right now
     but isn't already in that base list is appended at the end — a
-    workspace this parser missed for any reason (a dynamically
-    generated binding, a config it couldn't parse, a workspace renamed
-    at runtime) still shows up the moment it's actually used, never
-    silently dropped.
+    workspace the chosen source missed for any reason (a dynamically
+    generated binding under autodetect, a stale manual list, a
+    workspace renamed at runtime) still shows up the moment it's
+    actually used, never silently dropped.
     """
-    if wm_config is not None and wm_config.workspace_names:
+    if workspace_mode == "manual" and manual_workspace_names:
+        ids = list(manual_workspace_names)
+    elif wm_config is not None and wm_config.workspace_names:
         ids = list(wm_config.workspace_names)
     else:
         ids = [str(n) for n in range(1, total_workspaces + 1)]
@@ -111,7 +121,10 @@ def _build_slots(ctx):
     see slot_ids()'s own docstring for how that set is determined.
     """
     by_id = {region.id: region for region in ctx.state.regions}
-    ids = slot_ids(ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces)
+    ids = slot_ids(
+        ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces,
+        ctx.config.workspace_mode, ctx.config.workspace_names,
+    )
     return [(ws_id, by_id.get(ws_id)) for ws_id in ids]
 
 

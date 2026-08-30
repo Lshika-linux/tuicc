@@ -549,13 +549,19 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
     # chars, including vim's own j/k (a separate keybind).
     if key == cfg.keybinds["up"]:
         current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
-        ids = sidebar_mode.slot_ids(state.regions, app.wm_config, cfg.total_workspaces)
+        ids = sidebar_mode.slot_ids(
+            state.regions, app.wm_config, cfg.total_workspaces,
+            cfg.workspace_mode, cfg.workspace_names,
+        )
         loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, -1)
         launcher.manual_target = True
         return True
     if key == cfg.keybinds["down"]:
         current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
-        ids = sidebar_mode.slot_ids(state.regions, app.wm_config, cfg.total_workspaces)
+        ids = sidebar_mode.slot_ids(
+            state.regions, app.wm_config, cfg.total_workspaces,
+            cfg.workspace_mode, cfg.workspace_names,
+        )
         loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, 1)
         launcher.manual_target = True
         return True

@@ -146,11 +146,23 @@ delete_box = "Delete"
 # how to add your own.
 provider = "sway"
 
-# How many workspace slots the sidebar always shows, regardless of how
-# many are actually in use. "Only show real workspaces" is deliberately
-# NOT a feature — it would add complexity this project doesn't want by
-# default. You're of course free to change that in the code yourself.
+# The sidebar shows your real workspace names/numbers, read straight
+# from your sway/i3 config (bindsym/for_window/assign) — see
+# workspace_mode below if that doesn't cover your setup. total_workspaces
+# is only the fallback: how many numbered "1".."N" slots to show if
+# that reading comes up empty (an unparseable config, or none at all).
 total_workspaces = 10
+
+# "autodetect" (default) reads your sway/i3 config directly — covers
+# almost everyone. Switch to "manual" only if your setup genuinely
+# defeats that (workspaces bound via a script at runtime instead of a
+# static bindsym line, or no static declaration anywhere at all) — set
+# it and list exactly what you want shown:
+# workspace_mode = "manual"
+# workspace_names = ["1", "2", "chat"]
+# Whichever mode, any workspace that actually exists right now is
+# always shown too, even if it's missing from here.
+workspace_mode = "autodetect"
 
 # Strongly recommended, not just for rapid multi-launch edge cases.
 # If your launch command gives tuicc's window a known, stable app_id

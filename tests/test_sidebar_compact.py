@@ -12,7 +12,7 @@ from tuicc.modules.sidebar_compact import nav_items
 def _ctx(regions, total_workspaces=3, selected_id=None, wm_config=None):
     return SimpleNamespace(
         state=WMState(regions=regions),
-        config=SimpleNamespace(total_workspaces=total_workspaces),
+        config=SimpleNamespace(total_workspaces=total_workspaces, workspace_mode="autodetect", workspace_names=None),
         selected_id=selected_id,
         wm_config=wm_config,
     )
