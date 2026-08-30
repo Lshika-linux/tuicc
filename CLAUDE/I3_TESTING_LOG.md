@@ -23,6 +23,12 @@ you can't fix confidently in one session (unclear root cause, needs a
 design decision, touches multiple files) — leave it unfixed, note it
 clearly here, and don't guess at a fix that isn't well-understood.
 
+**Specifically flagged for verification right now (2026-08-30, GitHub issue #9):** `Provider.wm_config()` (`wm_config_parser.py`) — parses the WM's own config text (via `Connection.get_config()`) for real workspace names and `for_window`/`assign` routing rules, replacing the old blind "1".."total_workspaces" sidebar slot guess. Implemented identically on `I3Provider` as `SwayProvider` (same `i3ipc.get_config()` call, not WM-specific), and i3's own `assign` grammar (the `workspace` keyword being optional — `assign [criteria] 2`, `→ 2`, `→ work`, `→ number 2`, and excluding `output ...`) was checked against i3's real user guide and covered with unit tests — but none of this has run against an actual i3 process. Concretely worth checking on real i3 hardware:
+- Does `i3ipc.Connection.get_config()` actually work against real i3 the way it does against swayfx (confirmed live there), including comment/`include` handling matching what this file's own docstring assumes?
+- Sidebar shows your real workspace names/numbers (not just "1".."10") — especially if your i3 config uses non-default numbering or named workspaces.
+- If you have (or can add) a real `assign` rule using the bare/arrow form (no explicit "workspace" keyword) — does tuicc's launcher correctly auto-route to it and show the "Routing rule detected" hint?
+- Up/Down while typing in the launcher still correctly cycles your real workspace list (`shift_workspace_id()`), not the old numeric range.
+
 Append a new entry below using this template — newest entry at the
 top, don't rewrite or delete older ones (this is a log, not a living
 doc; stale entries are still useful history, not clutter):
