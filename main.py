@@ -524,22 +524,31 @@ def do_apply_toast(loop_state, action_ctx):
 
 
 def _apply_launcher_routing_default(loop_state, launcher, app):
-    """GitHub issue #9's routing-rule follow-on. Unconditionally forces
-    focus_id to whatever routed_target() says (or None, if nothing
-    routes) every keystroke, overwriting any stale sticky value it
-    already had — focus_id is sticky app-wide (resolve_selection()
-    only updates it for region items, so it keeps showing the last
-    real workspace pick across unrelated modules), so "only touch it
-    if it's still None" doesn't work: it's essentially never None by
-    the time typing starts. Stops entirely, for the rest of this
-    typing session, the moment the user presses Up/Down themselves
-    (see LauncherState.manual_target's own docstring) — their own pick
-    always wins once that's happened.
+    """GitHub issue #9's routing-rule follow-on. Forces focus_id to
+    whatever routed_target() says every keystroke, overwriting any
+    stale sticky value it already had — focus_id is sticky app-wide
+    (resolve_selection() only updates it for region items, so it keeps
+    showing the last real workspace pick across unrelated modules), so
+    "only touch it if it's still None" doesn't work: it's essentially
+    never None by the time typing starts. Stops entirely, for the rest
+    of this typing session, the moment the user presses Up/Down
+    themselves (see LauncherState.manual_target's own docstring) —
+    their own pick always wins once that's happened.
+
+    Only overwrites focus_id when a rule actually matches — when
+    routed_target() comes back None (no rule for the currently
+    selected app, the overwhelmingly common case), focus_id is left
+    completely untouched. Live-found: forcing it to None too broke the
+    launcher's ordinary "show where this would launch" default
+    entirely — every keystroke for an app with no rule wiped out
+    whatever sensible target (sticky pick or real WM focus) was
+    already showing, until the user manually nudged it with Up/Down.
     """
     if launcher.manual_target:
         return
     routed = launcher_mode.routed_target(launcher, app.wm_config)
-    loop_state.focus_id = routed
+    if routed is not None:
+        loop_state.focus_id = routed
 
 
 def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app):
