@@ -392,7 +392,7 @@ def draw(stdscr, box, ctx, module_name):
         and hint_row < y + h - 1
     ):
         target = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
-        hint = f"Routing rule detected — spawning at {target}  [↑↓] to change"
+        hint = f'Routing rule detected — spawning at ws "{target}"  [↑↓] to change'
         try:
             stdscr.addstr(hint_row, x + 2, wc_truncate(hint, avail_w), theme.get("text", 0) | curses.A_DIM)
         except curses.error:
