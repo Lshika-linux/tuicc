@@ -158,6 +158,18 @@ class LauncherState:
     search_selected_index: int = 0
     saved_selected_id: str | None = None
     saved_active_module: str | None = None
+    # GitHub issue #9's routing-rule follow-on: once the user presses
+    # Up/Down during typing, main.py stops auto-forcing focus_id to
+    # whatever routed_target() says — their own pick wins from then on,
+    # for the rest of this typing session. Until that happens, every
+    # keystroke unconditionally re-forces focus_id to the routed
+    # target (or None if nothing routes), overwriting any stale sticky
+    # value focus_id already had — that stickiness (preview.py showing
+    # the last real workspace pick across unrelated modules) is exactly
+    # why "only touch it if it's still None" doesn't work here; it's
+    # essentially never None by the time typing starts. Reset False on
+    # both typing-mode boundaries.
+    manual_target: bool = False
 
 
 def resolve_selected(state: LauncherState):
@@ -177,6 +189,26 @@ def resolve_selected(state: LauncherState):
     return cmd, app_id
 
 
+def routed_target(state: LauncherState, wm_config) -> str | None:
+    """The workspace a for_window/assign rule (wm_config_parser.py)
+    would route the CURRENTLY selected search result's app to, or None
+    if nothing's selected or no rule matches its app_id_hint. Pure
+    lookup — main.py's handle_launcher() decides whether/when it's
+    still allowed to apply this to loop_state.focus_id (see
+    LauncherState.manual_target's own docstring), the same loop-level
+    concern resolve_selected() above already keeps out of this module.
+    """
+    if not wm_config or not wm_config.routing_rules:
+        return None
+    selected = resolve_selected(state)
+    if selected is None:
+        return None
+    _cmd, app_id_hint = selected
+    if app_id_hint is None:
+        return None
+    return wm_config.routing_rules.get(app_id_hint)
+
+
 def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_query="") -> None:
     """Saves the pre-typing selection so handle_typing_key's Escape/
     Backspace-to-empty exit (or a successful confirm) can restore it
@@ -191,6 +223,7 @@ def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_
     state.typing_mode = True
     state.search_query = initial_query
     state.search_selected_index = 0
+    state.manual_target = False
 
 
 def exit_typing_mode(state: LauncherState) -> None:
@@ -201,6 +234,7 @@ def exit_typing_mode(state: LauncherState) -> None:
     state.typing_mode = False
     state.search_query = ""
     state.search_selected_index = 0
+    state.manual_target = False
 
 
 def handle_typing_key(state: LauncherState, key, cfg) -> bool:
@@ -336,6 +370,31 @@ def draw(stdscr, box, ctx, module_name):
         remaining = len(results) - 1 - shown[-1]
         try:
             stdscr.addstr(items_row, cx, f"+{remaining}", theme.get("text", 0) | curses.A_DIM)
+        except curses.error:
+            pass
+
+    # GitHub issue #9's routing-rule follow-on: a status line, not a
+    # new keybind — Up/Down (not a new [TAB] binding) already move
+    # focus_id without leaving typing mode (see main.py's own
+    # handle_launcher() comment), so the hint just names the key that
+    # already does this. ctx.focus_id, by the time draw() runs this
+    # frame, already reflects whatever main.py's handle_launcher() just
+    # decided (its own auto-default, or the user's manual Up/Down
+    # override) — showing it directly here, rather than re-deriving the
+    # same precedence logic a second time, keeps this a pure "what will
+    # actually happen" readout. Only drawn when there's a spare row
+    # below the results (same h > 3 threshold items_row's own fallback
+    # already uses).
+    _sel_name, _sel_cmd, sel_app_id = results[sel]
+    hint_row = items_row + 1
+    if (
+        sel_app_id is not None and ctx.wm_config and sel_app_id in ctx.wm_config.routing_rules
+        and hint_row < y + h - 1
+    ):
+        target = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
+        hint = f"Routing rule detected — spawning at {target}  [↑↓] to change"
+        try:
+            stdscr.addstr(hint_row, x + 2, wc_truncate(hint, avail_w), theme.get("text", 0) | curses.A_DIM)
         except curses.error:
             pass
 

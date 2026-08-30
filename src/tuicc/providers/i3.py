@@ -8,6 +8,7 @@ from Xlib import display, X
 
 from tuicc.model import Window, Region, WMState
 from tuicc.providers.base import Provider
+from tuicc.wm_config_parser import get_wm_config
 
 
 _NET_WM_PID = "_NET_WM_PID"
@@ -256,6 +257,9 @@ class I3Provider(Provider):
             f"[con_id={window_id}] floating enable, "
             f"resize set {w}px {h}px, move position {x}px {y}px"
         )
+
+    def wm_config(self):
+        return get_wm_config(self.conn)
 
     def copy_to_clipboard(self, text: str) -> bool:
         """xclip — the standard X11 clipboard CLI, matching this

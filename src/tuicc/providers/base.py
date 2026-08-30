@@ -100,6 +100,20 @@ class Provider(ABC):
         """
         pass
 
+    def wm_config(self):
+        """Best-effort WmConfigInfo (wm_config_parser.py) parsed from the
+        WM's own config text — see that module's docstring for the full
+        reasoning (GitHub issue #9) and its real, documented limits.
+        Called once at startup (app_setup.py), not per-frame — this
+        doesn't change except on a WM config reload, unlike get_state();
+        see RenderContext.wm_config's own docstring. Optional, default
+        None: a WM whose IPC protocol has no config-introspection
+        message at all just gets no extra defaults — modules already
+        union this against whatever regions genuinely exist, so None
+        degrades to exactly today's behavior, not a crash.
+        """
+        return None
+
     def resolve_pid(self, window_id: str) -> int | None:
         """Best-effort process id for the window's owning process (e.g.
         to relaunch it later — see session.py). Not part of the

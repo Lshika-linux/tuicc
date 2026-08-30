@@ -73,16 +73,46 @@ def _preview_apps_for(ctx, ws_id):
     return ctx.session_preview.get(ws_id, [])
 
 
+def slot_ids(regions, wm_config, total_workspaces) -> list[str]:
+    """The ordered, de-duplicated set of workspace identities to show
+    as slots — real regions are always included (union), never
+    silently hidden regardless of source. See GitHub issue #9 /
+    CLAUDE/NOTES/design-decisions.md#workspace-config-parsing for the
+    full story: total_workspaces-many numbered slots used to be the
+    ONLY source, so a workspace named "20" or "chat" (anything outside
+    "1".."total_workspaces") simply never appeared.
+
+    Base ordering comes from wm_config.workspace_names (parsed from the
+    WM's own config text — bindsym/for_window/assign, see
+    wm_config_parser.py) when that's available and non-empty; falls
+    back to the old "1".."total_workspaces" guess otherwise
+    (unparseable/unsupported WM config — exactly today's behavior,
+    unchanged). Either way, any region that genuinely exists right now
+    but isn't already in that base list is appended at the end — a
+    workspace this parser missed for any reason (a dynamically
+    generated binding, a config it couldn't parse, a workspace renamed
+    at runtime) still shows up the moment it's actually used, never
+    silently dropped.
+    """
+    if wm_config is not None and wm_config.workspace_names:
+        ids = list(wm_config.workspace_names)
+    else:
+        ids = [str(n) for n in range(1, total_workspaces + 1)]
+    seen = set(ids)
+    for region in regions:
+        if region.id not in seen:
+            seen.add(region.id)
+            ids.append(region.id)
+    return ids
+
+
 def _build_slots(ctx):
-    """Return a list of (workspace_number_str, region_or_None) for every
-    slot from 1 to total_workspaces, filled in with real regions where
-    they exist.
+    """Return a list of (workspace_id, region_or_None) for every slot —
+    see slot_ids()'s own docstring for how that set is determined.
     """
     by_id = {region.id: region for region in ctx.state.regions}
-    slots = []
-    for n in range(1, ctx.config.total_workspaces + 1):
-        slots.append((str(n), by_id.get(str(n))))
-    return slots
+    ids = slot_ids(ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces)
+    return [(ws_id, by_id.get(ws_id)) for ws_id in ids]
 
 
 def _selected_slot_index(slots, selected_id) -> int | None:
@@ -162,19 +192,34 @@ def _visible_slot_range(heights: list[int], selected_index: int | None, availabl
     return start, end
 
 
-def shift_workspace_id(current_id, total_workspaces, delta):
-    """current_id shifted by delta, wrapping within 1..total_workspaces
-    — used by main.py's mode_stack "launcher" tier to let Up/Down move
-    the ambient-typing launch target while still typing, without
-    leaving typing mode. current_id may be None or non-numeric — falls
-    back to slot 1 rather than raising, since this is UI convenience,
-    not something that should ever crash the render loop.
+def shift_workspace_id(current_id, ids: list[str], delta: int):
+    """current_id shifted by delta within ids (the real slot_ids() list
+    — GitHub issue #9's fix: this used to be pure "1..total_workspaces"
+    modulo arithmetic, blind to any non-numeric or out-of-range real
+    workspace name), wrapping at either end. Used by main.py's
+    mode_stack "launcher" tier to let Up/Down move the ambient-typing
+    launch target while still typing, without leaving typing mode.
+
+    current_id may be None, or simply not present in ids (a workspace
+    slot_ids() never generated a placeholder for, e.g. one dynamically
+    created and then renamed past whatever the WM config parser saw) —
+    falls back to ids[0] for delta=+1 / ids[-1] for delta=-1 rather
+    than raising, since this is UI convenience, not something that
+    should ever crash the render loop. (Old behavior for this same
+    "invalid current" case treated it as if positioned at slot 1 and
+    then shifted from there, landing one further along than this;
+    landing squarely on the first/last real slot instead reads more
+    sensibly now that "the slots" is a real, WM-declared list rather
+    than a guessed numeric range.)
     """
-    if total_workspaces <= 0:
+    if not ids:
         return current_id
-    current = int(current_id) if current_id and current_id.isdigit() else 1
-    new_n = ((current - 1 + delta) % total_workspaces) + 1
-    return str(new_n)
+    try:
+        index = ids.index(current_id)
+    except ValueError:
+        index = -1 if delta >= 0 else 0
+    new_index = (index + delta) % len(ids)
+    return ids[new_index]
 
 
 def _slot_data(ctx):

@@ -82,6 +82,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
     status_worker = app.status_worker
     cava_reader = app.cava_reader
     action_ctx = app.action_ctx
+    wm_config = app.wm_config
 
     # Drives a faster redraw cadence below — the idle 1000ms cadence
     # alone would turn the marquee's smooth 1-char slide into a visible
@@ -329,6 +330,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         control_colors=control_colors,
         cava=cava_reader,
         preview_renderers=PREVIEW_RENDERERS,
+        wm_config=wm_config,
     )
 
     items = collect_nav_items(cfg.layout, boxes, ctx)

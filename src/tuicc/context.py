@@ -79,3 +79,13 @@ class RenderContext:
     # StatusWorker is wired up unconditionally in main.py regardless of
     # which modules a preset actually uses.
     cava: object = None
+    # wm_config_parser.WmConfigInfo (or None) — the WM's own config,
+    # parsed once at startup (app_setup.py) and threaded through here
+    # unchanged every frame after, same "built once, not per-frame"
+    # convention control_colors above already uses (this one for a
+    # different reason: control_colors is a one-time curses setup call,
+    # this one is a real IPC round-trip + regex parse over the WM's
+    # whole config text, which only ever changes on a WM config reload
+    # — see Provider.wm_config()'s own docstring). modules/sidebar.py's
+    # _build_slots() is the main reader — see GitHub issue #9.
+    wm_config: object = None

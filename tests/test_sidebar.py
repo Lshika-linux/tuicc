@@ -12,14 +12,16 @@ from tuicc.modules.sidebar import (
     nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
     _visible_slot_range, _selected_slot_index, _hidden_summary,
     _fitting_title, _right_aligned_overlay_col, _grouped_window_rows,
+    slot_ids,
 )
+from tuicc.wm_config_parser import WmConfigInfo
 
 
 def _cfg():
     return SimpleNamespace(terminal_apps=set(), browser_apps=set(), browser_title_names=set())
 
 
-def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
+def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None, wm_config=None):
     return SimpleNamespace(
         state=WMState(regions=regions),
         config=SimpleNamespace(total_workspaces=total_workspaces, **vars(_cfg())),
@@ -27,6 +29,7 @@ def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None):
         session_preview=session_preview,
         typing_mode=False,
         focus_id=None,
+        wm_config=wm_config,
     )
 
 
@@ -387,37 +390,93 @@ def test_nav_items_no_peek_items_when_everything_fits():
     assert [item.focus_target for item in items] == ["1", "2", "3"]
 
 
+# ---------- slot_ids ----------
+# GitHub issue #9: real region ids used to be silently invisible the
+# instant they fell outside "1".."total_workspaces" (a named workspace,
+# or any number past total_workspaces). See wm_config_parser.py for
+# where wm_config itself comes from.
+
+def _region(id):
+    return Region(id=id, name=id, windows=[], focused=False)
+
+
+def test_slot_ids_falls_back_to_numeric_range_without_wm_config():
+    assert slot_ids([], wm_config=None, total_workspaces=3) == ["1", "2", "3"]
+
+
+def test_slot_ids_falls_back_to_numeric_range_when_wm_config_has_no_names():
+    assert slot_ids([], wm_config=WmConfigInfo(), total_workspaces=3) == ["1", "2", "3"]
+
+
+def test_slot_ids_uses_wm_config_names_when_present():
+    wm_config = WmConfigInfo(workspace_names=["10", "20", "chat"])
+    assert slot_ids([], wm_config, total_workspaces=3) == ["10", "20", "chat"]
+
+
+def test_slot_ids_unions_real_regions_not_covered_by_the_base_list():
+    # The actual fix: a real region outside the base list (whichever
+    # source produced it) is never hidden, just appended.
+    regions = [_region("20")]
+    assert slot_ids(regions, wm_config=None, total_workspaces=3) == ["1", "2", "3", "20"]
+
+
+def test_slot_ids_real_regions_already_covered_are_not_duplicated():
+    wm_config = WmConfigInfo(workspace_names=["10", "20"])
+    regions = [_region("20")]
+    assert slot_ids(regions, wm_config, total_workspaces=3) == ["10", "20"]
+
+
+def test_slot_ids_named_workspaces_survive_unioning():
+    regions = [_region("web"), _region("chat")]
+    assert slot_ids(regions, wm_config=None, total_workspaces=2) == ["1", "2", "web", "chat"]
+
+
 # ---------- shift_workspace_id ----------
 # Up/Down while typing in the launcher move the ambient-typing launch
-# target — see main.py's own mode_stack "launcher" tier.
+# target — see main.py's own mode_stack "launcher" tier. GitHub issue
+# #9: ids is now the real slot_ids() list (any real WM-declared name),
+# not blind "1".."total_workspaces" modulo arithmetic.
+
+_IDS5 = ["1", "2", "3", "4", "5"]
+
 
 def test_shift_workspace_id_moves_forward():
-    assert shift_workspace_id("2", total_workspaces=5, delta=1) == "3"
+    assert shift_workspace_id("2", _IDS5, delta=1) == "3"
 
 
 def test_shift_workspace_id_moves_backward():
-    assert shift_workspace_id("2", total_workspaces=5, delta=-1) == "1"
+    assert shift_workspace_id("2", _IDS5, delta=-1) == "1"
 
 
 def test_shift_workspace_id_wraps_forward_past_the_last_slot():
-    assert shift_workspace_id("5", total_workspaces=5, delta=1) == "1"
+    assert shift_workspace_id("5", _IDS5, delta=1) == "1"
 
 
 def test_shift_workspace_id_wraps_backward_past_the_first_slot():
-    assert shift_workspace_id("1", total_workspaces=5, delta=-1) == "5"
+    assert shift_workspace_id("1", _IDS5, delta=-1) == "5"
 
 
-def test_shift_workspace_id_none_current_defaults_to_slot_one():
-    assert shift_workspace_id(None, total_workspaces=5, delta=1) == "2"
+def test_shift_workspace_id_none_current_defaults_to_first_slot():
+    assert shift_workspace_id(None, _IDS5, delta=1) == "1"
 
 
-def test_shift_workspace_id_non_numeric_current_defaults_to_slot_one():
-    # This codebase's sidebar only ever models numbered 1..total_workspaces
-    # slots (see _build_slots) — a non-numeric region id (e.g. a named
-    # sway workspace) already doesn't fit that model elsewhere either.
-    assert shift_workspace_id("web", total_workspaces=5, delta=1) == "2"
+def test_shift_workspace_id_current_not_in_ids_defaults_to_last_slot_going_backward():
+    assert shift_workspace_id("nonexistent", _IDS5, delta=-1) == "5"
+
+
+def test_shift_workspace_id_named_workspace_now_works_normally():
+    # The actual fix this issue was about: a non-numeric, real
+    # WM-declared workspace name is just another entry in ids now, not
+    # a case that falls through to a fallback at all.
+    ids = ["1", "web", "chat"]
+    assert shift_workspace_id("web", ids, delta=1) == "chat"
+    assert shift_workspace_id("web", ids, delta=-1) == "1"
 
 
 def test_shift_workspace_id_single_workspace_wraps_to_itself():
-    assert shift_workspace_id("1", total_workspaces=1, delta=1) == "1"
-    assert shift_workspace_id("1", total_workspaces=1, delta=-1) == "1"
+    assert shift_workspace_id("1", ["1"], delta=1) == "1"
+    assert shift_workspace_id("1", ["1"], delta=-1) == "1"
+
+
+def test_shift_workspace_id_empty_ids_returns_current_unchanged():
+    assert shift_workspace_id("1", [], delta=1) == "1"

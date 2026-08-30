@@ -67,6 +67,10 @@ class AppContext:
     status_worker: CombinedStatus
     cava_reader: CavaReader
     action_ctx: ActionContext
+    # Provider.wm_config()'s result — None on i3/older setups or a WM
+    # whose config wasn't parseable. See RenderContext.wm_config's own
+    # docstring for why this is built once here, not per-frame.
+    wm_config: object
 
 
 def build_app(preset_override: int | None = None) -> AppContext:
@@ -107,6 +111,11 @@ def build_app(preset_override: int | None = None) -> AppContext:
     # session too.
     provider.cleanup_stale_self_marks()
     provider.mark_self(cfg.self_app_id)
+    # Once, not per-frame — see Provider.wm_config()'s own docstring
+    # for why (an IPC round-trip + regex parse over the WM's whole
+    # config text every single render tick would be real, needless
+    # overhead for something that only changes on a WM config reload).
+    wm_config = provider.wm_config()
 
     wifi_backend = build_wifi_backend(cfg.wifi_backend_name)
     bluetooth_backend = build_bluetooth_backend(cfg.bluetooth_backend_name)
@@ -325,4 +334,5 @@ def build_app(preset_override: int | None = None) -> AppContext:
         status_worker=status_worker,
         cava_reader=cava_reader,
         action_ctx=action_ctx,
+        wm_config=wm_config,
     )

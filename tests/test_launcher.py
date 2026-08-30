@@ -13,7 +13,9 @@ from tuicc.modules.launcher import (
     enter_typing_mode,
     exit_typing_mode,
     resolve_selected,
+    routed_target,
 )
+from tuicc.wm_config_parser import WmConfigInfo
 
 
 class _FakeConfig:
@@ -278,12 +280,25 @@ def test_exit_typing_mode_resets_editable_fields_but_not_saved_selection():
     state = LauncherState(
         typing_mode=True, search_query="fire", search_selected_index=2,
         saved_selected_id="sidebar:1", saved_active_module="sidebar",
+        manual_target=True,
     )
 
     exit_typing_mode(state)
 
     assert (state.typing_mode, state.search_query, state.search_selected_index) == (False, "", 0)
     assert (state.saved_selected_id, state.saved_active_module) == ("sidebar:1", "sidebar")
+    assert state.manual_target is False
+
+
+def test_enter_typing_mode_resets_a_stale_manual_target():
+    # A leftover value from a previous typing session must never leak
+    # into a new one — see LauncherState.manual_target's own
+    # docstring.
+    state = LauncherState(manual_target=True)
+
+    enter_typing_mode(state, "sidebar:1", "sidebar")
+
+    assert state.manual_target is False
 
 
 # ---------- resolve_selected ----------
@@ -307,3 +322,37 @@ def test_resolve_selected_no_matches_returns_none(monkeypatch):
     result = resolve_selected(state)
 
     assert result is None
+
+
+# ---------- routed_target ----------
+# GitHub issue #9's routing-rule follow-on — see wm_config_parser.py.
+
+def test_routed_target_returns_workspace_for_matching_rule(monkeypatch):
+    monkeypatch.setattr(launcher, "_apps_cache", [("Discord", "discord", "discord")])
+    state = LauncherState(search_query="disc", search_selected_index=0)
+    wm_config = WmConfigInfo(routing_rules={"discord": "chat"})
+
+    assert routed_target(state, wm_config) == "chat"
+
+
+def test_routed_target_none_when_no_rule_matches(monkeypatch):
+    monkeypatch.setattr(launcher, "_apps_cache", [("Firefox", "firefox", "firefox")])
+    state = LauncherState(search_query="fire", search_selected_index=0)
+    wm_config = WmConfigInfo(routing_rules={"discord": "chat"})
+
+    assert routed_target(state, wm_config) is None
+
+
+def test_routed_target_none_when_wm_config_is_none(monkeypatch):
+    monkeypatch.setattr(launcher, "_apps_cache", [("Discord", "discord", "discord")])
+    state = LauncherState(search_query="disc", search_selected_index=0)
+
+    assert routed_target(state, None) is None
+
+
+def test_routed_target_none_when_no_search_results(monkeypatch):
+    monkeypatch.setattr(launcher, "_apps_cache", [("Firefox", "firefox", "firefox")])
+    state = LauncherState(search_query="zzz", search_selected_index=0)
+    wm_config = WmConfigInfo(routing_rules={"discord": "chat"})
+
+    assert routed_target(state, wm_config) is None

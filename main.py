@@ -523,18 +523,41 @@ def do_apply_toast(loop_state, action_ctx):
     action_ctx.toast_urgent = False
 
 
-def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
+def _apply_launcher_routing_default(loop_state, launcher, app):
+    """GitHub issue #9's routing-rule follow-on. Unconditionally forces
+    focus_id to whatever routed_target() says (or None, if nothing
+    routes) every keystroke, overwriting any stale sticky value it
+    already had — focus_id is sticky app-wide (resolve_selection()
+    only updates it for region items, so it keeps showing the last
+    real workspace pick across unrelated modules), so "only touch it
+    if it's still None" doesn't work: it's essentially never None by
+    the time typing starts. Stops entirely, for the rest of this
+    typing session, the moment the user presses Up/Down themselves
+    (see LauncherState.manual_target's own docstring) — their own pick
+    always wins once that's happened.
+    """
+    if launcher.manual_target:
+        return
+    routed = launcher_mode.routed_target(launcher, app.wm_config)
+    loop_state.focus_id = routed
+
+
+def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app):
     # Up/Down shift the ambient launch target without leaving typing
     # mode. Left/Right stay with handle_typing_key (they move the
     # selected search result) — arrow keys never collide with typed
     # chars, including vim's own j/k (a separate keybind).
     if key == cfg.keybinds["up"]:
         current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
-        loop_state.focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, -1)
+        ids = sidebar_mode.slot_ids(state.regions, app.wm_config, cfg.total_workspaces)
+        loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, -1)
+        launcher.manual_target = True
         return True
     if key == cfg.keybinds["down"]:
         current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
-        loop_state.focus_id = sidebar_mode.shift_workspace_id(current, cfg.total_workspaces, 1)
+        ids = sidebar_mode.slot_ids(state.regions, app.wm_config, cfg.total_workspaces)
+        loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, 1)
+        launcher.manual_target = True
         return True
     if key == cfg.keybinds["confirm"]:
         selected = launcher_mode.resolve_selected(launcher)
@@ -571,6 +594,7 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves):
         loop_state.selected_id = launcher.saved_selected_id
         loop_state.active_module = launcher.saved_active_module
         return False
+    _apply_launcher_routing_default(loop_state, launcher, app)
     return True
 
 
@@ -714,7 +738,7 @@ def main(stdscr):
         "connectivity_hidden_ssid": lambda key: handle_connectivity_hidden_ssid(key, loop_state, cfg, status_worker),
         "help": lambda key: handle_help(key, loop_state, cfg, help_state, stdscr, app),
         "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state, stdscr, app),
-        "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves),
+        "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app),
         "spawn_picker": lambda key: handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize),
         "resize_editing": lambda key: handle_resize_editing(
             key, loop_state, resize, cfg, direction_keys, boxes, term_width, term_height, HANDOFF_TARGETS
@@ -1012,10 +1036,12 @@ def main(stdscr):
                 do_enter_help(loop_state, help_state)
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module)
+                _apply_launcher_routing_default(loop_state, launcher, app)
                 loop_state.mode_stack.append("launcher")
                 loop_state.active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, chr(key))
+                _apply_launcher_routing_default(loop_state, launcher, app)
                 loop_state.mode_stack.append("launcher")
                 loop_state.active_module = "launcher"
             elif key == 27:

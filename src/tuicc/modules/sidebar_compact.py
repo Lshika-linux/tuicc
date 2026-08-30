@@ -29,16 +29,19 @@ import curses
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, centered_x
+from tuicc.modules.sidebar import slot_ids
 
 ROW_STEP = 2  # 1 content row + 1 blank spacer row
 
 
 def _build_slots(ctx):
+    """See sidebar.py's slot_ids() docstring — same real-workspace-name
+    logic (GitHub issue #9), reused rather than duplicated so the two
+    sidebar variants can never drift apart on which slots exist.
+    """
     by_id = {region.id: region for region in ctx.state.regions}
-    slots = []
-    for n in range(1, ctx.config.total_workspaces + 1):
-        slots.append((str(n), by_id.get(str(n))))
-    return slots
+    ids = slot_ids(ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces)
+    return [(ws_id, by_id.get(ws_id)) for ws_id in ids]
 
 
 def _slot_positions(box, ctx):

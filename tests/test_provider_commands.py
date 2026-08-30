@@ -18,16 +18,25 @@ from tuicc.providers.sway import SwayProvider, MARK_PREFIX as SWAY_MARK_PREFIX
 from tuicc.providers.i3 import I3Provider, MARK_PREFIX as I3_MARK_PREFIX
 
 
+class _FakeConfigReply:
+    def __init__(self, config):
+        self.config = config
+
+
 class FakeConnection:
-    def __init__(self, tree=None):
+    def __init__(self, tree=None, config_text=None):
         self.commands = []
         self._tree = tree
+        self._config_text = config_text
 
     def command(self, cmd):
         self.commands.append(cmd)
 
     def get_tree(self):
         return self._tree
+
+    def get_config(self):
+        return _FakeConfigReply(self._config_text)
 
 
 def test_sway_move_window_to_region():
@@ -417,3 +426,28 @@ def test_i3_cleanup_stale_self_marks_leaves_a_legitimate_mark_alone(monkeypatch)
     provider.cleanup_stale_self_marks()
 
     assert conn.commands == []
+
+
+# ---------- wm_config() ----------
+# wm_config_parser.py's own test file covers the parsing logic
+# thoroughly — these two just confirm each provider's wm_config()
+# actually delegates to get_wm_config(self.conn), same "thin
+# IPC-issuing wrapper around a pure/shared function" shape as
+# cleanup_stale_self_marks()/_stale_self_marks() above.
+
+def test_sway_wm_config_delegates_to_get_config():
+    conn = FakeConnection(config_text="bindsym Mod4+1 workspace number 1")
+    provider = SwayProvider(conn=conn)
+
+    result = provider.wm_config()
+
+    assert result.workspace_names == ["1"]
+
+
+def test_i3_wm_config_delegates_to_get_config():
+    conn = FakeConnection(config_text='for_window [class="Discord"] move container to workspace chat')
+    provider = I3Provider(conn=conn)
+
+    result = provider.wm_config()
+
+    assert result.routing_rules == {"Discord": "chat"}
