@@ -24,6 +24,27 @@ class Window:
     # supply it, same optionality as mark_self() for providers without an
     # equivalent concept — code depending on pid must handle None.
     pid: int | None = None
+    # GitHub issue #8 (tabbed/stacked layout): a sway/i3 "stacked" or
+    # "tabbed" container's children all share the exact same rect —
+    # only one is actually shown at a time, the rest are hidden behind
+    # it. tab_group_id (the container's own con id, stringified) is
+    # shared by every window in the same such container; None means
+    # "not part of one" (an ordinary tiled/floating window, still the
+    # overwhelming majority case). tab_group_layout is "stacked" or
+    # "tabbed" (mirrors the container's own con.layout verbatim) — the
+    # two have genuinely different real on-screen conventions (a
+    # tabbed container shows one horizontal strip of titles; a stacked
+    # one shows one full-width title row per window), so callers need
+    # to know which, not just "grouped". tab_active is whether THIS
+    # window is the one actually visible right now within its own
+    # group (meaningless — always False — outside a group). See
+    # providers/sway.py's parse_tree() for how these are populated:
+    # walking con.layout/con.focus directly, information workspace.
+    # leaves() alone (the old, still layout-blind traversal) discards
+    # entirely.
+    tab_group_id: str | None = None
+    tab_group_layout: str | None = None
+    tab_active: bool = False
 
 @dataclass
 class Region:
