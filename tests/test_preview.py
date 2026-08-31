@@ -324,7 +324,7 @@ def test_partition_windows_reconstructs_the_real_nested_layout():
 # ---------- _layout_tiled_windows ----------
 
 def test_layout_tiled_windows_empty_list_returns_empty_dict():
-    assert _layout_tiled_windows([], 0, 0, 42, 22) == ({}, [], [])
+    assert _layout_tiled_windows([], 0, 0, 42, 22) == ({}, [], [], [], set())
 
 
 def test_layout_tiled_windows_regression_never_drops_a_window_even_at_deep_nesting():
@@ -355,7 +355,7 @@ def test_layout_tiled_windows_regression_never_drops_a_window_even_at_deep_nesti
             windows.append(SimpleNamespace(id=str(i), rect=(rx, ry + half, rw, rh - half)))
         axis = 1 - axis
 
-        rects, groups, _bars = _layout_tiled_windows(windows, 0, 0, 141, 36)
+        rects, groups, _bars, _frames, _active_ids = _layout_tiled_windows(windows, 0, 0, 141, 36)
         grouped_ids = {w.id for _gx, _gy, _gw, _gh, members in groups for w in members}
         missing = [w.id for w in windows if w.id not in rects and w.id not in grouped_ids]
         assert not missing, f"{len(windows)} windows: missing {missing}"
@@ -377,7 +377,7 @@ def test_layout_tiled_windows_regression_gap_is_exactly_one_not_just_at_least_on
     botright = _rect_window(rel((1439, 528, 475, 519)), id="botright")
     windows = [left, topright, botleft, botright]
 
-    rects, groups, _bars = _layout_tiled_windows(windows, 0, 0, 141, 36)
+    rects, groups, _bars, _frames, _active_ids = _layout_tiled_windows(windows, 0, 0, 141, 36)
     assert groups == []  # all 4 windows have real room — nothing collapsed
 
     gap_main = rects[topright.id][0] - (rects[left.id][0] + rects[left.id][2])
@@ -399,7 +399,7 @@ def test_layout_tiled_windows_row_splits_get_zero_gap_column_splits_get_one():
     botright = _rect_window(rel((1439, 528, 475, 519)), id="botright")
     windows = [left, topright, botleft, botright]
 
-    rects, groups, _bars = _layout_tiled_windows(windows, 0, 0, 141, 36)
+    rects, groups, _bars, _frames, _active_ids = _layout_tiled_windows(windows, 0, 0, 141, 36)
     assert groups == []
 
     gap_col = rects["topright"][0] - (rects["left"][0] + rects["left"][2])
@@ -422,7 +422,7 @@ def test_layout_tiled_windows_regression_gap_is_exactly_one_across_a_wide_range_
 
     for box_w in range(20, 220, 4):
         for box_h in range(15, 60, 4):
-            rects, groups, _bars = _layout_tiled_windows(windows, 0, 0, box_w, box_h)
+            rects, groups, _bars, _frames, _active_ids = _layout_tiled_windows(windows, 0, 0, box_w, box_h)
             grouped_ids = {w.id for _gx, _gy, _gw, _gh, members in groups for w in members}
             # At small box sizes some of these windows legitimately
             # collapse into a group instead (see _detail_tier()) — the
@@ -472,7 +472,7 @@ def test_layout_tiled_windows_collapsed_group_matches_its_sibling_scale():
             spiral.append(SimpleNamespace(id=f"s{i}", rect=(rx, ry + half, rw, rh - half)))
         axis = 1 - axis
 
-    rects, groups, _bars = _layout_tiled_windows([left, topright] + spiral, 0, 0, 13, 6)
+    rects, groups, _bars, _frames, _active_ids = _layout_tiled_windows([left, topright] + spiral, 0, 0, 13, 6)
 
     assert "left" in rects  # roomy enough to stay a real window
     assert "topright" not in rects  # too small on its own -> its own group
@@ -560,7 +560,12 @@ def _make_unit(layout, members):
     return unit
 
 
-def test_place_tab_group_stacked_gives_each_inactive_member_a_row_and_active_a_content_box():
+def test_place_tab_group_stacked_gives_every_member_a_row_plus_active_a_content_box():
+    # "stacked" deliberately shows ALL members as rows (active included,
+    # in its own distinct color) — see _place_tab_group()'s own
+    # docstring for why this differs from "tabbed" below, and why the
+    # active member's info is intentionally duplicated (row + box) for
+    # now.
     active = _tab_window("active", (0, 0, 1, 1), "g", "stacked", active=True)
     b = _tab_window("b", (0, 0, 1, 1), "g", "stacked", active=False)
     c = _tab_window("c", (0, 0, 1, 1), "g", "stacked", active=False)
@@ -569,20 +574,25 @@ def test_place_tab_group_stacked_gives_each_inactive_member_a_row_and_active_a_c
     result, bars = {}, []
     _place_tab_group(unit, win_x=10, win_y=20, win_w=30, win_h=10, result=result, tab_group_bars=bars)
 
-    assert len(bars) == 2  # b and c, not active
-    assert {m.id for m, _rect, _is_active in bars} == {"b", "c"}
-    # Rows are contiguous, one cell tall, stacked top to bottom.
-    rows = sorted(rect[1] for _m, rect, _a in bars)
-    assert rows == [20, 21]
-    for _m, (bx, by, bw, bh), is_active in bars:
+    assert len(bars) == 3  # active, b, and c all get a row
+    assert {m.id for m, _rect, _is_active in bars} == {"active", "b", "c"}
+    # Rows are contiguous, one cell tall, stacked top to bottom, in
+    # member order (active first, since it's first in unit.members).
+    rows_in_order = [rect[1] for _m, rect, _a in bars]
+    assert rows_in_order == [20, 21, 22]
+    for member, (bx, by, bw, bh), is_active in bars:
         assert (bx, bw, bh) == (10, 30, 1)
-        assert is_active is False
+        assert is_active == (member.id == "active")
 
-    # Active member gets a real content box below both bars.
-    assert result["active"] == (10, 22, 30, 8)
+    # Active member ALSO gets a real content box below all three rows.
+    assert result["active"] == (10, 23, 30, 7)
 
 
-def test_place_tab_group_tabbed_splits_width_among_inactive_members_with_a_gap():
+def test_place_tab_group_tabbed_splits_width_among_all_members_with_a_gap():
+    # "tabbed" now matches "stacked": every member (active included)
+    # gets its own segment in the strip — see _place_tab_group()'s own
+    # docstring (2026-08-31, matched right after stacked's own version
+    # was confirmed live).
     active = _tab_window("active", (0, 0, 1, 1), "g", "tabbed", active=True)
     b = _tab_window("b", (0, 0, 1, 1), "g", "tabbed", active=False)
     c = _tab_window("c", (0, 0, 1, 1), "g", "tabbed", active=False)
@@ -591,19 +601,22 @@ def test_place_tab_group_tabbed_splits_width_among_inactive_members_with_a_gap()
     result, bars = {}, []
     _place_tab_group(unit, win_x=0, win_y=5, win_w=21, win_h=10, result=result, tab_group_bars=bars)
 
-    assert len(bars) == 2
-    for _m, (bx, by, bw, bh), is_active in bars:
+    assert len(bars) == 3
+    assert {m.id for m, _rect, _is_active in bars} == {"active", "b", "c"}
+    for member, (bx, by, bw, bh), is_active in bars:
         assert by == 5  # the whole strip is one row, at the cell's own top
         assert bh == 1
-        assert is_active is False
-    # Two segments, each with real width, separated by a real gap
-    # column — not glued together (same "exactly one gap" discipline
-    # _allocate_axis() already enforces for ordinary x-splits).
-    xs = sorted(rect[0] for _m, rect, _a in bars)
+        assert is_active == (member.id == "active")
+    # Segments (in member order: active, b, c) are separated by a real
+    # gap column — not glued together (same "exactly one gap"
+    # discipline _allocate_axis() already enforces for ordinary
+    # x-splits).
+    xs = [rect[0] for _m, rect, _a in bars]
     ws = [rect[2] for _m, rect, _a in bars]
-    assert xs[1] > xs[0] + ws[0]
+    for i in range(len(bars) - 1):
+        assert xs[i + 1] > xs[i] + ws[i]
 
-    # Active member's content box fills whatever's left below the strip.
+    # Active member's content box ALSO fills whatever's left below the strip.
     assert result["active"] == (0, 6, 21, 9)
 
 
@@ -625,10 +638,10 @@ def test_place_tab_group_degenerate_no_room_for_content_still_places_active():
     assert active_bar[2] is True  # flagged so draw() can color it distinctly
 
 
-def test_place_tab_group_lone_inactive_member_missing_gets_whole_cell_as_content():
+def test_place_tab_group_tabbed_active_content_box_fills_remaining_cell():
     # Sanity check for the ordinary, common case: two-member group,
     # plenty of room — the active member's content box should be the
-    # full remaining cell, not some odd sliver.
+    # full remaining cell (below the strip), not some odd sliver.
     active = _tab_window("active", (0, 0, 1, 1), "g", "tabbed", active=True)
     b = _tab_window("b", (0, 0, 1, 1), "g", "tabbed", active=False)
     unit = _make_unit("tabbed", [active, b])
@@ -636,8 +649,25 @@ def test_place_tab_group_lone_inactive_member_missing_gets_whole_cell_as_content
     result, bars = {}, []
     _place_tab_group(unit, win_x=0, win_y=0, win_w=20, win_h=8, result=result, tab_group_bars=bars)
 
-    assert len(bars) == 1
+    assert len(bars) == 2  # both members get a tab segment now
     assert result["active"] == (0, 1, 20, 7)
+
+
+def test_place_tab_group_tabbed_degenerate_no_room_for_content_still_places_active():
+    # Same degenerate case as the "stacked" version above, mirrored for
+    # "tabbed" — no separate fallback branch exists for this anymore
+    # (see _place_tab_group()'s own docstring), so this also exercises
+    # that the unified, single-loop handling covers it correctly.
+    active = _tab_window("active", (0, 0, 1, 1), "g", "tabbed", active=True)
+    b = _tab_window("b", (0, 0, 1, 1), "g", "tabbed", active=False)
+    unit = _make_unit("tabbed", [active, b])
+
+    result, bars = {}, []
+    _place_tab_group(unit, win_x=0, win_y=0, win_w=10, win_h=1, result=result, tab_group_bars=bars)
+
+    assert "active" not in result
+    ids_with_bars = {m.id for m, _rect, _is_active in bars}
+    assert ids_with_bars == {"active", "b"}
 
 
 # ---------- _layout_tiled_windows integration (GitHub issue #8) ----------
@@ -654,7 +684,7 @@ def test_layout_tiled_windows_stacked_group_never_overlaps_with_its_sibling():
     stacked_a = _tab_window("sa", (0.5, 0.0, 0.5, 1.0), "g", "stacked", active=True)
     stacked_b = _tab_window("sb", (0.5, 0.0, 0.5, 1.0), "g", "stacked", active=False)
 
-    rects, groups, bars = _layout_tiled_windows([left, stacked_a, stacked_b], 0, 0, 42, 22)
+    rects, groups, bars, frames, active_ids = _layout_tiled_windows([left, stacked_a, stacked_b], 0, 0, 42, 22)
 
     assert "left" in rects
     assert "sa" in rects  # the group's active member gets a real content box
@@ -662,8 +692,20 @@ def test_layout_tiled_windows_stacked_group_never_overlaps_with_its_sibling():
     active_x, _ay, active_w, _ah = rects["sa"]
     assert active_x >= left_x + left_w  # no horizontal overlap with its sibling
 
+    # "stacked" gives every member a row now (active included, see
+    # _place_tab_group()'s own docstring) — both ids show up here.
     bar_ids = {m.id for m, _rect, _is_active in bars}
-    assert bar_ids == {"sb"}  # the inactive member got its own bar, not a full box
+    assert bar_ids == {"sa", "sb"}
+
+    assert active_ids == {"sa"}
+    # One frame, spanning the group's own FULL cell — everything else
+    # (bars, "sa"'s own content box) is inset by 1 cell into it, so
+    # nothing ever draws on top of the frame's own border row/column
+    # (see _layout_tiled_windows()'s own call-site comment).
+    assert len(frames) == 1
+    fx, fy, fw, fh = frames[0]
+    assert fx < active_x and fx + fw > active_x + active_w  # frame strictly encloses the inset content box
+    assert fy < _ay and fy + fh > _ay + _ah
 
 
 def test_layout_tiled_windows_tabbed_group_bars_stay_within_the_groups_own_cell():
@@ -671,14 +713,19 @@ def test_layout_tiled_windows_tabbed_group_bars_stay_within_the_groups_own_cell(
     stacked_b = _tab_window("tb", (0.0, 0.0, 1.0, 1.0), "g", "tabbed", active=False)
     stacked_c = _tab_window("tc", (0.0, 0.0, 1.0, 1.0), "g", "tabbed", active=False)
 
-    rects, groups, bars = _layout_tiled_windows([stacked_a, stacked_b, stacked_c], 0, 0, 30, 12)
+    rects, groups, bars, frames, active_ids = _layout_tiled_windows([stacked_a, stacked_b, stacked_c], 0, 0, 30, 12)
 
     assert groups == []  # roomy enough — no too-small collapse
     assert "ta" in rects
-    assert {m.id for m, _rect, _is_active in bars} == {"tb", "tc"}
+    # "tabbed" now shows every member in the strip too (active
+    # included) — see _place_tab_group()'s own docstring.
+    assert {m.id for m, _rect, _is_active in bars} == {"ta", "tb", "tc"}
     for _m, (bx, by, bw, bh), _is_active in bars:
         assert 1 <= bx  # inside the box's own left border
         assert bx + bw <= 29  # inside the box's own right border
+
+    assert active_ids == {"ta"}
+    assert len(frames) == 1  # one group -> one outline, covering the whole cell
 
 
 # ---------- _detail_tier ----------
