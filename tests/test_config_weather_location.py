@@ -74,8 +74,31 @@ def test_location_file_combined_with_inline_lat_lon_raises(tmp_path, monkeypatch
     location_file = tmp_path / "location.toml"
     location_file.write_text('lat = 50.0755\nlon = 14.4378\n')
 
-    with pytest.raises(ValueError, match="use one or the other"):
+    with pytest.raises(ValueError, match="more than one location source"):
         _load_config_with_weather(
             tmp_path, monkeypatch,
             f'location_file = "{location_file}"\nlat = 1.0\nlon = 2.0\n',
+        )
+
+
+def test_location_file_combined_with_geoclue_raises(tmp_path, monkeypatch):
+    # The real gap this closes: not just location_file vs lat/lon, but
+    # any two of the four sources set together — the original three
+    # (lat/lon, geoclue, ip_approx) never actually enforced this
+    # against each other either, despite design-decisions.md already
+    # documenting it as the intent.
+    location_file = tmp_path / "location.toml"
+    location_file.write_text('lat = 50.0755\nlon = 14.4378\n')
+
+    with pytest.raises(ValueError, match="more than one location source"):
+        _load_config_with_weather(
+            tmp_path, monkeypatch,
+            f'location_file = "{location_file}"\ngeoclue = true\n',
+        )
+
+
+def test_lat_lon_combined_with_ip_approx_raises(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="more than one location source"):
+        _load_config_with_weather(
+            tmp_path, monkeypatch, 'lat = 1.0\nlon = 2.0\nip_approx = true\n',
         )

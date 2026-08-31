@@ -566,9 +566,18 @@ def _build_weather_config(user_data: dict) -> dict:
     tuicc's concern), so the coordinates never end up in version
     control at all. Flat TOML, no [weather] header of its own — the
     file's only job is holding lat/lon, nothing else to namespace.
-    Combining it with lat/lon set directly in [weather] is rejected —
-    same "exactly one explicit source" discipline as everything else
-    here, not a silent "one wins."
+    Counted as the same "direct coordinates" source as lat/lon set
+    inline (they're two ways of writing the same thing), mutually
+    exclusive against geoclue/ip_approx same as every other pair — see
+    the single count-based check below, added at the same time as this
+    fourth source: found live, the original three never actually
+    enforced "exactly one" against EACH OTHER either (lat/lon set
+    together with geoclue=true silently resolved via weather.py's own
+    precedence order, not a config-time error) despite
+    design-decisions.md already documenting "no silent auto-detect
+    fallback between explicit sources" as the intent — a real gap this
+    closes for all four sources uniformly, not a location_file-only
+    special case.
     """
     weather_data = user_data.get("weather")
     if weather_data is None:
@@ -581,12 +590,22 @@ def _build_weather_config(user_data: dict) -> dict:
     ip_approx = weather_data.get("ip_approx", False)
     location_file = weather_data.get("location_file")
 
+    if (lat is None) != (lon is None):
+        raise ValueError("[weather] lat and lon must both be set together")
+
+    sources_set = sum([lat is not None, location_file is not None, geoclue, ip_approx])
+    if sources_set > 1:
+        raise ValueError(
+            "[weather] more than one location source is set — use exactly one of "
+            "lat+lon, location_file, geoclue = true, or ip_approx = true"
+        )
+    if sources_set == 0:
+        raise ValueError(
+            "[weather] is configured but no location source is set — "
+            "set lat and lon, or location_file, or geoclue = true, or ip_approx = true"
+        )
+
     if location_file is not None:
-        if lat is not None or lon is not None:
-            raise ValueError(
-                "[weather] location_file is set together with lat/lon directly — "
-                "use one or the other, not both"
-            )
         file_path = Path(location_file).expanduser()
         if not file_path.is_file():
             raise ValueError(f"[weather] location_file={location_file!r} does not exist")
@@ -596,13 +615,6 @@ def _build_weather_config(user_data: dict) -> dict:
         if lat is None or lon is None:
             raise ValueError(f"[weather] location_file={location_file!r} must set both lat and lon")
 
-    if (lat is None) != (lon is None):
-        raise ValueError("[weather] lat and lon must both be set together")
-    if lat is None and not geoclue and not ip_approx:
-        raise ValueError(
-            "[weather] is configured but no location source is set — "
-            "set lat and lon, or location_file, or geoclue = true, or ip_approx = true"
-        )
     return {"lat": lat, "lon": lon, "name": name, "code": code, "geoclue": geoclue, "ip_approx": ip_approx}
 
 
