@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 
+# pyproject.toml build artifacts (`pip install .` / `python -m build`)
+build/
+*.egg-info/
+
 # Local, live-testing dev tools — not shipped code, deliberately never
 # committed (see media_scroll_test.py's own docstring). Named
 # explicitly, not a broad pattern, so a future *_test.py that IS meant

@@ -1,7 +1,7 @@
 i3ipc==2.2.1
 python-xlib==0.33
 six==1.17.0
-jeepney
-tomli_w
-wcwidth
-pyudev
+jeepney==0.9.0
+tomli_w==1.2.0
+wcwidth==0.8.2
+pyudev==0.24.4

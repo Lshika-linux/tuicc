@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tuicc"
+version = "0.1.0.dev0"
+description = "A fullscreen TUI control center for tiling window managers (sway, i3)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"  # tomllib (config.py/session.py) is stdlib since 3.11, no fallback
+dependencies = [
+    "i3ipc==2.2.1",
+    "python-xlib==0.33",
+    "six==1.17.0",
+    "jeepney==0.9.0",
+    "tomli_w==1.2.0",
+    "wcwidth==0.8.2",
+    "pyudev==0.24.4",
+]
+
+[project.urls]
+Repository = "https://github.com/Lshika-linux/tuicc"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# NOTE: this does not (yet) give `pip install .` a `tuicc` console
+# script — main.py still lives at the repo root and is run directly
+# (`python main.py`, per CLAUDE.md's own Commands section), not as an
+# installed entry point. This file's job for now is just a real,
+# versioned package definition with pinned dependencies (see
+# requirements.txt, which stays the documented install path
+# unchanged) — a packaged launcher is a separate, bigger step, not
+# bundled into this pass.

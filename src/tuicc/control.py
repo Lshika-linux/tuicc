@@ -100,6 +100,16 @@ def _run_detached_detecting_quick_failure(
     Raises RuntimeError (with captured stdout+stderr) on a nonzero exit
     within the window. Output goes to an unlinked temp file, not
     subprocess.PIPE, so a long-runner can't block on a full pipe.
+
+    os.waitpid() is expected to always find this exact child — this
+    process is its real, direct parent — but ChildProcessError (no
+    such child) is still caught rather than left to crash the whole
+    toggle: something else reaping it first (a container's own init
+    aggressively reaping children, a subreaper misconfiguration) isn't
+    this function's job to prevent, only to survive. Same tolerance
+    pending_moves.py's own _check_quick_exit() already applies to the
+    identical os.waitpid(pid, os.WNOHANG) pattern there — treated as
+    "can't tell", same as the command still running past the window.
     """
     with tempfile.NamedTemporaryFile(delete=False) as output_file:
         output_path = Path(output_file.name)
@@ -107,7 +117,10 @@ def _run_detached_detecting_quick_failure(
         pid = spawn_detached(command, shell_true, log_path=output_path)
         deadline = time.monotonic() + window_seconds
         while time.monotonic() < deadline:
-            finished_pid, status = os.waitpid(pid, os.WNOHANG)
+            try:
+                finished_pid, status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                return
             if finished_pid == pid:
                 returncode = os.waitstatus_to_exitcode(status)
                 if returncode != 0:

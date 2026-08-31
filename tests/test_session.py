@@ -88,11 +88,18 @@ def test_parse_environ_sensitive_marker_match_is_case_insensitive():
 # ---------- read_environ ----------
 
 def test_read_environ_unreadable_pid_returns_none():
-    # No process anywhere is ever really pid 1 owned by this test's
-    # UID with a readable /proc/1/environ — same "definitely fails"
-    # assumption read_cmdline's own tests would make, if it had one.
+    # A pid this far past any real kernel's pid_max (4194304, this
+    # session's own well-known default — see sway.py's own
+    # no_focus_next_window() docstring) simply can't belong to a real
+    # process, on any machine, under any UID — open() raises
+    # FileNotFoundError (an OSError) the exact same way a genuinely
+    # permission-denied /proc/<pid>/environ would. Deliberately NOT
+    # pid 1: that assumption ("this test's own UID can never read pid
+    # 1's environ") quietly breaks whenever the test suite itself runs
+    # as root — CI runners commonly do — which would fail this for a
+    # reason that has nothing to do with a real regression.
     from tuicc.session import read_environ
-    assert read_environ(1) is None
+    assert read_environ(999999999) is None
 
 
 # ---------- capture_window ----------

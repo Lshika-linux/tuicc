@@ -8,6 +8,7 @@ split (see test_connectivity.py's iwd/bluez propagation tests for the
 same pattern).
 """
 
+import os
 import subprocess
 
 import pytest
@@ -250,3 +251,15 @@ def test_output_temp_file_is_not_left_behind(tmp_path, monkeypatch):
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     control._run_detached_detecting_quick_failure("true", shell_true=True, window_seconds=0.2)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_survives_child_process_error_from_waitpid(monkeypatch):
+    # Something else reaping the child first (a container's own init,
+    # a subreaper misconfiguration) makes os.waitpid raise
+    # ChildProcessError — must be treated as "can't tell", not crash
+    # the whole toggle. os.getpid() is a real, deterministic way to
+    # trigger this for real (a process is never its own child — same
+    # trick test_pending_moves.py's own _check_quick_exit tests use),
+    # not a mocked exception.
+    monkeypatch.setattr(control, "spawn_detached", lambda *a, **k: os.getpid())
+    control._run_detached_detecting_quick_failure("true", shell_true=True, window_seconds=0.2)

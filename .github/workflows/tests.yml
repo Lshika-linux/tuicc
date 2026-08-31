@@ -1,0 +1,23 @@
+name: tests
+
+# The whole test suite is designed to run without a live sway/i3
+# session — providers are tested against recorded JSON fixtures, WM
+# commands against a FakeConnection that just records .command() calls
+# (see CLAUDE.md's own "Commands" section) — so a plain ubuntu runner
+# with no WM at all is enough; nothing here needs a display or an X11/
+# Wayland socket.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ -v
