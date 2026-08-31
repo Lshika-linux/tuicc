@@ -259,7 +259,7 @@ def test_handle_typing_key_returns_true_on_unhandled_key():
 def test_enter_typing_mode_saves_previous_selection():
     state = LauncherState()
 
-    enter_typing_mode(state, "sidebar:1", "sidebar")
+    enter_typing_mode(state, "sidebar:1", "sidebar", "3")
 
     assert (state.saved_selected_id, state.saved_active_module) == ("sidebar:1", "sidebar")
     assert (state.typing_mode, state.search_query, state.search_selected_index) == (True, "", 0)
@@ -268,9 +268,28 @@ def test_enter_typing_mode_saves_previous_selection():
 def test_enter_typing_mode_seeds_query_with_typed_character():
     state = LauncherState()
 
-    enter_typing_mode(state, "sidebar:1", "sidebar", "f")
+    enter_typing_mode(state, "sidebar:1", "sidebar", "3", "f")
 
     assert (state.typing_mode, state.search_query, state.search_selected_index) == (True, "f", 0)
+
+
+def test_enter_typing_mode_snapshots_focus_id():
+    # See LauncherState.pre_routing_focus_id's own docstring — this is
+    # what _apply_launcher_routing_default() reverts to once the
+    # selected app no longer has a routing rule.
+    state = LauncherState()
+
+    enter_typing_mode(state, "sidebar:1", "sidebar", "3")
+
+    assert state.pre_routing_focus_id == "3"
+
+
+def test_enter_typing_mode_snapshots_none_focus_id():
+    state = LauncherState()
+
+    enter_typing_mode(state, "sidebar:1", "sidebar", None)
+
+    assert state.pre_routing_focus_id is None
 
 
 def test_exit_typing_mode_resets_editable_fields_but_not_saved_selection():
@@ -280,7 +299,7 @@ def test_exit_typing_mode_resets_editable_fields_but_not_saved_selection():
     state = LauncherState(
         typing_mode=True, search_query="fire", search_selected_index=2,
         saved_selected_id="sidebar:1", saved_active_module="sidebar",
-        manual_target_app_id="firefox",
+        manual_target_app_id="firefox", pre_routing_focus_id="3",
     )
 
     exit_typing_mode(state)
@@ -288,17 +307,19 @@ def test_exit_typing_mode_resets_editable_fields_but_not_saved_selection():
     assert (state.typing_mode, state.search_query, state.search_selected_index) == (False, "", 0)
     assert (state.saved_selected_id, state.saved_active_module) == ("sidebar:1", "sidebar")
     assert state.manual_target_app_id is None
+    assert state.pre_routing_focus_id is None
 
 
-def test_enter_typing_mode_resets_a_stale_manual_target():
+def test_enter_typing_mode_resets_a_stale_manual_target_and_snapshot():
     # A leftover value from a previous typing session must never leak
-    # into a new one — see LauncherState.manual_target_app_id's own
-    # docstring.
-    state = LauncherState(manual_target_app_id="firefox")
+    # into a new one — see LauncherState.manual_target_app_id's/
+    # pre_routing_focus_id's own docstrings.
+    state = LauncherState(manual_target_app_id="firefox", pre_routing_focus_id="99")
 
-    enter_typing_mode(state, "sidebar:1", "sidebar")
+    enter_typing_mode(state, "sidebar:1", "sidebar", "3")
 
     assert state.manual_target_app_id is None
+    assert state.pre_routing_focus_id == "3"
 
 
 # ---------- resolve_selected ----------

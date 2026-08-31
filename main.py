@@ -543,22 +543,23 @@ def _apply_launcher_routing_default(loop_state, launcher, app):
     app is selected without the user ever touching Up/Down again for
     THAT app.
 
-    Only overwrites focus_id when a rule actually matches — when
-    routed_target() comes back None (no rule for the currently
-    selected app, the overwhelmingly common case), focus_id is left
-    completely untouched. Live-found: forcing it to None too broke the
-    launcher's ordinary "show where this would launch" default
-    entirely — every keystroke for an app with no rule wiped out
-    whatever sensible target (sticky pick or real WM focus) was
-    already showing, until the user manually nudged it with Up/Down.
+    When routed_target() comes back None (no rule for the currently
+    selected app, the overwhelmingly common case), focus_id reverts to
+    launcher.pre_routing_focus_id — the real target as it stood right
+    before typing started, not just left alone. Live-found needed
+    twice over: forcing it to None broke the launcher's ordinary "show
+    where this would launch" default entirely (see git history); doing
+    nothing instead left focus_id stuck on an earlier rule's target
+    forever once the selection moved on to an unruled app, even though
+    nothing about the current selection has anything to do with that
+    rule anymore.
     """
     selected = launcher_mode.resolve_selected(launcher)
     app_id_hint = selected[1] if selected else None
     if app_id_hint is not None and app_id_hint == launcher.manual_target_app_id:
         return
     routed = launcher_mode.routed_target(launcher, app.wm_config)
-    if routed is not None:
-        loop_state.focus_id = routed
+    loop_state.focus_id = routed if routed is not None else launcher.pre_routing_focus_id
 
 
 def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app):
@@ -1062,12 +1063,12 @@ def main(stdscr):
             elif key == cfg.keybinds["help"]:
                 do_enter_help(loop_state, help_state)
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
-                launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module)
+                launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id)
                 _apply_launcher_routing_default(loop_state, launcher, app)
                 loop_state.mode_stack.append("launcher")
                 loop_state.active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
-                launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, chr(key))
+                launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id, chr(key))
                 _apply_launcher_routing_default(loop_state, launcher, app)
                 loop_state.mode_stack.append("launcher")
                 loop_state.active_module = "launcher"

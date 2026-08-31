@@ -168,14 +168,26 @@ class LauncherState:
     # selection moves on to it — "spawning somewhere else" is only
     # ever a deliberate choice about the app you made it for. Until
     # overridden, every keystroke unconditionally re-forces focus_id
-    # to the routed target (or leaves it alone if nothing routes),
-    # overwriting any stale sticky value focus_id already had — that
-    # stickiness (preview.py showing the last real workspace pick
-    # across unrelated modules) is exactly why "only touch it if it's
-    # still None" doesn't work here; it's essentially never None by
-    # the time typing starts. Reset to None on both typing-mode
-    # boundaries.
+    # to the routed target (see pre_routing_focus_id below for what
+    # happens when nothing routes), overwriting any stale sticky value
+    # focus_id already had — that stickiness (preview.py showing the
+    # last real workspace pick across unrelated modules) is exactly
+    # why "only touch it if it's still None" doesn't work here; it's
+    # essentially never None by the time typing starts. Reset to None
+    # on both typing-mode boundaries.
     manual_target_app_id: str | None = None
+    # The real launch target as it stood right BEFORE typing started —
+    # snapshotted once by enter_typing_mode(). When the currently
+    # selected app has no routing rule (routed_target() is None),
+    # main.py's _apply_launcher_routing_default() reverts focus_id to
+    # THIS, not just leaves it alone. Live-found needed: a ruled app
+    # (auto-routed to its workspace) selected, then the selection
+    # moves on to an unruled one — without a revert, focus_id stayed
+    # stuck on the earlier rule's target forever, even though nothing
+    # about the current selection has anything to do with it anymore.
+    # Reset to None on both typing-mode boundaries, same as
+    # manual_target_app_id.
+    pre_routing_focus_id: str | None = None
 
 
 def resolve_selected(state: LauncherState):
@@ -215,7 +227,7 @@ def routed_target(state: LauncherState, wm_config) -> str | None:
     return wm_config.routing_rules.get(app_id_hint)
 
 
-def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_query="") -> None:
+def enter_typing_mode(state: LauncherState, selected_id, active_module, focus_id, initial_query="") -> None:
     """Saves the pre-typing selection so handle_typing_key's Escape/
     Backspace-to-empty exit (or a successful confirm) can restore it
     later. Deliberately does NOT set active_module itself — main.py
@@ -223,6 +235,13 @@ def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_
     same asymmetry resize_mode.enter_box_editing has for active_module
     (this dataclass owns everything about the typing session except
     the one field that's genuinely main.py's own loop variable).
+
+    focus_id is the CURRENT loop_state.focus_id, snapshotted into
+    pre_routing_focus_id before anything in this typing session can
+    change it — see that field's own docstring for why. Caller must
+    pass it before applying any routing default for the first
+    keystroke, or the snapshot would already reflect a routed value
+    instead of the real pre-typing one.
     """
     state.saved_selected_id = selected_id
     state.saved_active_module = active_module
@@ -230,6 +249,7 @@ def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_
     state.search_query = initial_query
     state.search_selected_index = 0
     state.manual_target_app_id = None
+    state.pre_routing_focus_id = focus_id
 
 
 def exit_typing_mode(state: LauncherState) -> None:
@@ -241,6 +261,7 @@ def exit_typing_mode(state: LauncherState) -> None:
     state.search_query = ""
     state.search_selected_index = 0
     state.manual_target_app_id = None
+    state.pre_routing_focus_id = None
 
 
 def handle_typing_key(state: LauncherState, key, cfg) -> bool:
