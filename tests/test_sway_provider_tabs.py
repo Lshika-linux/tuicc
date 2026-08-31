@@ -1,6 +1,6 @@
 """Tests for stacked/tabbed container handling (GitHub issue #8) —
-Window.tab_group_id/tab_group_layout/tab_active, populated by
-tab_groups.tab_info_by_leaf_id() and providers/sway.py's parse_tree().
+Window.tab_group_id/tab_group_layout/tab_active/tab_slot_id, populated
+by tab_groups.tab_info_by_leaf_id() and providers/sway.py's parse_tree().
 
 Fixtures below mirror two real trees confirmed live against the actual
 machine this feature was built against (2026-08-31): a simple 2-window
@@ -53,7 +53,9 @@ def test_simple_stacked_pair_active_child_marked():
     # Mirrors the real ws10 case: two leaves directly under one
     # "stacked" container, wrapped in the splith cons sway always
     # inserts (confirmed live — a stacked/tabbed container's own
-    # .nodes are these wrapper cons, not the leaves directly).
+    # .nodes are these wrapper cons, not the leaves directly). Each
+    # leaf's slot_id is that wrapper's own id (the group's direct
+    # child it sits under), not the leaf's own id.
     code = _leaf(9, app_id="code")
     firefox = _leaf(148, app_id="firefox")
     wrapper_code = _con(149, "splith", [9], [code])
@@ -63,8 +65,8 @@ def test_simple_stacked_pair_active_child_marked():
 
     info = tab_info_by_leaf_id(tree.workspaces()[0])
 
-    assert info[9] == ("144", "stacked", True)
-    assert info[148] == ("144", "stacked", False)
+    assert info[9] == ("144", "stacked", "149", True)
+    assert info[148] == ("144", "stacked", "150", False)
 
 
 def test_tabbed_layout_reported_verbatim():
@@ -75,8 +77,10 @@ def test_tabbed_layout_reported_verbatim():
 
     info = tab_info_by_leaf_id(tree.workspaces()[0])
 
-    assert info[1] == ("3", "tabbed", True)
-    assert info[2] == ("3", "tabbed", False)
+    # No wrapper con here — a/b are direct children, so each leaf is
+    # its own slot (slot_id == its own id).
+    assert info[1] == ("3", "tabbed", "1", True)
+    assert info[2] == ("3", "tabbed", "2", False)
 
 
 def test_plain_split_layout_leaves_no_tab_group():
@@ -87,8 +91,8 @@ def test_plain_split_layout_leaves_no_tab_group():
 
     info = tab_info_by_leaf_id(tree.workspaces()[0])
 
-    assert info[1] == (None, None, False)
-    assert info[2] == (None, None, False)
+    assert info[1] == (None, None, None, False)
+    assert info[2] == (None, None, None, False)
 
 
 def test_nested_stacked_inside_a_split_branch_of_an_outer_stacked():
@@ -115,13 +119,18 @@ def test_nested_stacked_inside_a_split_branch_of_an_outer_stacked():
 
     info = tab_info_by_leaf_id(tree.workspaces()[0])
 
-    assert info[firefox["id"]] == ("133", "stacked", False)
-    assert info[impala["id"]] == ("133", "stacked", False)
-    assert info[mc["id"]] == ("133", "stacked", True)
+    # slot_id is the OUTER stacked's own direct child each leaf sits
+    # under — firefox/impala are each their own simple branch, mc sits
+    # under the shared branch_mixed(135) slot alongside the whole
+    # inner_stacked subtree (a real, if unusual, multi-window slot).
+    assert info[firefox["id"]] == ("133", "stacked", "143", False)
+    assert info[impala["id"]] == ("133", "stacked", "140", False)
+    assert info[mc["id"]] == ("133", "stacked", "135", True)
     # Nearest group wins: obsidian's group is the INNER stacked (137),
     # not the outer one (133) — trivially active since it's the sole
-    # child of its own group.
-    assert info[obsidian["id"]] == ("137", "stacked", True)
+    # child of its own group. Its own slot_id is THAT group's direct
+    # child (142), a fresh slot scope, unrelated to 135 above.
+    assert info[obsidian["id"]] == ("137", "stacked", "142", True)
 
 
 def test_floating_window_is_never_part_of_a_tab_group():
@@ -139,7 +148,36 @@ def test_floating_window_is_never_part_of_a_tab_group():
 
     info = tab_info_by_leaf_id(tree.workspaces()[0])
 
-    assert info[5] == (None, None, False)
+    assert info[5] == (None, None, None, False)
+
+
+def test_multi_window_active_slot_shares_one_slot_id():
+    # Live-found, GitHub issue #8 follow-up (2026-08-31): splitting a
+    # new terminal open while an editor's own stacked slot is focused
+    # puts them side by side WITHIN that one slot — real tree:
+    # 266 stacked -> [264 firefox, 410 Obsidian, 411 splith[417->code,
+    # 416->kitty]]. code and kitty must share the SAME slot_id (411),
+    # not each get their own — they're one slot's ordinary nested
+    # content, not two independent, directly-switchable members.
+    firefox = _leaf(262, app_id="firefox")
+    obsidian = _leaf(267, app_id="md.Obsidian")
+    code = _leaf(407, app_id="code")
+    kitty = _leaf(415, app_id="kitty")
+
+    wrapper_firefox = _con(264, "splith", [262], [firefox])
+    wrapper_obsidian = _con(410, "splith", [267], [obsidian])
+    code_branch = _con(417, "splitv", [407], [code])
+    kitty_branch = _con(416, "splitv", [415], [kitty])
+    active_split = _con(411, "splith", [417, 416], [code_branch, kitty_branch])
+
+    stacked = _con(266, "stacked", [411, 410, 264], [wrapper_firefox, wrapper_obsidian, active_split])
+    tree = _workspace(260, "10", [stacked], focus=[266])
+
+    info = tab_info_by_leaf_id(tree.workspaces()[0])
+
+    assert info[407] == ("266", "stacked", "411", True)
+    assert info[415] == ("266", "stacked", "411", True)
+    assert info[262] == ("266", "stacked", "264", False)
 
 
 # ---------- parse_tree() wiring ----------
@@ -158,7 +196,9 @@ def test_parse_tree_populates_tab_fields_on_window():
     assert windows["code"].tab_group_id == "144"
     assert windows["code"].tab_group_layout == "stacked"
     assert windows["code"].tab_active is True
+    assert windows["code"].tab_slot_id == "149"
     assert windows["firefox"].tab_active is False
+    assert windows["firefox"].tab_slot_id == "150"
 
 
 def test_parse_tree_ordinary_window_has_no_tab_group():
@@ -168,3 +208,4 @@ def test_parse_tree_ordinary_window_has_no_tab_group():
     assert window.tab_group_id is None
     assert window.tab_group_layout is None
     assert window.tab_active is False
+    assert window.tab_slot_id is None

@@ -45,6 +45,22 @@ class Window:
     tab_group_id: str | None = None
     tab_group_layout: str | None = None
     tab_active: bool = False
+    # Which of the group's own real slots (one bar/tab row = one
+    # DIRECT child of the stacked/tabbed container) this window sits
+    # under — DIFFERENT from tab_group_id (which group), this is which
+    # member OF that group. None outside a group, same as the other
+    # tab_* fields. Two windows sharing a tab_slot_id are NOT two
+    # independent, directly-switchable stack members — they're one
+    # slot's own ordinary nested split (found live, GitHub issue #8
+    # follow-up, 2026-08-31: splitting a new terminal open while an
+    # editor's stack slot is focused puts them side by side WITHIN
+    # that one slot, not as a new top-level member) — both fully
+    # visible together whenever that slot is the active one, not
+    # hidden behind each other the way genuinely different slots are.
+    # preview.py's _group_tiled_windows() buckets by (tab_group_id,
+    # tab_slot_id) for exactly this reason. See tab_groups.py's own
+    # tab_info_by_leaf_id() docstring for how it's computed.
+    tab_slot_id: str | None = None
 
 @dataclass
 class Region:

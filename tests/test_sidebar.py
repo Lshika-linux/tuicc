@@ -36,8 +36,11 @@ def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None, wm
     )
 
 
-def _window(id, app_id, title=""):
-    return Window(id=id, app_id=app_id, title=title, focused=False, rect=(0, 0, 1, 1))
+def _window(id, app_id, title="", tab_group_id=None, tab_group_layout=None):
+    return Window(
+        id=id, app_id=app_id, title=title, focused=False, rect=(0, 0, 1, 1),
+        tab_group_id=tab_group_id, tab_group_layout=tab_group_layout,
+    )
 
 
 # ---------- _slot_height ----------
@@ -77,13 +80,13 @@ def test_slot_height_collapses_identical_windows_into_one_row():
 def test_grouped_window_rows_no_duplicates_stays_one_row_per_window():
     windows = [_window("w1", "a"), _window("w2", "b")]
 
-    assert _grouped_window_rows(windows, _cfg()) == [("a", "", 1), ("b", "", 1)]
+    assert _grouped_window_rows(windows, _cfg()) == [("a", "", 1, None), ("b", "", 1, None)]
 
 
 def test_grouped_window_rows_collapses_exact_duplicates_with_a_count():
     windows = [_window("w1", "kitty"), _window("w2", "kitty"), _window("w3", "kitty")]
 
-    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 3)]
+    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 3, None)]
 
 
 def test_grouped_window_rows_different_titles_stay_separate_even_for_the_same_app():
@@ -97,13 +100,13 @@ def test_grouped_window_rows_different_titles_stay_separate_even_for_the_same_ap
     result = _grouped_window_rows(windows, cfg)
 
     assert len(result) == 2
-    assert all(count == 1 for _app, _detail, count in result)
+    assert all(count == 1 for _app, _detail, count, _layout in result)
 
 
 def test_grouped_window_rows_mixed_some_duplicate_some_not():
     windows = [_window("w1", "kitty"), _window("w2", "kitty"), _window("w3", "firefox")]
 
-    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 2), ("firefox", "", 1)]
+    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 2, None), ("firefox", "", 1, None)]
 
 
 def test_grouped_window_rows_preserves_first_seen_order():
@@ -111,7 +114,74 @@ def test_grouped_window_rows_preserves_first_seen_order():
 
     result = _grouped_window_rows(windows, _cfg())
 
-    assert [app for app, _detail, _count in result] == ["c", "a", "b"]
+    assert [app for app, _detail, _count, _layout in result] == ["c", "a", "b"]
+
+
+def test_grouped_window_rows_same_app_and_detail_but_different_group_stay_separate():
+    # GitHub issue #8 follow-up, found live (2026-08-31): 8 otherwise-
+    # identical bare "kitty" shells, 7 sitting in one real stacked
+    # group and 1 sitting completely alone elsewhere on the workspace
+    # — collapsing all 8 into one "×8" count would misrepresent that as
+    # one uniform thing when it's really two.
+    grouped = [_window(f"w{i}", "kitty", tab_group_id="9", tab_group_layout="stacked") for i in range(7)]
+    lone = _window("w7", "kitty")
+    windows = grouped + [lone]
+
+    result = _grouped_window_rows(windows, _cfg())
+
+    assert result == [("kitty", "", 7, "S1"), ("kitty", "", 1, None)]
+
+
+def test_grouped_window_rows_two_distinct_stacked_groups_get_their_own_number():
+    # A workspace with TWO separate stacked containers, side by side —
+    # each needs its own tellable-apart label, not both just "stacked".
+    a = [_window(f"a{i}", "kitty", tab_group_id="1", tab_group_layout="stacked") for i in range(2)]
+    b = [_window(f"b{i}", "kitty", tab_group_id="2", tab_group_layout="stacked") for i in range(3)]
+
+    result = _grouped_window_rows(a + b, _cfg())
+
+    assert result == [("kitty", "", 2, "S1"), ("kitty", "", 3, "S2")]
+
+
+def test_grouped_window_rows_stacked_and_tabbed_groups_number_independently():
+    # A stacked group and a tabbed group both present — each layout
+    # gets its OWN counter, so this is "S1"/"T1", not
+    # "S1"/"S2" (they're not the same kind of thing).
+    stacked = [_window(f"s{i}", "kitty", tab_group_id="1", tab_group_layout="stacked") for i in range(2)]
+    tabbed = [_window(f"t{i}", "kitty", tab_group_id="2", tab_group_layout="tabbed", title="x") for i in range(2)]
+
+    result = _grouped_window_rows(stacked + tabbed, _cfg())
+
+    labels = {label for _app, _detail, _count, label in result}
+    assert labels == {"S1", "T1"}
+
+
+def test_grouped_window_rows_ungrouped_window_reports_no_label():
+    windows = [_window("w1", "kitty")]
+
+    assert _grouped_window_rows(windows, _cfg()) == [("kitty", "", 1, None)]
+
+
+def test_grouped_window_rows_reorders_so_group_rows_stay_adjacent():
+    # Rafi's own live ask (2026-08-31): a group's rows scattered among
+    # ordinary windows (whatever order region.windows happens to
+    # report) made the group hard to spot as one thing at a glance —
+    # this builds that exact scattered input and checks the OUTPUT
+    # order groups everything together instead.
+    ungrouped_first = _window("u1", "firefox")
+    group_a = _window("g1", "kitty", title="impala", tab_group_id="1", tab_group_layout="stacked")
+    ungrouped_middle = _window("u2", "code")
+    group_b = _window("g2", "kitty", title="htop", tab_group_id="1", tab_group_layout="stacked")
+    windows = [ungrouped_first, group_a, ungrouped_middle, group_b]
+
+    result = _grouped_window_rows(windows, SimpleNamespace(terminal_apps={"kitty"}, browser_apps=set(), browser_title_names=set()))
+
+    # Both group_a/group_b rows (same group_id) come first, adjacent
+    # to each other, in their own first-seen order; the two ungrouped
+    # rows follow, also keeping their own first-seen relative order.
+    apps_and_details = [(app, detail) for app, detail, _count, _label in result]
+    assert apps_and_details == [("kitty", "impala"), ("kitty", "htop"), ("firefox", ""), ("code", "")]
+    assert [label for _a, _d, _c, label in result] == ["S1", "S1", None, None]
 
 
 # ---------- _preview_apps_for ----------

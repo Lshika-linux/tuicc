@@ -11,9 +11,11 @@ rect, so treating them like ordinary overlapping windows would just
 stack N identical boxes directly on top of each other. _group_tiled_windows()/
 _place_tab_group() give them their own dedicated visual instead — see
 those two functions' own docstrings for the shape (a vertical list of
-thin title bars for "stacked", a horizontal tab-strip for "tabbed",
-with the group's one active member getting a real content box, same
-as any other window).
+thin title bars for "stacked", a horizontal tab-strip for "tabbed").
+The group's ACTIVE slot gets a real content placement, same as any
+other window — usually one box, but see Window.tab_slot_id's own
+docstring (and _place_slot_content()'s) for why an active slot can
+itself be a real, multi-window split needing more than one.
 
 ---
 IMPORTANT: Each module owns both how it draws itself and where its own focusable
@@ -181,7 +183,7 @@ def draw(stdscr, box, ctx, module_name):
     # docstring. Floating windows stay fully independent (deliberately
     # allowed to overlap tiled ones, see this module's own top
     # docstring), so they keep using _window_screen_rect() per window.
-    tiled_rects, too_small_groups, tab_group_bars, group_frames, group_active_ids = _layout_tiled_windows(tiled, x, y, w, h)
+    tiled_rects, too_small_groups, tab_group_bars, group_frames, group_active_ids = _layout_tiled_windows(tiled, x, y, w, h, ctx.config)
 
     # One outer outline PER stacked/tabbed group, spanning its whole
     # allocated cell (bars + content box together) — the plain border
@@ -209,9 +211,9 @@ def draw(stdscr, box, ctx, module_name):
 
     # A stacked/tabbed group's own member rows/tabs — see
     # _place_tab_group()'s own docstring for which members get one.
-    for member, (bar_x, bar_y, bar_w, bar_h), is_active in tab_group_bars:
+    for member, (bar_x, bar_y, bar_w, bar_h), is_active, corner_label in tab_group_bars:
         is_selected = f"preview:{member.id}" == ctx.selected_id
-        _draw_tab_bar(stdscr, member, bar_x, bar_y, bar_w, bar_h, is_active, is_selected, theme, ctx.config)
+        _draw_tab_bar(stdscr, member, bar_x, bar_y, bar_w, bar_h, is_active, is_selected, corner_label, theme, ctx.config)
 
     for window in floating:
         is_selected = f"preview:{window.id}" == ctx.selected_id
@@ -268,7 +270,7 @@ def _window_label(window, cfg):
     return window.app_id
 
 
-def _corner_label(window):
+def _corner_label(window, cfg=None):
     """Pure logic: the compact per-corner identifier — the app_id's
     own first letter, uppercased, in brackets ("[K]" for kitty, "[F]"
     for firefox, "[C]" for code). Small enough to survive even a tight
@@ -277,10 +279,61 @@ def _corner_label(window):
     Falls back to "[?]" for the pathological case of an app_id with no
     characters at all — a real WM shouldn't ever report that, but
     label drawing shouldn't crash if one somehow did.
+
+    `cfg` is optional (existing callers that only ever draw ONE window
+    at this size don't need it) — when given, and condense_title()
+    finds a real, distinct detail (same source _window_label() itself
+    uses), its own first letter is appended lowercase: "[K-i]" for a
+    kitty running impala, "[K-h]" for one running htop. Found live,
+    GitHub issue #8's own stacked/tabbed groups (2026-08-31): several
+    kitty windows crammed into one narrow tab strip all read as an
+    identical "[K]", useless for telling them apart — this is the
+    per-window half of that fix. The other half, disambiguating
+    against real SIBLINGS when this still collides (several bare
+    shells with no distinguishing detail at all), is
+    _group_corner_labels()' own job, not this function's — this one
+    only ever looks at its own window.
     """
     app_id = window.app_id or ""
     letter = app_id[0].upper() if app_id else "?"
+    if cfg is not None:
+        detail = condense_title(window.app_id, window.title, cfg)
+        if detail and detail.lower() != window.app_id.lower():
+            return f"[{letter}-{detail[0].lower()}]"
     return f"[{letter}]"
+
+
+def _group_corner_labels(members, cfg):
+    """Pure logic: one short corner label per group member (see
+    _corner_label()'s own docstring for the base "[X]"/"[X-y]" shape),
+    disambiguated against its OWN group siblings ONLY — not the whole
+    preview (Rafi's own scoping call, 2026-08-31: numbering a kitty "3"
+    when its actual position/context is a totally different part of
+    the screen would read as arbitrary, not helpful). Each member's
+    own preferred label is computed first via _corner_label(); only
+    labels that COLLIDE with a sibling's (whether both are plain "[K]"
+    with no distinguishing detail, or both happen to reduce to the
+    same "[K-h]") get replaced with a numbered "[X-1]"/"[X-2]"/... in
+    member order instead — a member whose own detail letter already
+    tells it apart from every sibling keeps that more useful label,
+    it's only forced to a bare number when even that doesn't help.
+    """
+    preferred = {m.id: _corner_label(m, cfg) for m in members}
+    counts = {}
+    for label in preferred.values():
+        counts[label] = counts.get(label, 0) + 1
+
+    labels = {}
+    seen_per_letter = {}
+    for m in members:
+        label = preferred[m.id]
+        if counts[label] > 1:
+            app_id = m.app_id or ""
+            letter = app_id[0].upper() if app_id else "?"
+            seen_per_letter[letter] = seen_per_letter.get(letter, 0) + 1
+            label = f"[{letter}-{seen_per_letter[letter]}]"
+        labels[m.id] = label
+    return labels
 
 
 class _TabGroupUnit:
@@ -294,12 +347,25 @@ class _TabGroupUnit:
     walk() are the two places that know about this type specifically,
     since they're the ones that have to turn "one shared footprint"
     back into "N real, individually selectable windows".
+
+    `slots` — not `members` — is the group's real, WM-level membership:
+    a list of list[Window], one entry per direct child of the real
+    stacked/tabbed container (one bar/tab row each), NOT one entry per
+    leaf window. A slot usually holds exactly one window, but can hold
+    several (Rafi's own "preview must show reality" call, GitHub issue
+    #8 follow-up, 2026-08-31: splitting a new window open while a
+    stack's own active slot is focused puts it side by side WITHIN
+    that slot, not as a new top-level member — see
+    tab_groups.tab_info_by_leaf_id()'s own tab_slot_id docstring for
+    the full mechanism). _place_tab_group() is what actually renders
+    each slot as one row/tab, recursing into _layout_tiled_windows()
+    itself for any slot with more than one window.
     """
 
     def __init__(self, group_id, layout):
         self.group_id = group_id
         self.layout = layout
-        self.members = []
+        self.slots = []
         self.rect = None
 
 
@@ -317,12 +383,19 @@ def _group_tiled_windows(windows):
     literal "overlapping windows" bug this whole mechanism exists to
     fix).
 
-    A group of exactly one (a real, if unusual, case — see
-    tab_groups.tab_info_by_leaf_id()'s own "nested groups" docstring
-    for when this happens) is deliberately passed through as a plain
-    window instead of wrapped — there's no second member to
-    distinguish it from, so the special stacked/tabbed rendering would
-    just be a single full-detail box with extra steps.
+    A group with only ONE real SLOT (not one window — see
+    _TabGroupUnit's own docstring for why those differ; several
+    windows sharing one slot still count as one here) is deliberately
+    passed through as plain, individually-partitioned windows instead
+    of wrapped — there's no second SLOT to distinguish it from, so the
+    special stacked/tabbed rendering would just be a single full-
+    detail box (or, for a multi-window lone slot, an ordinary split)
+    with extra steps. Passing each window through individually like
+    this is safe even when that lone slot holds more than one window:
+    unlike genuine stacked/tabbed siblings (which share an identical
+    rect, the whole reason this file exists), real split siblings
+    always have DISTINCT rects, so ordinary guillotine-cut
+    partitioning already handles them correctly with no help needed.
     """
     # getattr(..., None), not window.tab_group_id directly — several
     # existing pure-layout tests (test_preview.py) exercise this whole
@@ -330,117 +403,182 @@ def _group_tiled_windows(windows):
     # fixtures that predate tab_group_id and have no reason to grow it
     # just to keep working; a window genuinely missing this field is
     # just never grouped, same as a real ungrouped Window.
-    counts = {}
+    slot_windows = {}
+    slot_order = {}
     for window in windows:
         gid = getattr(window, "tab_group_id", None)
-        if gid is not None:
-            counts[gid] = counts.get(gid, 0) + 1
+        if gid is None:
+            continue
+        sid = getattr(window, "tab_slot_id", None)
+        key = (gid, sid)
+        if key not in slot_windows:
+            slot_windows[key] = []
+            slot_order.setdefault(gid, []).append(sid)
+        slot_windows[key].append(window)
+
+    real_groups = {gid for gid, sids in slot_order.items() if len(sids) >= 2}
 
     units = []
     group_units = {}
     for window in windows:
         gid = getattr(window, "tab_group_id", None)
-        if gid is None or counts[gid] < 2:
+        if gid not in real_groups:
             units.append(window)
             continue
-        unit = group_units.get(gid)
-        if unit is None:
-            unit = _TabGroupUnit(gid, window.tab_group_layout)
-            group_units[gid] = unit
-            units.append(unit)
-        unit.members.append(window)
-        unit.rect = window.rect  # identical across every real member
+        if gid in group_units:
+            continue  # this window's own slot is already inside the unit built below
+        unit = _TabGroupUnit(gid, window.tab_group_layout)
+        unit.rect = window.rect  # identical across every real slot
+        unit.slots = [slot_windows[(gid, sid)] for sid in slot_order[gid]]
+        group_units[gid] = unit
+        units.append(unit)
 
     return units
 
 
-def _place_tab_group(unit, win_x, win_y, win_w, win_h, result, tab_group_bars):
+def _place_slot_content(slot, cx, cy, cw, ch, result, tab_group_bars, cfg, too_small_groups, group_frames, group_active_ids):
+    """Pure logic: give one stacked/tabbed group's ACTIVE slot its real
+    content placement — the slot's own list of windows (see
+    _TabGroupUnit's own docstring for why a slot can hold more than
+    one), not just a single one.
+
+    The overwhelmingly common case (exactly one window in the slot)
+    is unchanged: one entry in `result`, same as any ordinary window.
+
+    A slot with MORE than one window (GitHub issue #8 follow-up, found
+    live 2026-08-31 — Rafi's own "preview must show reality" call: a
+    stack's active slot can itself be a real, multi-window split, e.g.
+    splitting a new terminal open right next to an editor while that
+    editor's own stack slot is focused) recurses into
+    _layout_tiled_windows() itself, on just this slot's own windows,
+    confined to this content area — rendered exactly like any other
+    ordinary tiled split anywhere else in the preview, not flattened
+    into phantom extra stack rows. Every accumulator it produces
+    (further too-small groups, even a FURTHER nested stacked/tabbed
+    group, in principle) merges straight into this call's own — the
+    recursion is genuinely general, not special-cased to "exactly 2".
+
+    The -1/+2 coordinate trick cancels out _layout_tiled_windows()'s
+    own assumption that it's filling a bordered box with a 1-cell
+    margin reserved for that border — this content area has no border
+    of its own to draw (the group's outer frame already provides one,
+    see draw()'s own group_frames loop), so the nested call needs to
+    use the FULL cx/cy/cw/ch as real drawable space, not shave a
+    margin off it a second time.
+
+    A slot with no room at all (cw/ch <= 0) is left entirely to
+    _layout_tiled_windows()'s own end-of-function safety net — every
+    window in it still gets SOME placement, just not from here.
+    """
+    if ch <= 0 or cw <= 0:
+        return
+    if len(slot) == 1:
+        result[slot[0].id] = (cx, cy, cw, ch)
+        return
+    nested = _layout_tiled_windows(slot, cx - 1, cy - 1, cw + 2, ch + 2, cfg)
+    nested_result, nested_too_small, nested_bars, nested_frames, nested_active = nested
+    result.update(nested_result)
+    too_small_groups.extend(nested_too_small)
+    tab_group_bars.extend(nested_bars)
+    group_frames.extend(nested_frames)
+    group_active_ids.update(nested_active)
+
+
+def _place_tab_group(unit, win_x, win_y, win_w, win_h, result, tab_group_bars, cfg, too_small_groups, group_frames, group_active_ids):
     """Pure logic: turn one _TabGroupUnit's already-allocated screen
-    cell into real per-member placements — the piece that actually
-    gives the two agreed-on visual styles their shape (confirmed with
-    Rafi live, not an assumption): "stacked" gets a vertical list of
-    thin one-row title bars (mirroring sway's own real stacked look:
-    every member's bar is always visible, stacked top to bottom);
-    "tabbed" gets one thin horizontal strip split into per-member
-    segments (mirroring sway's own tab strip). Both are deliberately
-    THIN, not full-height/full-width — filling the whole cell the way
-    an ordinary tiled window box does would make a group visually
+    cell into real per-slot placements — the piece that actually gives
+    the two agreed-on visual styles their shape (confirmed with Rafi
+    live, not an assumption): "stacked" gets a vertical list of thin
+    one-row title bars (mirroring sway's own real stacked look: every
+    slot's bar is always visible, stacked top to bottom); "tabbed"
+    gets one thin horizontal strip split into per-slot segments
+    (mirroring sway's own tab strip). Both are deliberately THIN, not
+    full-height/full-width — filling the whole cell the way an
+    ordinary tiled window box does would make a group visually
     indistinguishable from a plain splitv/splith, defeating the whole
     point of a dedicated stacked/tabbed treatment.
 
-    Only INACTIVE members get a bar/tab segment for "tabbed" — the
-    active member gets a real, full-detail content box instead,
-    written into `result`, exactly the same dict a plain leaf window
-    uses, so draw()'s existing tiled_rects loop renders it with no
-    special-casing at all.
+    Both layouts show EVERY slot — the active one included — in the
+    list/strip (matched live, 2026-08-31): the whole membership/order
+    is visible at a glance, one row/tab per slot using that slot's own
+    FIRST window as its representative for the label (see
+    _group_corner_labels()' own docstring — a hidden, inactive slot
+    that happens to itself hold more than one window is a real but
+    rare case, and only gets this one representative's name; the
+    ACTIVE slot's own real content, by contrast, is never simplified
+    this way — see _place_slot_content()'s own docstring). The active
+    slot ALSO still gets its normal content placement, same as any
+    other window(s), written into `result` so draw()'s existing
+    tiled_rects loop renders it with no special-casing. Yes, that
+    means the active slot's own info is shown twice right now (once as
+    a row/tab, once as the content) — an accepted, deliberate
+    duplication for now while this is still being tuned live, not a
+    bug.
 
-    "stacked" currently does BOTH, deliberately, per Rafi's own live
-    call while iterating on this feature (2026-08-31): EVERY member —
-    active included — gets its own row in the list, so the whole
-    membership/order is visible at a glance; the active member ALSO
-    still gets the normal content box below, same as before. Yes, that
-    means the active member's own info is shown twice right now (once
-    as a row, once as the box) — an accepted, deliberate duplication
-    for now while this is still being tuned live, not a bug. The
-    active row and the active content box are colored the same white
-    (draw()'s own job, this function just flags is_active/returns the
-    active id) — see draw()'s own comment for why, and for the plain,
-    unselected-border-colored outline it draws around the group's
-    WHOLE cell so the members read as one unit even with that
-    duplication. Revisit whether "tabbed" should match once "stacked"
-    itself is settled.
+    `cfg` is threaded all the way down from draw()/nav_items(), partly
+    to reach _group_corner_labels() below and partly to hand onward to
+    _place_slot_content()'s own possible recursive
+    _layout_tiled_windows() call.
 
     Degenerate case (cell too short/narrow to fit every bar, or even
-    to leave the active member any content room): bars pile onto
+    to leave the active slot any content room): bars pile onto
     whatever row/column is still available rather than being dropped —
-    every member always ends up with SOME real, distinct-enough nav
+    every slot always ends up with SOME real, distinct-enough nav
     target, never silently missing one. Known, accepted imprecision
     for a case _detail_tier() mostly filters out already (a group's
     own allocated cell has to be at least "letter"-tier sized to reach
     this function at all).
 
-    Returns the active member's own window id — _layout_tiled_windows()
-    uses it to build group_active_ids, so draw() knows to color that
-    one window's content box distinctly from an ordinary standalone
-    window (white, border_selected — not accent, which stays reserved
-    for floating windows only) even though it's sitting in the exact
-    same `result` dict as every non-grouped window.
+    Returns the active slot's own representative window id WHEN that
+    slot is a single window, else None — _layout_tiled_windows() uses
+    a non-None return to build group_active_ids, so draw() knows to
+    color that one window's content box distinctly (white,
+    border_selected — not accent, which stays reserved for floating
+    windows only). A multi-window active slot deliberately gets no
+    such special coloring on any of its own windows — see
+    _place_slot_content()'s own docstring: they're rendered as an
+    ordinary nested split, no single one of them is "the" active
+    window the way a lone one would be.
     """
-    active = next((m for m in unit.members if m.tab_active), unit.members[0])
+    active_slot = next((slot for slot in unit.slots if slot[0].tab_active), unit.slots[0])
+    representatives = [slot[0] for slot in unit.slots]
+    labels = _group_corner_labels(representatives, cfg)
+    active_id = active_slot[0].id if len(active_slot) == 1 else None
 
     if unit.layout == "tabbed":
-        # Same "show every member" call as "stacked" below — matched
-        # per Rafi's own live ask right after seeing stacked work this
-        # way (2026-08-31): all members split the strip, active
-        # included, colored the same white draw() gives an active
-        # content box (see _draw_tab_bar()'s own docstring).
-        n = len(unit.members)
+        n = len(unit.slots)
         strip_h = 1 if n > 0 and win_h >= 1 else 0
         content_h = max(win_h - strip_h, 0)
         if strip_h:
             widths = _allocate_axis([1.0] * n, win_w, gap=1)
             offset = 0
-            for member, width in zip(unit.members, widths):
-                tab_group_bars.append((member, (win_x + offset, win_y, width, 1), member is active))
+            for slot, width in zip(unit.slots, widths):
+                rep = slot[0]
+                tab_group_bars.append((rep, (win_x + offset, win_y, width, 1), slot is active_slot, labels[rep.id]))
                 offset += width + 1
-        if content_h > 0:
-            result[active.id] = (win_x, win_y + strip_h, win_w, content_h)
-        return active.id
+        _place_slot_content(
+            active_slot, win_x, win_y + strip_h, win_w, content_h,
+            result, tab_group_bars, cfg, too_small_groups, group_frames, group_active_ids,
+        )
+        return active_id
 
-    # "stacked": one contiguous row per member (active included), top
-    # to bottom, gap=0 — real sway stacked title bars sit flush against
+    # "stacked": one contiguous row per slot (active included), top to
+    # bottom, gap=0 — real sway stacked title bars sit flush against
     # each other, their own border lines are the only separation needed
     # (same reasoning _allocate_axis()'s own docstring gives for why
     # row-splits use gap=0 elsewhere in this file).
-    n = len(unit.members)
+    n = len(unit.slots)
     bars_h = min(n, win_h) if win_h > 0 else 0
     content_h = max(win_h - bars_h, 0)
-    for i, member in enumerate(unit.members):
+    for i, slot in enumerate(unit.slots):
         row = min(i, bars_h - 1) if bars_h > 0 else 0
-        tab_group_bars.append((member, (win_x, win_y + row, win_w, 1), member is active))
-    if content_h > 0:
-        result[active.id] = (win_x, win_y + bars_h, win_w, content_h)
-    return active.id
+        rep = slot[0]
+        tab_group_bars.append((rep, (win_x, win_y + row, win_w, 1), slot is active_slot, labels[rep.id]))
+    _place_slot_content(
+        active_slot, win_x, win_y + bars_h, win_w, content_h,
+        result, tab_group_bars, cfg, too_small_groups, group_frames, group_active_ids,
+    )
+    return active_id
 
 
 def _partition_windows(windows, x0, x1, y0, y1):
@@ -579,6 +717,13 @@ def _allocate_axis(sizes, total_cells, gap=1):
     return floors
 
 
+def _tab_group_unit_windows(unit):
+    """Every real window a _TabGroupUnit stands in for, flattened out
+    of its slots (list of list[Window] — see _TabGroupUnit's own
+    docstring for why it's not a flat list already)."""
+    return [w for slot in unit.slots for w in slot]
+
+
 def _subtree_windows(node):
     """Pure logic: every real window under a partition-tree node, in
     tree order — used to know which window ids a collapsed subtree
@@ -591,16 +736,16 @@ def _subtree_windows(node):
     kind = node[0]
     if kind == "leaf":
         payload = node[1]
-        return list(payload.members) if isinstance(payload, _TabGroupUnit) else [payload]
+        return _tab_group_unit_windows(payload) if isinstance(payload, _TabGroupUnit) else [payload]
     if kind == "unsplit":
         flat = []
         for item in node[1]:
-            flat.extend(item.members if isinstance(item, _TabGroupUnit) else [item])
+            flat.extend(_tab_group_unit_windows(item) if isinstance(item, _TabGroupUnit) else [item])
         return flat
     return [w for child in node[2] for w in _subtree_windows(child)]
 
 
-def _layout_tiled_windows(windows, x, y, w, h):
+def _layout_tiled_windows(windows, x, y, w, h, cfg=None):
     """Pure logic: lay out a region's whole set of TILED windows into
     terminal-cell sub-rects together, in one pass — the only way to
     guarantee every pair of adjacent siblings gets EXACTLY one gap
@@ -619,11 +764,13 @@ def _layout_tiled_windows(windows, x, y, w, h):
     draw()'s own call site is what turns each group into one combined
     placeholder box instead of drawing them individually. The third
     element is a list of (window, (bar_x, bar_y, bar_w, bar_h),
-    is_active) — one entry per stacked/tabbed group member that got
-    its own thin title bar/tab, see _place_tab_group()'s own docstring
-    for the current stacked-vs-tabbed split on which members end up
-    here (the active member still gets a normal entry in the first
-    dict too, same as any other window — see below for why). The
+    is_active, corner_label) — one entry per stacked/tabbed group
+    member; `corner_label` is that member's own pre-disambiguated short
+    label (see _group_corner_labels()' own docstring — resolved once
+    per group, against its real siblings, since _draw_tab_bar() itself
+    only ever sees one member at a time). The active member still gets
+    a normal entry in the first dict too, same as any other window —
+    see _place_tab_group()'s own docstring for why. The
     fourth element is a list of (win_x, win_y, win_w, win_h) — one per
     rendered stacked/tabbed group's OWN full allocated cell (bars +
     content box together), so draw() can outline the whole thing as
@@ -683,8 +830,12 @@ def _layout_tiled_windows(windows, x, y, w, h):
                 # topmost bar's text collided directly with the frame's
                 # own top border line).
                 inset_w, inset_h = max(win_w - 2, 1), max(win_h - 2, 1)
-                active_id = _place_tab_group(payload, win_x + 1, win_y + 1, inset_w, inset_h, result, tab_group_bars)
-                group_active_ids.add(active_id)
+                active_id = _place_tab_group(
+                    payload, win_x + 1, win_y + 1, inset_w, inset_h, result, tab_group_bars, cfg,
+                    too_small_groups, group_frames, group_active_ids,
+                )
+                if active_id is not None:
+                    group_active_ids.add(active_id)
                 group_frames.append((win_x, win_y, win_w, win_h))
                 return
             result[payload.id] = (win_x, win_y, win_w, win_h)
@@ -703,8 +854,12 @@ def _layout_tiled_windows(windows, x, y, w, h):
                 leaf_h = max(round(rh / span_y * cell_h), 1)
                 if isinstance(item, _TabGroupUnit):
                     inset_w, inset_h = max(leaf_w - 2, 1), max(leaf_h - 2, 1)
-                    active_id = _place_tab_group(item, leaf_x + 1, leaf_y + 1, inset_w, inset_h, result, tab_group_bars)
-                    group_active_ids.add(active_id)
+                    active_id = _place_tab_group(
+                        item, leaf_x + 1, leaf_y + 1, inset_w, inset_h, result, tab_group_bars, cfg,
+                        too_small_groups, group_frames, group_active_ids,
+                    )
+                    if active_id is not None:
+                        group_active_ids.add(active_id)
                     group_frames.append((leaf_x, leaf_y, leaf_w, leaf_h))
                 else:
                     result[item.id] = (leaf_x, leaf_y, leaf_w, leaf_h)
@@ -739,7 +894,7 @@ def _layout_tiled_windows(windows, x, y, w, h):
     # always-safe per-window _window_screen_rect() instead of just
     # failing silently or raising.
     grouped_ids = {w.id for _x, _y, _w, _h, group in too_small_groups for w in group}
-    bar_ids = {member.id for member, _rect, _is_active in tab_group_bars}
+    bar_ids = {member.id for member, _rect, _is_active, _label in tab_group_bars}
     for window in windows:
         if window.id not in result and window.id not in grouped_ids and window.id not in bar_ids:
             result[window.id] = _window_screen_rect(window, x, y, w, h)
@@ -893,7 +1048,7 @@ def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_
         # One clean, centered "[K]" — see _detail_tier()'s own
         # docstring for why corner tags are dropped at this size
         # rather than kept alongside it.
-        label = wc_truncate(_corner_label(window), max(win_w - 2, 0))
+        label = wc_truncate(_corner_label(window, cfg), max(win_w - 2, 0))
         try:
             stdscr.addstr(win_y + win_h // 2, centered_x(win_x + 1, max(win_w - 2, 0), label), label, text_color)
         except curses.error:
@@ -905,7 +1060,7 @@ def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_
     # color the way full-brightness text would) survive tight overlap
     # between windows; the full label below, shown once in the center,
     # is where the real detail (what's actually running) lives.
-    corner_label = wc_truncate(_corner_label(window), max(win_w - 2, 0))
+    corner_label = wc_truncate(_corner_label(window, cfg), max(win_w - 2, 0))
     for row, col in _corner_positions(win_y, win_x, win_h, win_w, display_width(corner_label)):
         try:
             stdscr.addstr(row, col, corner_label, text_color | curses.A_DIM)
@@ -935,7 +1090,7 @@ def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_
             pass
 
 
-def _draw_tab_bar(stdscr, member, win_x, win_y, win_w, win_h, is_active, is_selected, theme, cfg):
+def _draw_tab_bar(stdscr, member, win_x, win_y, win_w, win_h, is_active, is_selected, corner_label, theme, cfg):
     """Draw one stacked/tabbed group member's own thin title bar/tab —
     see _place_tab_group()'s own docstring for the design: both layouts
     now draw a row/segment for EVERY member, active included, matching
@@ -943,10 +1098,14 @@ def _draw_tab_bar(stdscr, member, win_x, win_y, win_w, win_h, is_active, is_sele
     text, which is the whole visual point: it has to read as
     unmistakably thinner/lesser than a real _draw_window() box, or a
     group stops looking any different from ordinary tiled windows.
-    Falls back to the short "[X]" corner label instead of the full
-    condensed title when there's not enough width for it to read
-    cleanly (12 cells is _MIN_FULL_DETAIL_W plus a little slack for
-    the brackets a real "[app] detail" label commonly adds).
+    Falls back to `corner_label` — the caller's own pre-disambiguated
+    short label (see _group_corner_labels()' own docstring, called once
+    per group in _place_tab_group() — this function only ever sees one
+    member at a time, it can't disambiguate against siblings itself)
+    instead of the full condensed title when there's not enough width
+    for that to read cleanly (12 cells is _MIN_FULL_DETAIL_W plus a
+    little slack for the brackets a real "[app] detail" label commonly
+    adds).
 
     is_active uses border_selected (white in the default theme) — NOT
     accent, which stays reserved for floating windows only (Rafi's own
@@ -970,7 +1129,7 @@ def _draw_tab_bar(stdscr, member, win_x, win_y, win_w, win_h, is_active, is_sele
         color = theme.get("border_selected", 0)
     else:
         color = theme.get("border", 0)
-    label_source = _window_label(member, cfg) if win_w >= 12 else _corner_label(member)
+    label_source = _window_label(member, cfg) if win_w >= 12 else corner_label
     label = wc_truncate(label_source, win_w)
     try:
         stdscr.addstr(win_y, centered_x(win_x, win_w, label), label, color)
@@ -1008,7 +1167,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     # the active member, who already has a normal content-box entry
     # there, same as any other window; this dict only ends up used for
     # its OTHER (non-active) members.
-    bar_rects = {member.id: rect for member, rect, _is_active in tab_group_bars}
+    bar_rects = {member.id: rect for member, rect, _is_active, _label in tab_group_bars}
 
     items = []
     for window in focused_region.windows:

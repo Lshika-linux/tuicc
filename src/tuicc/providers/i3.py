@@ -74,7 +74,7 @@ def _leaf_to_window(leaf, ws_rect, floating, tab_info=None):
     w = leaf.rect.width / ws_rect.width
     h = leaf.rect.height / ws_rect.height
 
-    group_id, group_layout, active = tab_info if tab_info else (None, None, False)
+    group_id, group_layout, slot_id, active = tab_info if tab_info else (None, None, None, False)
     return Window(
         id=str(leaf.id),
         app_id=leaf.window_class or leaf.app_id or "unknown",
@@ -90,6 +90,7 @@ def _leaf_to_window(leaf, ws_rect, floating, tab_info=None):
         tab_group_id=group_id,
         tab_group_layout=group_layout,
         tab_active=active,
+        tab_slot_id=slot_id,
     )
 
 

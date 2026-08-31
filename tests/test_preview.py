@@ -16,7 +16,8 @@ from tuicc.model import Window
 from tuicc.modules.preview import (
     _corner_label, _corner_positions, _window_label, _window_screen_rect,
     _allocate_axis, _layout_tiled_windows, _partition_windows, _detail_tier,
-    _group_tiled_windows, _place_tab_group, _TabGroupUnit,
+    _group_tiled_windows, _place_tab_group, _TabGroupUnit, _group_corner_labels,
+    _place_slot_content,
 )
 
 
@@ -108,6 +109,104 @@ def test_corner_label_ignores_title_entirely():
 
 def test_corner_label_empty_app_id_falls_back_to_question_mark():
     assert _corner_label(_window("", "something")) == "[?]"
+
+
+# ---------- _corner_label with cfg (GitHub issue #8 follow-up) ----------
+
+def test_corner_label_without_cfg_stays_plain():
+    # Backward compatible default — existing callers that never pass
+    # cfg (or pass None) keep today's plain "[X]" behavior unchanged.
+    cfg = _cfg(terminal_apps=["kitty"])
+    assert _corner_label(_window("kitty", "htop")) == "[K]"
+    assert _corner_label(_window("kitty", "htop"), None) == "[K]"
+
+
+def test_corner_label_with_cfg_appends_lowercase_detail_letter():
+    cfg = _cfg(terminal_apps=["kitty"])
+    assert _corner_label(_window("kitty", "htop"), cfg) == "[K-h]"
+    assert _corner_label(_window("kitty", "impala"), cfg) == "[K-i]"
+
+
+def test_corner_label_with_cfg_stays_plain_when_detail_equals_app_id():
+    # A fresh terminal whose title is still just its own app_id — no
+    # real distinguishing detail to append (mirrors _window_label()'s
+    # own fallback for the same case).
+    cfg = _cfg(terminal_apps=["kitty"])
+    assert _corner_label(_window("kitty", "kitty"), cfg) == "[K]"
+
+
+def test_corner_label_with_cfg_stays_plain_when_condensed_title_is_empty():
+    cfg = _cfg()
+    assert _corner_label(_window("firefox", "firefox"), cfg) == "[F]"
+
+
+# ---------- _group_corner_labels (GitHub issue #8 follow-up) ----------
+# Live-found, 2026-08-31: 8 kitty windows crammed into one stacked
+# group all read as an identical "[K]" tag in the narrow bar/tab
+# strip — useless for telling them apart. These test the fix in
+# isolation from _place_tab_group()'s own geometry.
+
+def _kitty(id_, title):
+    return Window(id=id_, app_id="kitty", title=title, focused=False, rect=(0.0, 0.0, 1.0, 1.0))
+
+
+def test_group_corner_labels_distinct_details_get_their_own_letter_no_numbering():
+    impala = _kitty("1", "impala")
+    htop = _kitty("2", "htop")
+    cfg = _cfg(terminal_apps=["kitty"])
+
+    labels = _group_corner_labels([impala, htop], cfg)
+
+    assert labels == {"1": "[K-i]", "2": "[K-h]"}
+
+
+def test_group_corner_labels_bare_shells_get_numbered_in_member_order():
+    a = _kitty("1", "kitty")  # title == app_id -> no real detail, "bare" shell
+    b = _kitty("2", "kitty")
+    c = _kitty("3", "kitty")
+
+    labels = _group_corner_labels([a, b, c], _cfg(terminal_apps=["kitty"]))
+
+    assert labels == {"1": "[K-1]", "2": "[K-2]", "3": "[K-3]"}
+
+
+def test_group_corner_labels_same_detail_letter_collision_gets_numbered_too():
+    # Two DIFFERENT real commands that happen to reduce to the same
+    # first letter ("impala" and "iotop") — the detail letter alone
+    # doesn't disambiguate them, so both fall back to numbering rather
+    # than both silently showing "[K-i]".
+    a = _kitty("1", "impala")
+    b = _kitty("2", "iotop")
+
+    labels = _group_corner_labels([a, b], _cfg(terminal_apps=["kitty"]))
+
+    assert labels == {"1": "[K-1]", "2": "[K-2]"}
+
+
+def test_group_corner_labels_mixed_group_only_numbers_the_actual_collision():
+    # impala/htop each already disambiguate on their own; the two bare
+    # shells don't, so only THEY get numbered — the distinguishing
+    # members keep their more useful detail letter.
+    impala = _kitty("1", "impala")
+    htop = _kitty("2", "htop")
+    bare_a = _kitty("3", "kitty")
+    bare_b = _kitty("4", "kitty")
+
+    labels = _group_corner_labels([impala, htop, bare_a, bare_b], _cfg(terminal_apps=["kitty"]))
+
+    assert labels["1"] == "[K-i]"
+    assert labels["2"] == "[K-h]"
+    assert labels["3"] == "[K-1]"
+    assert labels["4"] == "[K-2]"
+
+
+def test_group_corner_labels_different_apps_never_collide_with_each_other():
+    kitty = _kitty("1", "kitty")
+    firefox = Window(id="2", app_id="firefox", title="firefox", focused=False, rect=(0.0, 0.0, 1.0, 1.0))
+
+    labels = _group_corner_labels([kitty, firefox], _cfg(terminal_apps=["kitty"]))
+
+    assert labels == {"1": "[K]", "2": "[F]"}
 
 
 # ---------- _corner_positions ----------
@@ -490,10 +589,15 @@ def test_layout_tiled_windows_collapsed_group_matches_its_sibling_scale():
 
 # ---------- _group_tiled_windows (GitHub issue #8) ----------
 
-def _tab_window(id_, rect, group_id=None, group_layout=None, active=False):
+def _tab_window(id_, rect, group_id=None, group_layout=None, active=False, slot_id=None):
+    # slot_id defaults to the window's own id — every window is its
+    # own slot unless a test explicitly passes a SHARED slot_id to
+    # model a real multi-window slot (see tab_groups.py's own
+    # tab_slot_id docstring for what that means).
     return Window(
         id=id_, app_id="app" + id_, title="", focused=False, rect=rect,
         tab_group_id=group_id, tab_group_layout=group_layout, tab_active=active,
+        tab_slot_id=(slot_id if slot_id is not None else (id_ if group_id is not None else None)),
     )
 
 
@@ -508,7 +612,7 @@ def test_group_tiled_windows_collapses_a_real_group_into_one_unit():
     assert isinstance(unit, _TabGroupUnit)
     assert unit.group_id == "9"
     assert unit.layout == "stacked"
-    assert unit.members == [a, b]
+    assert unit.slots == [[a], [b]]
     assert unit.rect == (0.0, 0.0, 1.0, 1.0)
 
 
@@ -551,11 +655,49 @@ def test_group_tiled_windows_missing_tab_group_id_field_treated_as_ungrouped():
     assert units == [plain]
 
 
+def test_group_tiled_windows_two_windows_sharing_one_slot_is_not_a_real_group():
+    # Two windows sharing the SAME slot_id (a real, multi-window slot
+    # — see tab_groups.py's own tab_slot_id docstring) but with no
+    # OTHER real slot in the group is exactly the "only one real
+    # member" passthrough case — nothing to distinguish it FROM, so no
+    # _TabGroupUnit gets built. Each window passes through individually
+    # as an ordinary leaf instead; that's fine here (unlike genuine
+    # stacked/tabbed siblings) since real split siblings always have
+    # DISTINCT rects, so ordinary partitioning handles them correctly
+    # with no special casing needed.
+    a = _tab_window("a", (0.0, 0.0, 0.5, 1.0), group_id="9", group_layout="stacked", active=True, slot_id="s")
+    b = _tab_window("b", (0.5, 0.0, 0.5, 1.0), group_id="9", group_layout="stacked", active=True, slot_id="s")
+
+    units = _group_tiled_windows([a, b])
+
+    assert units == [a, b]
+
+
+def test_group_tiled_windows_multi_window_slot_bucketed_together_as_one_slot():
+    # A real group: one ordinary single-window slot (b) plus one
+    # multi-window slot (a1+a2, sharing slot_id) — 2 real slots, so
+    # this DOES collapse into a unit, and a1/a2 stay together as ONE
+    # of its slots, not two.
+    a1 = _tab_window("a1", (0.0, 0.0, 0.5, 1.0), group_id="9", group_layout="stacked", active=True, slot_id="s1")
+    a2 = _tab_window("a2", (0.0, 0.0, 0.5, 1.0), group_id="9", group_layout="stacked", active=True, slot_id="s1")
+    b = _tab_window("b", (0.5, 0.0, 0.5, 1.0), group_id="9", group_layout="stacked", active=False, slot_id="s2")
+
+    units = _group_tiled_windows([a1, a2, b])
+
+    assert len(units) == 1
+    unit = units[0]
+    assert isinstance(unit, _TabGroupUnit)
+    assert unit.slots == [[a1, a2], [b]]
+
+
 # ---------- _place_tab_group (GitHub issue #8) ----------
 
 def _make_unit(layout, members):
+    # Each member is its own single-window slot — the common case.
+    # See test_place_tab_group_multi_window_active_slot_* below for
+    # the real multi-window-slot case.
     unit = _TabGroupUnit("g", layout)
-    unit.members = list(members)
+    unit.slots = [[m] for m in members]
     unit.rect = members[0].rect
     return unit
 
@@ -572,15 +714,15 @@ def test_place_tab_group_stacked_gives_every_member_a_row_plus_active_a_content_
     unit = _make_unit("stacked", [active, b, c])
 
     result, bars = {}, []
-    _place_tab_group(unit, win_x=10, win_y=20, win_w=30, win_h=10, result=result, tab_group_bars=bars)
+    _place_tab_group(unit, win_x=10, win_y=20, win_w=30, win_h=10, result=result, tab_group_bars=bars, cfg=None, too_small_groups=[], group_frames=[], group_active_ids=set())
 
     assert len(bars) == 3  # active, b, and c all get a row
-    assert {m.id for m, _rect, _is_active in bars} == {"active", "b", "c"}
+    assert {m.id for m, _rect, _is_active, _label in bars} == {"active", "b", "c"}
     # Rows are contiguous, one cell tall, stacked top to bottom, in
     # member order (active first, since it's first in unit.members).
-    rows_in_order = [rect[1] for _m, rect, _a in bars]
+    rows_in_order = [rect[1] for _m, rect, _a, _label in bars]
     assert rows_in_order == [20, 21, 22]
-    for member, (bx, by, bw, bh), is_active in bars:
+    for member, (bx, by, bw, bh), is_active, _label in bars:
         assert (bx, bw, bh) == (10, 30, 1)
         assert is_active == (member.id == "active")
 
@@ -599,11 +741,11 @@ def test_place_tab_group_tabbed_splits_width_among_all_members_with_a_gap():
     unit = _make_unit("tabbed", [active, b, c])
 
     result, bars = {}, []
-    _place_tab_group(unit, win_x=0, win_y=5, win_w=21, win_h=10, result=result, tab_group_bars=bars)
+    _place_tab_group(unit, win_x=0, win_y=5, win_w=21, win_h=10, result=result, tab_group_bars=bars, cfg=None, too_small_groups=[], group_frames=[], group_active_ids=set())
 
     assert len(bars) == 3
-    assert {m.id for m, _rect, _is_active in bars} == {"active", "b", "c"}
-    for member, (bx, by, bw, bh), is_active in bars:
+    assert {m.id for m, _rect, _is_active, _label in bars} == {"active", "b", "c"}
+    for member, (bx, by, bw, bh), is_active, _label in bars:
         assert by == 5  # the whole strip is one row, at the cell's own top
         assert bh == 1
         assert is_active == (member.id == "active")
@@ -611,8 +753,8 @@ def test_place_tab_group_tabbed_splits_width_among_all_members_with_a_gap():
     # gap column — not glued together (same "exactly one gap"
     # discipline _allocate_axis() already enforces for ordinary
     # x-splits).
-    xs = [rect[0] for _m, rect, _a in bars]
-    ws = [rect[2] for _m, rect, _a in bars]
+    xs = [rect[0] for _m, rect, _a, _label in bars]
+    ws = [rect[2] for _m, rect, _a, _label in bars]
     for i in range(len(bars) - 1):
         assert xs[i + 1] > xs[i] + ws[i]
 
@@ -629,12 +771,12 @@ def test_place_tab_group_degenerate_no_room_for_content_still_places_active():
     unit = _make_unit("stacked", [active, b])
 
     result, bars = {}, []
-    _place_tab_group(unit, win_x=0, win_y=0, win_w=10, win_h=1, result=result, tab_group_bars=bars)
+    _place_tab_group(unit, win_x=0, win_y=0, win_w=10, win_h=1, result=result, tab_group_bars=bars, cfg=None, too_small_groups=[], group_frames=[], group_active_ids=set())
 
     assert "active" not in result
-    ids_with_bars = {m.id for m, _rect, _is_active in bars}
+    ids_with_bars = {m.id for m, _rect, _is_active, _label in bars}
     assert ids_with_bars == {"active", "b"}
-    active_bar = next((m, rect, is_active) for m, rect, is_active in bars if m.id == "active")
+    active_bar = next((m, rect, is_active) for m, rect, is_active, _label in bars if m.id == "active")
     assert active_bar[2] is True  # flagged so draw() can color it distinctly
 
 
@@ -647,7 +789,7 @@ def test_place_tab_group_tabbed_active_content_box_fills_remaining_cell():
     unit = _make_unit("tabbed", [active, b])
 
     result, bars = {}, []
-    _place_tab_group(unit, win_x=0, win_y=0, win_w=20, win_h=8, result=result, tab_group_bars=bars)
+    _place_tab_group(unit, win_x=0, win_y=0, win_w=20, win_h=8, result=result, tab_group_bars=bars, cfg=None, too_small_groups=[], group_frames=[], group_active_ids=set())
 
     assert len(bars) == 2  # both members get a tab segment now
     assert result["active"] == (0, 1, 20, 7)
@@ -663,11 +805,74 @@ def test_place_tab_group_tabbed_degenerate_no_room_for_content_still_places_acti
     unit = _make_unit("tabbed", [active, b])
 
     result, bars = {}, []
-    _place_tab_group(unit, win_x=0, win_y=0, win_w=10, win_h=1, result=result, tab_group_bars=bars)
+    _place_tab_group(unit, win_x=0, win_y=0, win_w=10, win_h=1, result=result, tab_group_bars=bars, cfg=None, too_small_groups=[], group_frames=[], group_active_ids=set())
 
     assert "active" not in result
-    ids_with_bars = {m.id for m, _rect, _is_active in bars}
+    ids_with_bars = {m.id for m, _rect, _is_active, _label in bars}
     assert ids_with_bars == {"active", "b"}
+
+
+# ---------- multi-window active slot (GitHub issue #8 follow-up) ----------
+# Live-found, 2026-08-31: a stack's own ACTIVE slot can itself be a
+# real, multi-window split (splitting a new terminal open while an
+# editor's own stack slot is focused) — Rafi's own "preview must show
+# reality" call: this must render BOTH windows, side by side, not
+# flatten them into fake extra stack rows or silently drop one.
+
+def test_place_tab_group_active_slot_with_multiple_windows_renders_both_side_by_side():
+    code = _tab_window("code", (0.0, 0.0, 0.5, 1.0), "g", "stacked", active=True, slot_id="active_slot")
+    kitty = _tab_window("kitty", (0.5, 0.0, 0.5, 1.0), "g", "stacked", active=True, slot_id="active_slot")
+    firefox = _tab_window("firefox", (0.0, 0.0, 1.0, 1.0), "g", "stacked", active=False, slot_id="firefox_slot")
+
+    unit = _TabGroupUnit("g", "stacked")
+    unit.slots = [[firefox], [code, kitty]]
+    unit.rect = firefox.rect
+
+    result, bars = {}, []
+    active_id = _place_tab_group(
+        unit, win_x=0, win_y=0, win_w=42, win_h=22, result=result, tab_group_bars=bars, cfg=None,
+        too_small_groups=[], group_frames=[], group_active_ids=set(),
+    )
+
+    # ONE bar for the whole active slot (its own first window as
+    # representative), not one per window inside it — plus one for
+    # firefox's own slot. 2 bars total, not 3.
+    assert len(bars) == 2
+    assert {m.id for m, _rect, _is_active, _label in bars} == {"firefox", "code"}
+
+    # Both code AND kitty get their own real content placement, side
+    # by side — neither silently dropped nor merged into one box.
+    assert "code" in result
+    assert "kitty" in result
+    code_x, _cy, code_w, _ch = result["code"]
+    kitty_x, _ky, kitty_w, _kh = result["kitty"]
+    assert kitty_x >= code_x + code_w  # no overlap between them
+
+    # No "the active window" white-coloring for either — see
+    # _place_tab_group()'s own docstring: a multi-window slot renders
+    # as an ordinary nested split, no single one of them is special.
+    assert active_id is None
+
+
+def test_place_slot_content_single_window_slot_unchanged():
+    window = _tab_window("w", (0.0, 0.0, 1.0, 1.0))
+    result, bars = {}, []
+    _place_slot_content([window], cx=5, cy=5, cw=20, ch=10, result=result, tab_group_bars=bars, cfg=None,
+                         too_small_groups=[], group_frames=[], group_active_ids=set())
+    assert result["w"] == (5, 5, 20, 10)
+
+
+def test_place_slot_content_no_room_places_nothing_for_either_window():
+    # Left entirely to _layout_tiled_windows()'s own end-of-function
+    # safety net (see _place_slot_content()'s own docstring) — this
+    # function itself just declines to place anything when there's no
+    # real room, rather than producing an overlapping/nonsensical rect.
+    code = _tab_window("code", (0.0, 0.0, 0.5, 1.0))
+    kitty = _tab_window("kitty", (0.5, 0.0, 0.5, 1.0))
+    result, bars = {}, []
+    _place_slot_content([code, kitty], cx=0, cy=0, cw=0, ch=0, result=result, tab_group_bars=bars, cfg=None,
+                         too_small_groups=[], group_frames=[], group_active_ids=set())
+    assert result == {}
 
 
 # ---------- _layout_tiled_windows integration (GitHub issue #8) ----------
@@ -694,7 +899,7 @@ def test_layout_tiled_windows_stacked_group_never_overlaps_with_its_sibling():
 
     # "stacked" gives every member a row now (active included, see
     # _place_tab_group()'s own docstring) — both ids show up here.
-    bar_ids = {m.id for m, _rect, _is_active in bars}
+    bar_ids = {m.id for m, _rect, _is_active, _label in bars}
     assert bar_ids == {"sa", "sb"}
 
     assert active_ids == {"sa"}
@@ -719,8 +924,8 @@ def test_layout_tiled_windows_tabbed_group_bars_stay_within_the_groups_own_cell(
     assert "ta" in rects
     # "tabbed" now shows every member in the strip too (active
     # included) — see _place_tab_group()'s own docstring.
-    assert {m.id for m, _rect, _is_active in bars} == {"ta", "tb", "tc"}
-    for _m, (bx, by, bw, bh), _is_active in bars:
+    assert {m.id for m, _rect, _is_active, _label in bars} == {"ta", "tb", "tc"}
+    for _m, (bx, by, bw, bh), _is_active, _label in bars:
         assert 1 <= bx  # inside the box's own left border
         assert bx + bw <= 29  # inside the box's own right border
 

@@ -37,6 +37,17 @@ def condense_title(app, title, cfg):
         return ""
 
     if app_l in cfg.terminal_apps:
+        # A bare "~" is the shell's own idle-prompt title (home
+        # directory, nothing running) — found live, GitHub issue #8
+        # follow-up (2026-08-31): several bare shells crammed into one
+        # stacked group's narrow corner labels all showed a
+        # meaningless "-~" suffix, read as if it were real info when
+        # it's really "nothing to add", the exact same case the
+        # generic bucket's own app_id-equals check below already
+        # covers — just reached through a different literal value
+        # since terminal titles are shown verbatim, not app_id itself.
+        if title == "~":
+            return ""
         return title
 
     parts = [p.strip() for p in _TITLE_SPLIT_RE.split(title) if p.strip()]

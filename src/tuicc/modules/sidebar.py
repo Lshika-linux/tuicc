@@ -38,21 +38,75 @@ def _grouped_window_rows(windows, cfg):
     EXACT duplicates collapse, so nothing actually informative gets
     hidden.
 
-    Returns [(app_id, detail, count), ...], one entry per distinct
-    (app_id, detail) pair, in first-seen order. count is always >= 1;
-    the caller only appends a "×N" suffix when it's > 1 (see draw()'s
-    own call site) — a count of exactly 1 renders identically to the
-    original, uncollapsed row.
+    The grouping key also includes tab_group_id (GitHub issue #8
+    follow-up, found live 2026-08-31): otherwise-identical bare shells
+    that happen to sit in DIFFERENT stacked/tabbed containers (or one
+    in a group and one not in any) would collapse together into one
+    misleading count — a "×8" that's actually "7 in one stacked group,
+    1 sitting alone elsewhere" reads as one thing when it's really two.
+
+    Two more things happen here for the same underlying reason (Rafi's
+    own live ask, same session): rows are also REORDERED so every row
+    belonging to a real group sits adjacent to its own group's other
+    rows (grouped rows first, in first-seen GROUP order; ungrouped
+    rows last) — a group's rows landing scattered among ordinary
+    windows, in whatever order region.windows happened to report them,
+    made it hard to even recognize as one group at a glance. And each
+    distinct group_id gets its own numbered, layout-specific label
+    ("S1"/"S2" for separate stacked containers, "T1"/"T2" for separate
+    tabbed ones, independent counters) instead of a bare
+    "stacked"/"tabbed" — needed once a workspace has two separate
+    stack/tab systems side by side, so their rows don't read as one
+    ambiguous group. No brackets — see draw()'s own call site for why.
+
+    Returns [(app_id, detail, count, group_label), ...] — group_label
+    is None for an ungrouped row, else "S<N>"/"T<N>" as above.
+    count is always >= 1; the caller only appends a "×N" suffix when
+    it's > 1 (see draw()'s own call site) — a count of exactly 1
+    renders identically to the original, uncollapsed row.
     """
     groups = {}
     order = []
     for window in windows:
-        key = (window.app_id, condense_title(window.app_id, window.title, cfg))
+        key = (window.app_id, condense_title(window.app_id, window.title, cfg), window.tab_group_id)
         if key not in groups:
-            groups[key] = 0
+            groups[key] = {"count": 0, "layout": window.tab_group_layout, "group_id": window.tab_group_id}
             order.append(key)
-        groups[key] += 1
-    return [(app_id, detail, groups[(app_id, detail)]) for app_id, detail in order]
+        groups[key]["count"] += 1
+
+    group_labels = {}
+    group_seen_order = []
+    counters = {"stacked": 0, "tabbed": 0}
+    for key in order:
+        gid = groups[key]["group_id"]
+        if gid is not None and gid not in group_labels:
+            layout = groups[key]["layout"]
+            counters[layout] += 1
+            letter = "S" if layout == "stacked" else "T"
+            # No brackets — that's already the visual convention
+            # preview.py's own corner labels use ("[K-1]", "[K-i]",
+            # see _group_corner_labels() there); reusing it here read
+            # as colliding with that, different, thing (Rafi's own
+            # live call, 2026-08-31).
+            group_labels[gid] = f"{letter}{counters[layout]}"
+            group_seen_order.append(gid)
+
+    group_rank = {gid: i for i, gid in enumerate(group_seen_order)}
+
+    def sort_key(key):
+        gid = groups[key]["group_id"]
+        # (0, rank) sorts every grouped row before any ungrouped row
+        # (1, 0); sorted() is stable, so rows sharing a rank (same
+        # group, or all the ungrouped ones together) keep their
+        # original first-seen relative order.
+        return (0, group_rank[gid]) if gid is not None else (1, 0)
+
+    rows = []
+    for key in sorted(order, key=sort_key):
+        app_id, detail, _group_id = key
+        info = groups[key]
+        rows.append((app_id, detail, info["count"], group_labels.get(info["group_id"])))
+    return rows
 
 
 def _slot_height(region, cfg, preview_count=0):
@@ -319,14 +373,36 @@ def draw(stdscr, box, ctx, module_name):
             # (e.g. many plain "kitty ~" shells) into one — see
             # _grouped_window_rows()'s own docstring.
             grouped = _grouped_window_rows(region.windows, ctx.config)
-            for i, (app, detail, count) in enumerate(grouped):
+            for i, (app, detail, count, group_label) in enumerate(grouped):
                 app_label = f"{app} ×{count}" if count > 1 else app
                 available = max(w - 4, 0)
 
                 try:
-                    chunk = wc_truncate(app_label, available)
-                    stdscr.addstr(item_y + 1 + i, x + 2, chunk, text_color | curses.A_BOLD)
-                    cx = x + 2 + display_width(chunk)
+                    cx = x + 2
+                    if group_label:
+                        # Flags a collapsed row (or even a lone one) as
+                        # belonging to a real stacked/tabbed group,
+                        # numbered per distinct group instance ("S1",
+                        # "T2", ...) — a PREFIX at the very start of
+                        # the row, not a suffix after the app name, and
+                        # deliberately DIM rather than bold like the app
+                        # name below (Rafi's own live call, 2026-08-31
+                        # — asked for plain first, then dim once seen
+                        # live) — its own separate addstr so it can
+                        # carry its own, quieter style. No brackets
+                        # either, that's
+                        # already preview.py's own corner-label
+                        # convention (see _grouped_window_rows()'s own
+                        # docstring, which also covers why group
+                        # membership drives the row ORDER, not just
+                        # this label).
+                        prefix_chunk = wc_truncate(f"{group_label} ", available)
+                        stdscr.addstr(item_y + 1 + i, cx, prefix_chunk, text_color | curses.A_DIM)
+                        cx += display_width(prefix_chunk)
+
+                    chunk = wc_truncate(app_label, max(available - (cx - (x + 2)), 0))
+                    stdscr.addstr(item_y + 1 + i, cx, chunk, text_color | curses.A_BOLD)
+                    cx += display_width(chunk)
                     # row_end, not end — `end` is this function's own
                     # outer slot-range boundary (from _visible_slot_range).
                     row_end = x + 2 + available

@@ -33,6 +33,21 @@ def test_terminal_app_matching_is_case_insensitive_on_app_id():
     assert condense_title("Kitty", "htop", cfg) == "htop"
 
 
+def test_terminal_app_bare_shell_prompt_returns_empty_string():
+    # A bare "~" (shell's own idle prompt, home directory) carries no
+    # real "what's running" information — same "nothing to add" case
+    # as a title equal to app_id, just a different literal value.
+    cfg = _cfg(terminal_apps=["kitty"])
+    assert condense_title("kitty", "~", cfg) == ""
+
+
+def test_terminal_app_non_home_directory_paths_are_not_treated_as_bare():
+    # Only a LITERAL "~" is the bare-prompt case — a real path (even
+    # one starting with ~) is genuine, distinguishing information.
+    cfg = _cfg(terminal_apps=["kitty"])
+    assert condense_title("kitty", "~/tuicc", cfg) == "~/tuicc"
+
+
 def test_browser_app_drops_the_browser_name_segment_shows_last_remaining():
     cfg = _cfg(browser_apps=["firefox"], browser_title_names=["mozilla firefox"])
     title = "Issue #42 - tuicc - GitHub - Mozilla Firefox"
