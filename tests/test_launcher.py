@@ -280,25 +280,25 @@ def test_exit_typing_mode_resets_editable_fields_but_not_saved_selection():
     state = LauncherState(
         typing_mode=True, search_query="fire", search_selected_index=2,
         saved_selected_id="sidebar:1", saved_active_module="sidebar",
-        manual_target=True,
+        manual_target_app_id="firefox",
     )
 
     exit_typing_mode(state)
 
     assert (state.typing_mode, state.search_query, state.search_selected_index) == (False, "", 0)
     assert (state.saved_selected_id, state.saved_active_module) == ("sidebar:1", "sidebar")
-    assert state.manual_target is False
+    assert state.manual_target_app_id is None
 
 
 def test_enter_typing_mode_resets_a_stale_manual_target():
     # A leftover value from a previous typing session must never leak
-    # into a new one — see LauncherState.manual_target's own
+    # into a new one — see LauncherState.manual_target_app_id's own
     # docstring.
-    state = LauncherState(manual_target=True)
+    state = LauncherState(manual_target_app_id="firefox")
 
     enter_typing_mode(state, "sidebar:1", "sidebar")
 
-    assert state.manual_target is False
+    assert state.manual_target_app_id is None
 
 
 # ---------- resolve_selected ----------

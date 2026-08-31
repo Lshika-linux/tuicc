@@ -160,16 +160,22 @@ class LauncherState:
     saved_active_module: str | None = None
     # GitHub issue #9's routing-rule follow-on: once the user presses
     # Up/Down during typing, main.py stops auto-forcing focus_id to
-    # whatever routed_target() says — their own pick wins from then on,
-    # for the rest of this typing session. Until that happens, every
-    # keystroke unconditionally re-forces focus_id to the routed
-    # target (or None if nothing routes), overwriting any stale sticky
-    # value focus_id already had — that stickiness (preview.py showing
-    # the last real workspace pick across unrelated modules) is exactly
-    # why "only touch it if it's still None" doesn't work here; it's
-    # essentially never None by the time typing starts. Reset False on
-    # both typing-mode boundaries.
-    manual_target: bool = False
+    # whatever routed_target() says FOR THAT SPECIFIC APP — their own
+    # pick wins whenever this exact app_id stays selected. Scoped to
+    # the app, not the whole typing session: live-found, arrowing away
+    # from one app with no rule (or a rule you don't want right now)
+    # must not silently suppress a DIFFERENT app's own rule once the
+    # selection moves on to it — "spawning somewhere else" is only
+    # ever a deliberate choice about the app you made it for. Until
+    # overridden, every keystroke unconditionally re-forces focus_id
+    # to the routed target (or leaves it alone if nothing routes),
+    # overwriting any stale sticky value focus_id already had — that
+    # stickiness (preview.py showing the last real workspace pick
+    # across unrelated modules) is exactly why "only touch it if it's
+    # still None" doesn't work here; it's essentially never None by
+    # the time typing starts. Reset to None on both typing-mode
+    # boundaries.
+    manual_target_app_id: str | None = None
 
 
 def resolve_selected(state: LauncherState):
@@ -195,7 +201,7 @@ def routed_target(state: LauncherState, wm_config) -> str | None:
     if nothing's selected or no rule matches its app_id_hint. Pure
     lookup — main.py's handle_launcher() decides whether/when it's
     still allowed to apply this to loop_state.focus_id (see
-    LauncherState.manual_target's own docstring), the same loop-level
+    LauncherState.manual_target_app_id's own docstring), the same loop-level
     concern resolve_selected() above already keeps out of this module.
     """
     if not wm_config or not wm_config.routing_rules:
@@ -223,7 +229,7 @@ def enter_typing_mode(state: LauncherState, selected_id, active_module, initial_
     state.typing_mode = True
     state.search_query = initial_query
     state.search_selected_index = 0
-    state.manual_target = False
+    state.manual_target_app_id = None
 
 
 def exit_typing_mode(state: LauncherState) -> None:
@@ -234,7 +240,7 @@ def exit_typing_mode(state: LauncherState) -> None:
     state.typing_mode = False
     state.search_query = ""
     state.search_selected_index = 0
-    state.manual_target = False
+    state.manual_target_app_id = None
 
 
 def handle_typing_key(state: LauncherState, key, cfg) -> bool:

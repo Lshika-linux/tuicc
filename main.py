@@ -530,10 +530,18 @@ def _apply_launcher_routing_default(loop_state, launcher, app):
     (resolve_selection() only updates it for region items, so it keeps
     showing the last real workspace pick across unrelated modules), so
     "only touch it if it's still None" doesn't work: it's essentially
-    never None by the time typing starts. Stops entirely, for the rest
-    of this typing session, the moment the user presses Up/Down
-    themselves (see LauncherState.manual_target's own docstring) —
-    their own pick always wins once that's happened.
+    never None by the time typing starts.
+
+    Stops for whichever app is CURRENTLY selected once the user
+    presses Up/Down while it's selected (see
+    LauncherState.manual_target_app_id's own docstring) — their own
+    pick wins for that app specifically, not for the rest of this
+    typing session as a whole. Live-found: arrowing away from one app
+    (with no rule, or a rule you don't want right now) must not
+    silently suppress a DIFFERENT app's own rule once the selection
+    moves on to it — typing further, or Left/Right, can change which
+    app is selected without the user ever touching Up/Down again for
+    THAT app.
 
     Only overwrites focus_id when a rule actually matches — when
     routed_target() comes back None (no rule for the currently
@@ -544,7 +552,9 @@ def _apply_launcher_routing_default(loop_state, launcher, app):
     whatever sensible target (sticky pick or real WM focus) was
     already showing, until the user manually nudged it with Up/Down.
     """
-    if launcher.manual_target:
+    selected = launcher_mode.resolve_selected(launcher)
+    app_id_hint = selected[1] if selected else None
+    if app_id_hint is not None and app_id_hint == launcher.manual_target_app_id:
         return
     routed = launcher_mode.routed_target(launcher, app.wm_config)
     if routed is not None:
@@ -563,7 +573,8 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
             cfg.workspace_mode, cfg.workspace_names,
         )
         loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, -1)
-        launcher.manual_target = True
+        selected = launcher_mode.resolve_selected(launcher)
+        launcher.manual_target_app_id = selected[1] if selected else None
         return True
     if key == cfg.keybinds["down"]:
         current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
@@ -572,7 +583,8 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
             cfg.workspace_mode, cfg.workspace_names,
         )
         loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, 1)
-        launcher.manual_target = True
+        selected = launcher_mode.resolve_selected(launcher)
+        launcher.manual_target_app_id = selected[1] if selected else None
         return True
     if key == cfg.keybinds["confirm"]:
         selected = launcher_mode.resolve_selected(launcher)
