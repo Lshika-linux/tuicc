@@ -20,4 +20,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      # pytest is deliberately not in requirements.txt — same split as
+      # CLAUDE.md's own nix-shell command, which adds ps.pytest
+      # alongside the runtime deps rather than folding it in.
+      - run: pip install pytest==9.1.1
       - run: pytest tests/ -v
