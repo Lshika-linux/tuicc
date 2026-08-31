@@ -240,14 +240,20 @@ date_format = "%a %d.%m."
 
 # [weather]
 # Opt-in — commented out by default, same pattern as the control.toggle
-# examples below. Once uncommented, exactly one of these three location
-# sources must resolve, or tuicc fails loudly at startup rather than
-# guessing: lat+lon (most explicit), or geoclue = true, or
+# examples below. Once uncommented, exactly one location source must
+# resolve, or tuicc fails loudly at startup rather than guessing:
+# lat+lon (most explicit), or location_file, or geoclue = true, or
 # ip_approx = true — never a silent auto-detect between them. See
 # CLAUDE/NOTES/design-decisions.md#weather-location-sources for why.
 #
 # lat = 50.0755
 # lon = 14.4378
+# location_file = "~/dotfiles/tuicc-location.toml"  # instead of lat/lon
+#                            above — keeps coordinates out of config.toml
+#                            entirely, for anyone who commits it publicly.
+#                            The file itself just holds lat/lon, flat, no
+#                            [weather] header. Can't be combined with
+#                            lat/lon set directly above.
 # name = "Praha"          # optional — overrides whatever the source below resolves
 # code = "PRG"             # optional — a short display badge shown inline in the
 #                            compact box line (e.g. "PRG ☀️ 18°C"). Purely your own

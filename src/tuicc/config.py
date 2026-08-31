@@ -553,12 +553,22 @@ def _build_weather_config(user_data: dict) -> dict:
     section IS present, it must resolve to a real, usable location —
     see CLAUDE/NOTES/design-decisions.md#weather-location-sources for
     why there's deliberately no silent auto-detect fallback between
-    the three explicit sources (CONTRIBUTING.md's no-silent-fallback
-    rule, same style _build_control_toggles below already follows).
+    the explicit sources (CONTRIBUTING.md's no-silent-fallback rule,
+    same style _build_control_toggles below already follows).
     `code` (the compact box line's optional display badge) has no
     validation of its own — purely cosmetic, a personal preference the
     user types themselves (CONTRIBUTING.md's "no hardcoded personal
     preferences" rule — this project doesn't guess or derive one).
+
+    `location_file` (GitHub issue #10) is a fourth source, for anyone
+    who commits config.toml to a public dotfiles repo: lat/lon live in
+    their own separate file instead (gitignored by the user, not
+    tuicc's concern), so the coordinates never end up in version
+    control at all. Flat TOML, no [weather] header of its own — the
+    file's only job is holding lat/lon, nothing else to namespace.
+    Combining it with lat/lon set directly in [weather] is rejected —
+    same "exactly one explicit source" discipline as everything else
+    here, not a silent "one wins."
     """
     weather_data = user_data.get("weather")
     if weather_data is None:
@@ -569,12 +579,29 @@ def _build_weather_config(user_data: dict) -> dict:
     code = weather_data.get("code")
     geoclue = weather_data.get("geoclue", False)
     ip_approx = weather_data.get("ip_approx", False)
+    location_file = weather_data.get("location_file")
+
+    if location_file is not None:
+        if lat is not None or lon is not None:
+            raise ValueError(
+                "[weather] location_file is set together with lat/lon directly — "
+                "use one or the other, not both"
+            )
+        file_path = Path(location_file).expanduser()
+        if not file_path.is_file():
+            raise ValueError(f"[weather] location_file={location_file!r} does not exist")
+        file_data = load_toml(file_path)
+        lat = file_data.get("lat")
+        lon = file_data.get("lon")
+        if lat is None or lon is None:
+            raise ValueError(f"[weather] location_file={location_file!r} must set both lat and lon")
+
     if (lat is None) != (lon is None):
         raise ValueError("[weather] lat and lon must both be set together")
     if lat is None and not geoclue and not ip_approx:
         raise ValueError(
             "[weather] is configured but no location source is set — "
-            "set lat and lon, or geoclue = true, or ip_approx = true"
+            "set lat and lon, or location_file, or geoclue = true, or ip_approx = true"
         )
     return {"lat": lat, "lon": lon, "name": name, "code": code, "geoclue": geoclue, "ip_approx": ip_approx}
 
