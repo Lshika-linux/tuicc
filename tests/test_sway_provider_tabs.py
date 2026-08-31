@@ -1,6 +1,6 @@
 """Tests for stacked/tabbed container handling (GitHub issue #8) —
 Window.tab_group_id/tab_group_layout/tab_active, populated by
-providers/sway.py's _tab_info_by_leaf_id()/parse_tree().
+tab_groups.tab_info_by_leaf_id() and providers/sway.py's parse_tree().
 
 Fixtures below mirror two real trees confirmed live against the actual
 machine this feature was built against (2026-08-31): a simple 2-window
@@ -12,7 +12,8 @@ swaymsg -t get_tree dumps these are modeled on.
 
 from i3ipc import Con
 
-from tuicc.providers.sway import parse_tree, _tab_info_by_leaf_id
+from tuicc.providers.sway import parse_tree
+from tuicc.tab_groups import tab_info_by_leaf_id
 
 
 def _leaf(id_, app_id="kitty", name="w"):
@@ -46,7 +47,7 @@ def _workspace(id_, name, nodes, focus=None):
     }, None, None)
 
 
-# ---------- _tab_info_by_leaf_id ----------
+# ---------- tab_info_by_leaf_id ----------
 
 def test_simple_stacked_pair_active_child_marked():
     # Mirrors the real ws10 case: two leaves directly under one
@@ -60,7 +61,7 @@ def test_simple_stacked_pair_active_child_marked():
     stacked = _con(144, "stacked", [149, 150], [wrapper_code, wrapper_firefox])
     tree = _workspace(8, "10", [stacked], focus=[144])
 
-    info = _tab_info_by_leaf_id(tree.workspaces()[0])
+    info = tab_info_by_leaf_id(tree.workspaces()[0])
 
     assert info[9] == ("144", "stacked", True)
     assert info[148] == ("144", "stacked", False)
@@ -72,7 +73,7 @@ def test_tabbed_layout_reported_verbatim():
     tabbed = _con(3, "tabbed", [1, 2], [a, b])
     tree = _workspace(8, "10", [tabbed], focus=[3])
 
-    info = _tab_info_by_leaf_id(tree.workspaces()[0])
+    info = tab_info_by_leaf_id(tree.workspaces()[0])
 
     assert info[1] == ("3", "tabbed", True)
     assert info[2] == ("3", "tabbed", False)
@@ -84,7 +85,7 @@ def test_plain_split_layout_leaves_no_tab_group():
     split = _con(3, "splith", [1, 2], [a, b])
     tree = _workspace(8, "10", [split])
 
-    info = _tab_info_by_leaf_id(tree.workspaces()[0])
+    info = tab_info_by_leaf_id(tree.workspaces()[0])
 
     assert info[1] == (None, None, False)
     assert info[2] == (None, None, False)
@@ -95,7 +96,7 @@ def test_nested_stacked_inside_a_split_branch_of_an_outer_stacked():
     # (firefox, kitty, and a splitv branch containing another kitty
     # plus an INNER stacked container holding just Obsidian). Each
     # leaf's tab_group_id is its NEAREST enclosing group, not the
-    # outer one — see _tab_info_by_leaf_id's own docstring for why
+    # outer one — see tab_info_by_leaf_id's own docstring for why
     # that's a deliberate, documented limit, not a bug.
     firefox = _leaf(136, app_id="firefox")
     impala = _leaf(132, app_id="kitty", name="impala")
@@ -112,7 +113,7 @@ def test_nested_stacked_inside_a_split_branch_of_an_outer_stacked():
     outer_stacked = _con(133, "stacked", [135, 140, 143], [branch_mixed, branch_impala, branch_firefox])
     tree = _workspace(128, "30", [outer_stacked], focus=[133])
 
-    info = _tab_info_by_leaf_id(tree.workspaces()[0])
+    info = tab_info_by_leaf_id(tree.workspaces()[0])
 
     assert info[firefox["id"]] == ("133", "stacked", False)
     assert info[impala["id"]] == ("133", "stacked", False)
@@ -136,7 +137,7 @@ def test_floating_window_is_never_part_of_a_tab_group():
         }],
     }, None, None)
 
-    info = _tab_info_by_leaf_id(tree.workspaces()[0])
+    info = tab_info_by_leaf_id(tree.workspaces()[0])
 
     assert info[5] == (None, None, False)
 

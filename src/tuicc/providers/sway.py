@@ -8,6 +8,7 @@ from i3ipc import Connection
 from tuicc.model import Window, Region, WMState
 from tuicc.providers.base import Provider
 from tuicc.wm_config_parser import get_wm_config
+from tuicc.tab_groups import tab_info_by_leaf_id
 
 
 # The mark mark_self() applies to tuicc's own window, so parse_tree() can
@@ -47,57 +48,6 @@ def _leaf_to_window(leaf, ws_rect, floating, tab_info=None):
         tab_group_layout=group_layout,
         tab_active=active,
     )
-
-
-def _tab_info_by_leaf_id(node, group_id=None, group_layout=None, active=True, out=None) -> dict:
-    """id(int) -> (tab_group_id, tab_group_layout, tab_active) for every
-    leaf reachable under node — see Window.tab_group_id's own docstring
-    (model.py) for what these mean and the known "nested groups" limit.
-
-    group_id/group_layout/active describe the NEAREST enclosing
-    stacked/tabbed ancestor, inherited top-down; entering a NEW
-    stacked/tabbed container replaces them outright (nearest wins, not
-    a list) — a leaf several stacked/tabbed containers deep only ever
-    reports its immediate group, not whether some OUTER group is also
-    hiding the whole branch it's in. Known limitation, not a bug: the
-    common case (issue #8's own reports) is one level of grouping, and
-    getting that exactly right is what actually matters; correctly
-    resolving arbitrarily nested tab-in-a-tab visibility is real,
-    separate work with no live report asking for it yet.
-
-    node.focus (i3ipc's own field — the container's children, ordered
-    by recency, most-recently-focused first) is what identifies the
-    actually-visible child of a stacked/tabbed container: focus[0].
-    Confirmed live against real nested sway data, not assumed from
-    protocol docs alone.
-    """
-    if out is None:
-        out = {}
-    if not node.nodes and not node.floating_nodes:
-        # active is meaningless outside a group (see Window.tab_active's
-        # own docstring) — reported as False there, not whatever value
-        # happened to be inherited, so a stray leftover True can never
-        # look like a real signal to a caller that forgets to check
-        # tab_group_id first.
-        out[node.id] = (group_id, group_layout, active if group_id is not None else False)
-        return out
-
-    if node.layout in ("stacked", "tabbed"):
-        active_child_id = node.focus[0] if node.focus else None
-        for child in node.nodes:
-            _tab_info_by_leaf_id(
-                child, str(node.id), node.layout, child.id == active_child_id, out
-            )
-    else:
-        for child in node.nodes:
-            _tab_info_by_leaf_id(child, group_id, group_layout, active, out)
-
-    # Floating windows are never part of a tiling stacked/tabbed group —
-    # always their own thing, regardless of what encloses them.
-    for child in node.floating_nodes:
-        _tab_info_by_leaf_id(child, None, None, True, out)
-
-    return out
 
 
 def _is_tuicc_self(leaf) -> bool:
@@ -154,7 +104,7 @@ def parse_tree(tree) -> WMState:
     for workspace in tree.workspaces():
         windows = []
         ws_rect = workspace.rect
-        tab_info = _tab_info_by_leaf_id(workspace)
+        tab_info = tab_info_by_leaf_id(workspace)
 
         for leaf in workspace.leaves():
             if _is_tuicc_self(leaf):

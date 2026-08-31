@@ -9,6 +9,7 @@ from Xlib import display, X
 from tuicc.model import Window, Region, WMState
 from tuicc.providers.base import Provider
 from tuicc.wm_config_parser import get_wm_config
+from tuicc.tab_groups import tab_info_by_leaf_id
 
 
 _NET_WM_PID = "_NET_WM_PID"
@@ -67,12 +68,13 @@ def _unwrap_floating(node):
     return node
 
 
-def _leaf_to_window(leaf, ws_rect, floating):
+def _leaf_to_window(leaf, ws_rect, floating, tab_info=None):
     x = (leaf.rect.x - ws_rect.x) / ws_rect.width
     y = (leaf.rect.y - ws_rect.y) / ws_rect.height
     w = leaf.rect.width / ws_rect.width
     h = leaf.rect.height / ws_rect.height
 
+    group_id, group_layout, active = tab_info if tab_info else (None, None, False)
     return Window(
         id=str(leaf.id),
         app_id=leaf.window_class or leaf.app_id or "unknown",
@@ -85,6 +87,9 @@ def _leaf_to_window(leaf, ws_rect, floating):
         # code that needs a pid on i3 goes through I3Provider.resolve_pid()
         # instead (X11 lookup, on demand — not cheap enough for every
         # window on every frame, see that method's docstring).
+        tab_group_id=group_id,
+        tab_group_layout=group_layout,
+        tab_active=active,
     )
 
 
@@ -145,6 +150,7 @@ def parse_tree(tree) -> WMState:
     for workspace in tree.workspaces():
         windows = []
         ws_rect = workspace.rect
+        tab_info = tab_info_by_leaf_id(workspace)
 
         # i3's workspace.leaves() includes floating windows as well as
         # tiled ones, unlike sway's. Resolve floating windows first so we
@@ -157,12 +163,12 @@ def parse_tree(tree) -> WMState:
                 continue
             if _is_tuicc_self(leaf):
                 continue
-            windows.append(_leaf_to_window(leaf, ws_rect, floating=False))
+            windows.append(_leaf_to_window(leaf, ws_rect, floating=False, tab_info=tab_info.get(leaf.id)))
 
         for leaf in floating_leaves:
             if _is_tuicc_self(leaf):
                 continue
-            windows.append(_leaf_to_window(leaf, ws_rect, floating=True))
+            windows.append(_leaf_to_window(leaf, ws_rect, floating=True, tab_info=tab_info.get(leaf.id)))
 
         regions.append(Region(
             id=str(workspace.num),
