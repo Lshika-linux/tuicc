@@ -59,12 +59,18 @@ I like this because I appreciate when my PC tells me what broke :D
 
 ![System module's per-window stats and diagnostics summary, with an expanded issue detail](./screenshots/system-info.png)
 
+### PREVIEW
+**Stacked and tabbed containers show every member** Each one gets its own row (stacked) or tab (tabbed) — the active member gets a real box, the rest get a thin bar. If that active slot is itself a split (a terminal opened next to an editor mid-stack, say), the whole thing renders exactly as tiled, nested right inside the group.
+
+![Preview showing a stacked group (firefox/Obsidian/code) and a tabbed group of kitty terminals, one of them a nested split](./screenshots/preview-stacked-tabbed.png)
+
+(That active tab's own title is literally the screenshot command mid-run — the preview doing its work... :D)
+
 Not yet built:
 
 - scrollable-WM support (`scroll`/niri, see "Writing your own WM provider" below, most likely not in V0.1.0 tho :c unless someone would want to help);
 - a `quick_actions` module exists in the code but isn't wired into the default layout yet (reserved for something more open-ended later).
 - ←→-adjust interaction for the bars module's gauges (display-only for now, see above)
-- Weather display of some kind.
 - Calendar, perhaps? considering if this is in scope/useful
 - These will be added eventually, but right now, the priority is a stable V0.1.0
 
