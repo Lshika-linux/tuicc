@@ -40,21 +40,9 @@ from tuicc.modules import media as media_mode
 from tuicc.modules import control as control_mode
 
 from _fresh_install_helpers import FreshInstallStatus, load_packaged_default_config
+from _curses_stub import FakeStdscr as _FakeStdscr
 
 FIXTURES = Path(__file__).parent / "fixtures"
-
-
-class _FakeStdscr:
-    """The entire contract every module's draw() actually needs (see
-    this file's own docstring). Records every call so a test can also
-    assert "this drew *something*", not just "this didn't crash" —
-    catches an accidentally-empty draw() too.
-    """
-    def __init__(self):
-        self.calls = []
-
-    def addstr(self, y, x, text, attr=0):
-        self.calls.append((y, x, text, attr))
 
 
 def _sway_fixture_state():
