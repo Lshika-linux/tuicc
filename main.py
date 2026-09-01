@@ -755,6 +755,35 @@ def main(stdscr):
         "help": lambda: do_enter_help(loop_state, help_state),
     }
 
+    # The single-key, no-condition-except-one F-key branches of normal
+    # navigation's own dispatch, as a registry instead of a 7-way elif
+    # chain — same idiom as HANDOFF_TARGETS right above (reuses 5 of its
+    # lambdas verbatim), MODE_HANDLERS below, and MODULES/ACTION_HANDLERS
+    # in render.py. Keyed by the resolved key CODE, not a name string,
+    # since the trigger here is a raw keypress rather than an
+    # already-known string like result.handoff/mode_stack[-1] — collapses
+    # the whole chain to one `if key in NORMAL_KEY_HANDLERS:` below.
+    # config.py's own collision check guarantees none of these can share
+    # a code with each other or with any other navigation/global-shortcut
+    # key, so a dict lookup can't silently shadow one binding with another.
+    NORMAL_KEY_HANDLERS = {
+        cfg.keybinds["spawn_box"]: HANDOFF_TARGETS["spawn_box"],
+        # HANDOFF_TARGETS["resize"] has no active_module guard (resize
+        # editing's own F-key handoff can only fire once a module is
+        # already active) — normal navigation's own entry point needs
+        # its own lambda to keep that guard.
+        cfg.keybinds["resize"]: lambda: do_enter_resize(resize) if loop_state.active_module is not None else None,
+        cfg.keybinds["save_layout"]: HANDOFF_TARGETS["save_layout"],
+        cfg.keybinds["cycle_preset"]: HANDOFF_TARGETS["cycle_preset"],
+        cfg.keybinds["new_preset"]: HANDOFF_TARGETS["new_preset"],
+        # Not in HANDOFF_TARGETS — cycle_theme_preset/F7 is reachable
+        # globally, not one of resize editing's own handoff targets
+        # (resize_mode.py's handle_editing_key() has no
+        # "cycle_theme_preset" handoff string).
+        cfg.keybinds["cycle_theme_preset"]: lambda: do_cycle_theme_preset(loop_state, cfg, help_state, stdscr, app),
+        cfg.keybinds["help"]: HANDOFF_TARGETS["help"],
+    }
+
     MODE_HANDLERS = {
         "sessions_naming": lambda key: handle_sessions_naming(key, cfg),
         "sysmon_nice": lambda key: handle_sysmon_nice(key, cfg),
@@ -1048,20 +1077,8 @@ def main(stdscr):
                         else:
                             # See module_next_keys' matching branch above.
                             loop_state.selected_id = None
-            elif key == cfg.keybinds["spawn_box"]:
-                do_spawn_picker(loop_state, cfg, spawn_picker)
-            elif key == cfg.keybinds["resize"] and loop_state.active_module is not None:
-                do_enter_resize(resize)
-            elif key == cfg.keybinds["save_layout"]:
-                do_save_layout(loop_state, cfg, resize)
-            elif key == cfg.keybinds["cycle_preset"]:
-                do_cycle_preset(loop_state, cfg, resize)
-            elif key == cfg.keybinds["new_preset"]:
-                do_new_preset(loop_state, cfg, resize)
-            elif key == cfg.keybinds["cycle_theme_preset"]:
-                do_cycle_theme_preset(loop_state, cfg, help_state, stdscr, app)
-            elif key == cfg.keybinds["help"]:
-                do_enter_help(loop_state, help_state)
+            elif key in NORMAL_KEY_HANDLERS:
+                NORMAL_KEY_HANDLERS[key]()
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id)
                 _apply_launcher_routing_default(loop_state, launcher, app)
