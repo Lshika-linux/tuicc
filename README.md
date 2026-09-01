@@ -24,7 +24,7 @@ Summon TUICC with a key-combo, and get modules that help you see and control the
 - per-window CPU/RAM, overall system stats, and a diagnostics summary
   (sysmon.py);
 - a power menu (power_menu.py);
-- a clock (clock.py).
+- a clock, plus a compact weather readout when `[weather]` is configured (rwb.py, weather.py).
 
 ## A closer look
 
@@ -169,19 +169,24 @@ there's always a real, editable file, never a hidden in-code default.
 Layout presets work the same way, per preset number:
 `~/.config/tuicc/presets/<N>.toml`, seeded from a built-in template
 the first time that number is requested. A preset is a list of boxes,
-each a plain x/y/w/h ratio (0.0-1.0) of the terminal's width/height —
-boxes never coordinate with each other, so what you configure is
-exactly what renders, always. If a box looks wrong on a different
-terminal size, fix it with tuicc's own interactive resize mode (`F2`
-on the module) rather than hand-computing ratios.
+each an x/y ratio (0.0-1.0) of the terminal's width/height plus,
+per axis, either a w/h ratio or a fixed fw/fh cell count (for content
+that needs an exact row/column count, not a proportion — e.g.
+control's toggle list). A box's own configured numbers never depend on
+another box's, so what you configure is what you get, aside from a few
+narrow render-time adjustments (a fixed box holds its own edge instead
+of getting clipped; a ratio box yields just enough to avoid overlapping
+one). If a box looks wrong on a different terminal size, fix it with
+tuicc's own interactive resize mode (`F2` on the module) rather than
+hand-computing ratios.
 
 Colors work the same live-editable way: `F1` → `3` opens the Colors
 page, `Enter` on a role edits it in place (named color / `#hex` /
-`inherit`), and `F4`/`F5` cycle through 9 built-in named schemes
+`inherit`), and `F4`/`F5` cycle through 10 built-in named schemes
 (Dracula, Nord, Solarized Dark, Gruvbox, One Dark, Rose Pine,
-Catppuccin Mocha, Tokyo Night, plus tuicc's own Default) and save your
-own tweaks as a new preset — `F7` cycles the same list from anywhere,
-not just that page.
+Catppuccin Mocha, Tokyo Night, LEGACY, plus tuicc's own Default) and
+save your own tweaks as a new preset — `F7` cycles the same list from
+anywhere, not just that page.
 
 Every section — layout, navigation, theme, power menu, quick actions,
 and the rest — is documented field-by-field in the wiki's
@@ -282,11 +287,11 @@ actions) lives on the wiki:
 The core does three things, and only three things: a **WM provider
 layer** translates window-manager state into a generic model
 (`Window`, `Region`, `WMState`) so nothing else needs to know which WM
-you're running; a **layout engine** converts a layout (plain x/y/w/h
-ratios) into absolute terminal cells for each module; **input
-routing** handles tab order, global shortcuts, and hotkeys over a
-generic `NavItem` list, independent of which module an item belongs
-to.
+you're running; a **layout engine** converts a layout (x/y ratios,
+plus a ratio or a fixed row/column count per axis) into absolute
+terminal cells for each module; **input routing** handles tab order,
+global shortcuts, and hotkeys over a generic `NavItem` list,
+independent of which module an item belongs to.
 
 Modules — the sidebar, the preview, the launcher, connectivity, the
 power menu, sessions, control (user-defined toggles/cycles), media
@@ -311,7 +316,7 @@ the wiki: [Architecture](https://github.com/Lshika-linux/tuicc/wiki/Architecture
 src/tuicc/
 ├── model.py                  # Window, Region, WMState — the generic WM model
 ├── layout.py                 # ModuleBox, Layout — module positions/sizes,
-│                              #   as ratios, fixed counts, or box references
+│                              #   as ratios, or a fixed row/column count per axis
 ├── layout_engine.py          # resolves a Layout into absolute terminal cells
 ├── navigation.py              # NavItem, tab-order/hotkey navigation
 ├── windowed_list.py            # fixed N-visible-slots + scrollable-via-peek-nav-items list
@@ -322,6 +327,12 @@ src/tuicc/
 ├── keybinds.py                 # config key names -> curses key codes
 ├── actions.py                   # region/window focus handlers shared across modules
 ├── context.py                    # RenderContext — everything a module needs per frame
+├── app_setup.py                   # one-time construction of every long-lived dependency
+│                                  #   main()'s loop needs (backends, D-Bus agents, StatusWorker)
+├── frame_update.py                 # update_frame() — WM state, pid resolution, focus-transition
+│                                  #   detection, pending_moves, the RenderContext/nav-list build
+├── loop_state.py                    # LoopState — explicit main()-loop-owned state, replacing
+│                                  #   the closure-capture + nonlocal main() used to lean on
 ├── theme.py                       # resolves config colors (named/hex/RGB) to curses color numbers
 ├── theme_setup.py                  # one-time curses color pair setup at startup
 ├── theme_presets.py                 # built-in named color schemes + user-saved-preset cycling (F4/F5/F7)
@@ -338,6 +349,8 @@ src/tuicc/
 ├── control.py                            # backend for [[control.toggle]] — status_command + per-state command
 ├── brightness.py                          # brightnessctl wrapper (backend only, not wired into a module yet)
 ├── battery.py                              # /sys/class/power_supply reader — backs bars.py's BAT gauge
+├── netinfo.py                               # IPv4 lookup for a network interface — neither wifi backend owns this
+├── weather.py                                # Open-Meteo current conditions + short outlook — backs rwb.py
 ├── procmon.py                               # per-window CPU/RAM: /proc parsing, full-subtree aggregation,
 │                                          #   PidFeed (crosses the main-thread/StatusWorker-thread boundary)
 ├── sysinfo.py                               # overall CPU%/RAM/disk/load/throttle/swap — backs sysmon.py's stats grid
@@ -347,6 +360,10 @@ src/tuicc/
 ├── session.py                              # capture/save/load a session's window layout (sessions.py's backend)
 ├── pending_moves.py                         # PendingMovesQueue — matches a spawned/restored window to its
 │                                          #   target region once it maps, staggered, with a timeout
+├── tab_groups.py                             # stacked/tabbed container detection, shared by providers/sway.py
+│                                          #   and providers/i3.py (con.layout/con.focus are WM-agnostic)
+├── wm_config_parser.py                        # best-effort workspace identity from the WM's own config text
+│                                          #   (bindsym/for_window/assign) — shared by both providers too
 ├── defaults/config.toml                  # packaged default config
 ├── presets/                               # built-in layout presets (plain TOML) — copied to
 │                                          #   ~/.config/tuicc/presets/<N>.toml on first use
@@ -364,7 +381,8 @@ src/tuicc/
 │   ├── power_menu.py                   # lock/logout/reboot/shutdown, user-defined
 │   ├── sessions.py                      # save/load/delete a named set of window positions
 │   ├── quick_actions.py                  # generic action list — not in the default layout yet
-│   └── clock.py                           # time + date, no interaction
+│   └── rwb.py                             # "real world box" — time, date, and a compact weather
+│                                          #   readout when [weather] is configured (see weather.py)
 └── providers/
     ├── base.py                # Provider contract every WM provider implements
     ├── registry.py             # provider name -> Provider class
@@ -407,7 +425,7 @@ src/tuicc/media/
 tuicc doesn't know what sway, i3, or anything else is — it only knows
 the `Provider` contract in `src/tuicc/providers/base.py`. If your WM
 can implement this contract, tuicc can run on it, no changes needed
-anywhere else in the codebase. The four required methods:
+anywhere else in the codebase. The five required methods:
 
 ```python
 class Provider(ABC):
@@ -423,6 +441,9 @@ class Provider(ABC):
     def move_window_to_region(self, window_id: str, region_id: str) -> None:
         """Move the given window to the given region, without changing
         which region is currently visible."""
+
+    def close_window(self, window_id: str) -> None:
+        """Close the given window."""
 ```
 
 (a few more optional methods exist for niceties like dismissing
@@ -453,7 +474,7 @@ I will revisit tests around V0.1.0 to make sure they actually are useful :<
 !!! Claude talking:
 
 ```bash
-nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney])' --run 'pytest tests/ -v'
+nix-shell -p 'python3.withPackages (ps: [ps.pytest ps.i3ipc ps.jeepney ps.wcwidth ps.pyudev ps.tomli-w])' --run 'pytest tests/ -v'
 ```
 
 No live WM connection needed — providers are tested against recorded
