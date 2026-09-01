@@ -9,6 +9,7 @@ import curses
 import dataclasses
 import sys
 import time
+import traceback
 
 import locale
 from pathlib import Path
@@ -1126,3 +1127,20 @@ if __name__ == "__main__":
         curses.wrapper(main)
     except KeyboardInterrupt:
         pass
+    except Exception:
+        # curses.wrapper's own try/finally already restored the
+        # terminal before this — the problem this catches is that the
+        # traceback which follows can still be lost completely: launched
+        # via a WM keybind/toggle script, the terminal window itself
+        # commonly closes the instant this process exits, taking
+        # whatever just printed to stderr down with it. Same
+        # no-silent-failure reasoning pending_moves.SPAWN_LOG_DIR
+        # already applies to a SPAWNED app's crash, extended to tuicc's
+        # own. Re-raised after logging — still shows/exits normally for
+        # anyone watching an interactive terminal, this is a durable
+        # copy, not a replacement.
+        crash_log = pending_moves.SPAWN_LOG_DIR / f"crash_{int(time.time())}.log"
+        crash_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(crash_log, "w") as f:
+            traceback.print_exc(file=f)
+        raise
