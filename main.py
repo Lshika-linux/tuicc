@@ -599,17 +599,27 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
             # _quick_exit_failure_message) real output to point at.
             log_path = pending_moves.SPAWN_LOG_DIR / f"launcher_{app_id_hint or 'unknown'}_{int(time.time())}.log"
             pid = spawn_detached(cmd, shell_true=False, log_path=log_path)  # .desktop Exec= is never shell-interpreted
-            # Called before the spawned window can map and steal
-            # focus/fullscreen — see no_focus_next_window()'s docstring.
-            provider.no_focus_next_window(pid)
-            # Falls back to whatever's actually focused when no sidebar
-            # region is explicitly selected. app_id_hint is only a
-            # fallback — the pid tier is tried first.
-            pending_moves.queue_launcher_spawn(
-                moves,
-                loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id,
-                known_ids, pid, app_id_hint, time.monotonic(), log_path,
-            )
+            if pid is None:
+                # spawn_detached() couldn't even start the process at
+                # all (see its own docstring) — nothing to track, show
+                # this now instead of silently queuing a doomed entry
+                # that would only surface 8s later as a misleading
+                # "never opened a window (timed out)".
+                loop_state.resize_message = f"{app_id_hint or 'Command'} could not be started — see {log_path.name}"
+                loop_state.resize_message_until = time.monotonic() + 5.0
+                loop_state.resize_message_urgent = True
+            else:
+                # Called before the spawned window can map and steal
+                # focus/fullscreen — see no_focus_next_window()'s docstring.
+                provider.no_focus_next_window(pid)
+                # Falls back to whatever's actually focused when no sidebar
+                # region is explicitly selected. app_id_hint is only a
+                # fallback — the pid tier is tried first.
+                pending_moves.queue_launcher_spawn(
+                    moves,
+                    loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id,
+                    known_ids, pid, app_id_hint, time.monotonic(), log_path,
+                )
             launcher_mode.exit_typing_mode(launcher)
             loop_state.selected_id = launcher.saved_selected_id
             loop_state.active_module = launcher.saved_active_module

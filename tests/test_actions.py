@@ -172,6 +172,35 @@ def test_spawn_detached_log_path_redirects_stdout_and_stderr(monkeypatch, tmp_pa
     assert kwargs["stdout"] is kwargs["stderr"]  # same fd, chronological interleave
 
 
+# ---------- spawn_detached: Popen itself failing ----------
+# Found live: a session-restore entry whose saved cmdline no longer
+# resolved to a real executable (Electron/NixOS rewriting its own argv
+# — see pending_moves.py's own _spawn_failure_message docstring) raised
+# FileNotFoundError straight out of subprocess.Popen(), uncaught,
+# crashing tuicc's entire main loop rather than just that one spawn.
+
+def _raising_popen(exc):
+    def popen(cmd, **kwargs):
+        raise exc
+    return popen
+
+
+def test_spawn_detached_returns_none_when_popen_raises_oserror(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", _raising_popen(FileNotFoundError(2, "No such file or directory")))
+
+    assert spawn_detached("/nonexistent/path/to/nothing") is None
+
+
+def test_spawn_detached_writes_the_exception_into_log_path_on_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "Popen", _raising_popen(FileNotFoundError(2, "No such file or directory")))
+    log_path = tmp_path / "logs" / "restore_obsidian_123.log"
+
+    result = spawn_detached("/nonexistent/path/to/nothing", log_path=log_path)
+
+    assert result is None
+    assert "No such file or directory" in log_path.read_text()
+
+
 # ---------- spawn_detached: env ----------
 
 def test_spawn_detached_no_env_passes_none_to_popen(monkeypatch):

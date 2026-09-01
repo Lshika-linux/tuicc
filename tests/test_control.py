@@ -263,3 +263,14 @@ def test_survives_child_process_error_from_waitpid(monkeypatch):
     # not a mocked exception.
     monkeypatch.setattr(control, "spawn_detached", lambda *a, **k: os.getpid())
     control._run_detached_detecting_quick_failure("true", shell_true=True, window_seconds=0.2)
+
+
+def test_none_pid_from_spawn_detached_raises_runtimeerror_not_typeerror(monkeypatch):
+    # spawn_detached() returns None when subprocess.Popen() itself
+    # raised (see its own docstring) — os.waitpid(None, ...) would
+    # raise TypeError if this weren't checked first, a regression this
+    # function's own documented "raises RuntimeError" contract must not
+    # let slip through as some other, uglier exception instead.
+    monkeypatch.setattr(control, "spawn_detached", lambda *a, **k: None)
+    with pytest.raises(RuntimeError):
+        control._run_detached_detecting_quick_failure("true", shell_true=True, window_seconds=0.2)

@@ -406,6 +406,26 @@ def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monke
     assert queue.last_restore_launch == 10.0
 
 
+def test_promote_restore_queue_returns_failure_message_when_spawn_fails(monkeypatch):
+    # spawn_detached() returns None when subprocess.Popen() itself
+    # raised — see its own docstring. Found live: an uncaught exception
+    # here used to crash tuicc's whole main loop, not just this one
+    # restore entry.
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: None)
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(last_restore_launch=0.0)
+    restore_queue = [{"cmdline": ["/nonexistent"], "target_region": "1", "app_id": "obsidian"}]
+
+    message = promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+
+    assert message is not None
+    assert "obsidian" in message
+    assert "could not be started" in message
+    assert queue.entries == []  # nothing to track — no pid, no window will ever match
+    assert provider.no_focus_next_window_calls == []
+    assert queue.last_restore_launch == 10.0  # still staggers a later entry correctly
+
+
 # ---------- process ----------
 
 def test_process_matches_and_moves_window():

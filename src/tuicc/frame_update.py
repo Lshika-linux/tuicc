@@ -222,7 +222,11 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
 
     if action_ctx.restore_queue:
         known_ids = {w.id for r in state.regions for w in r.windows}
-        pending_moves.promote_restore_queue(moves, provider, action_ctx.restore_queue, known_ids, time.monotonic())
+        spawn_failure = pending_moves.promote_restore_queue(moves, provider, action_ctx.restore_queue, known_ids, time.monotonic())
+        if spawn_failure is not None:
+            loop_state.resize_message = spawn_failure
+            loop_state.resize_message_until = time.monotonic() + 5.0
+            loop_state.resize_message_urgent = True
 
     if moves.entries:
         current_windows = [w for r in state.regions for w in r.windows]

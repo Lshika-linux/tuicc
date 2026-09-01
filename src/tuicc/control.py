@@ -115,6 +115,14 @@ def _run_detached_detecting_quick_failure(
         output_path = Path(output_file.name)
     try:
         pid = spawn_detached(command, shell_true, log_path=output_path)
+        if pid is None:
+            # spawn_detached() itself couldn't start the process at all
+            # (see its own docstring) — os.waitpid(None, ...) below
+            # would raise TypeError, not the RuntimeError this function
+            # already promises on a failure. Same captured-output
+            # convention as the nonzero-exit branch below.
+            output_text = output_path.read_text(errors="replace").strip()
+            raise RuntimeError(output_text or f"{command!r} could not be started")
         deadline = time.monotonic() + window_seconds
         while time.monotonic() < deadline:
             try:

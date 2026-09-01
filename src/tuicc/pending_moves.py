@@ -190,7 +190,7 @@ def queue_launcher_spawn(
     })
 
 
-def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: list, known_ids: set, now: float) -> None:
+def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: list, known_ids: set, now: float) -> str | None:
     """Pops one entry off restore_queue and spawns it, staggered by
     RESTORE_STAGGER_SECONDS. No-ops if restore_queue is empty (checked
     before the stagger-time comparison, so an empty queue never blocks
@@ -198,23 +198,33 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     session_entry.get("env") through to spawn_detached() and a log_path
     under SPAWN_LOG_DIR — see
     CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for why.
+
+    Returns a one-line failure message (see _spawn_failure_message) if
+    spawn_detached() couldn't even start the process at all, None on an
+    ordinary successful spawn (the overwhelmingly common case) or when
+    nothing was due this frame. On failure, nothing gets queued — no
+    pid means no window will ever match this entry — so the caller
+    doesn't need to do anything with queue.entries itself.
     """
     if not restore_queue:
-        return
+        return None
     if now - queue.last_restore_launch < RESTORE_STAGGER_SECONDS:
-        return
+        return None
     session_entry = restore_queue.pop(0)
     log_path = SPAWN_LOG_DIR / f"restore_{session_entry['app_id']}_{int(time.time())}.log"
     pid = spawn_detached(
         session_entry["cmdline"], shell_true=False, log_path=log_path,
         env=session_entry.get("env"),
     )
+    queue.last_restore_launch = now
+    if pid is None:
+        return _spawn_failure_message(session_entry, log_path)
     # See Provider.no_focus_next_window()'s docstring — called right
     # after the pid is known, well before the restored window has had a
     # chance to map and steal focus/fullscreen from tuicc.
     provider.no_focus_next_window(pid)
     queue_restore_entry(queue, session_entry, known_ids, pid, now, log_path)
-    queue.last_restore_launch = now
+    return None
 
 
 def _enrich_pids(queue: PendingMovesQueue, provider, current_windows: list[Window]) -> None:
@@ -327,6 +337,22 @@ def _quick_exit_failure_message(entry: dict, exit_code: int) -> str:
     if log_path is not None:
         return f"{label} exited (code {exit_code}) — see {log_path.name}"
     return f"{label} exited (code {exit_code})"
+
+
+def _spawn_failure_message(session_entry: dict, log_path: Path) -> str:
+    """Distinct from both _quick_exit_failure_message (got a pid, exited
+    fast) and _timeout_failure_message (got a pid, no window ever
+    appeared) below — this one never got a pid at all:
+    actions.spawn_detached() itself returned None, meaning
+    subprocess.Popen() raised (see that function's own docstring for
+    when — a missing/unreadable executable is the common case, e.g. a
+    saved cmdline pointing at a path that no longer resolves to
+    anything real). spawn_detached() already wrote the real exception
+    text into log_path for us, same "point at the log, don't embed
+    detail here" convention the other two messages in this module use.
+    """
+    label = session_entry.get("app_id") or "Command"
+    return f"{label} could not be started — see {log_path.name}"
 
 
 def _timeout_failure_message(entry: dict) -> str:

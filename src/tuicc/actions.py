@@ -92,8 +92,18 @@ def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
     """Run cmd (shell string or pre-split argv list) as a detached
     background process that survives tuicc exiting. Shared by every
     spawn site. Returns the spawned pid (exact only for
-    shell_true=False). log_path captures stdout+stderr instead of
-    DEVNULL — see CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash.
+    shell_true=False), or None if the process couldn't even be started
+    at all (subprocess.Popen() itself raising OSError — a missing/
+    unreadable executable, a permission error, or anything else in that
+    family) rather than letting that exception propagate: found live,
+    a session-restore entry whose saved cmdline pointed at a path that
+    no longer resolved to anything crashed tuicc's entire main loop,
+    not just that one spawn attempt — every caller of this function
+    shared the same exposure. If log_path was given, the caught
+    exception's own text is written into it, so the existing "see
+    {log_path.name}" convention callers already use for a failure toast
+    still has something real behind it. log_path captures stdout+stderr
+    instead of DEVNULL — see CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash.
     env layers over the current environment except _ALWAYS_LIVE_ENV_KEYS
     — see CLAUDE/NOTES/design-decisions.md#spawn-detached-env-layering.
     """
@@ -119,14 +129,20 @@ def spawn_detached(cmd, shell_true=False, log_path=None, env=None):
     else:
         stdout = stderr = subprocess.DEVNULL
 
-    process = subprocess.Popen(
-        popen_cmd, shell=shell_true,
-        stdout=stdout,
-        stderr=stderr,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-        env=popen_env,
-    )
+    try:
+        process = subprocess.Popen(
+            popen_cmd, shell=shell_true,
+            stdout=stdout,
+            stderr=stderr,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            env=popen_env,
+        )
+    except OSError as e:
+        if log_path is not None:
+            stdout.write(str(e).encode())
+            stdout.close()
+        return None
     if log_path is not None:
         stdout.close()
     return process.pid
