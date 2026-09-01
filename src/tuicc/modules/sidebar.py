@@ -25,6 +25,7 @@ import time
 from tuicc.navigation import NavItem, LAST_ITEM_QUERY
 from tuicc.render_utils import draw_box_outline, display_width, wc_truncate, marquee_text
 from tuicc.title_condense import condense_title
+from tuicc.wm_config_parser import resolve_workspace_target
 
 
 def _grouped_window_rows(windows, cfg):
@@ -164,9 +165,18 @@ def slot_ids(regions, wm_config, total_workspaces, workspace_mode="autodetect", 
         ids = [str(n) for n in range(1, total_workspaces + 1)]
     seen = set(ids)
     for region in regions:
-        if region.id not in seen:
-            seen.add(region.id)
-            ids.append(region.id)
+        # A live region's own id is always the bare workspace number
+        # (providers/sway.py's parse_tree()) — resolve it against
+        # whichever base list is active first, so a populated numbered+
+        # named workspace ("8" matching "8:VIII" already in ids) merges
+        # into its own placeholder instead of appearing a second time.
+        # See wm_config_parser.resolve_workspace_target()'s own
+        # docstring for the full "why" — found live, this used to
+        # duplicate every populated workspace under this naming scheme.
+        resolved = resolve_workspace_target(region.id, ids)
+        if resolved not in seen:
+            seen.add(resolved)
+            ids.append(resolved)
     return ids
 
 
@@ -174,11 +184,15 @@ def _build_slots(ctx):
     """Return a list of (workspace_id, region_or_None) for every slot —
     see slot_ids()'s own docstring for how that set is determined.
     """
-    by_id = {region.id: region for region in ctx.state.regions}
     ids = slot_ids(
         ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces,
         ctx.config.workspace_mode, ctx.config.workspace_names,
     )
+    # Keyed by the same resolved name slot_ids() already merged a
+    # numbered+named region's bare id into (see its own docstring) —
+    # a plain region.id key here would miss that merged slot entirely,
+    # since ids no longer contains the bare id for it.
+    by_id = {resolve_workspace_target(region.id, ids): region for region in ctx.state.regions}
     return [(ws_id, by_id.get(ws_id)) for ws_id in ids]
 
 

@@ -15,6 +15,7 @@ from pathlib import Path
 import tuicc.pending_moves as pending_moves
 from tuicc.model import Window
 from tuicc.procmon import _ProcSample
+from tuicc.wm_config_parser import WmConfigInfo
 from tuicc.pending_moves import (
     resolve_pending_move,
     PendingMovesQueue,
@@ -444,6 +445,34 @@ def test_process_matches_and_moves_window():
     # no_further_match below covers the eventual quiet drain.
     assert len(queue.entries) == 1
     assert queue.entries[0]["last_matched_at"] == 1.0
+
+
+def test_process_resolves_target_region_against_wm_config():
+    # Found live: a real sway config using numbered+named workspaces
+    # (bindsym $mod+8 workspace number 8:VIII) left tuicc creating the
+    # workspace under the bare number when it was the first thing to
+    # ever target it. entry["target_region"] is always the bare number
+    # (session.py/queue_launcher_spawn both record it that way) —
+    # process() must resolve it against wm_config before moving.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "8", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+
+    result = process(queue, provider, current, dismissed=False, now=1.0, wm_config=wm_config)
+
+    assert provider.moved == [("1", "8:VIII")]
+    assert result.resolved_target_regions == ["8:VIII"]
+
+
+def test_process_wm_config_none_leaves_target_region_unchanged():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "8", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0, wm_config=None)
+
+    assert provider.moved == [("1", "8")]
 
 
 def test_process_focus_self_called_when_not_dismissed():

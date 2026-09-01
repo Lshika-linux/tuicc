@@ -12,7 +12,7 @@ from tuicc.modules.sidebar import (
     nav_items, _slot_height, _preview_apps_for, shift_workspace_id,
     _visible_slot_range, _selected_slot_index, _hidden_summary,
     _fitting_title, _right_aligned_overlay_col, _grouped_window_rows,
-    slot_ids,
+    slot_ids, _build_slots,
 )
 from tuicc.wm_config_parser import WmConfigInfo
 
@@ -524,6 +524,40 @@ def test_slot_ids_real_regions_already_covered_are_not_duplicated():
 def test_slot_ids_named_workspaces_survive_unioning():
     regions = [_region("web"), _region("chat")]
     assert slot_ids(regions, wm_config=None, total_workspaces=2) == ["1", "2", "web", "chat"]
+
+
+def test_slot_ids_numbered_named_region_merges_not_duplicates():
+    # Found live: a real region's own id is always the bare workspace
+    # number (providers/sway.py's parse_tree()), so "8" and a
+    # wm_config-parsed "8:VIII" used to be treated as two unrelated
+    # slots — every populated numbered+named workspace showed twice.
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII", "9:IX"])
+    regions = [_region("8")]
+    ids = slot_ids(regions, wm_config, total_workspaces=3)
+    assert ids == ["1:I", "8:VIII", "9:IX"]  # one slot, not four
+
+
+def test_slot_ids_manual_mode_numbered_named_region_also_merges():
+    regions = [_region("8")]
+    ids = slot_ids(
+        regions, wm_config=None, total_workspaces=3,
+        workspace_mode="manual", manual_workspace_names=["1:I", "8:VIII"],
+    )
+    assert ids == ["1:I", "8:VIII"]
+
+
+def test_build_slots_merged_slot_carries_the_real_region_not_none():
+    # The other half of the fix: slot_ids() merging "8" into "8:VIII"
+    # is only useful if _build_slots()'s own by_id lookup ALSO finds
+    # the real region under that same resolved key — otherwise the
+    # merged slot would render as if it were still empty.
+    region = Region(id="8", name="8", windows=[_window("w1", "kitty")])
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+    ctx = _ctx([region], total_workspaces=3, wm_config=wm_config)
+
+    slots = _build_slots(ctx)
+
+    assert slots == [("1:I", None), ("8:VIII", region)]
 
 
 # ---------- shift_workspace_id ----------

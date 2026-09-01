@@ -3,7 +3,7 @@ this exists (GitHub issue #9) and what it deliberately can't cover
 (runtime/exec-generated bindings).
 """
 
-from tuicc.wm_config_parser import parse_wm_config, get_wm_config
+from tuicc.wm_config_parser import parse_wm_config, get_wm_config, resolve_workspace_target
 
 
 def test_plain_numeric_bindings():
@@ -255,3 +255,36 @@ def test_get_wm_config_happy_path():
 def test_get_wm_config_returns_none_on_failure():
     conn = _FakeConn(raises=True)
     assert get_wm_config(conn) is None
+
+
+# ---------- resolve_workspace_target ----------
+# Found live: a real sway config using numbered+named workspaces
+# (bindsym $mod+8 workspace number 8:VIII) left tuicc creating that
+# workspace under the bare number instead, once tuicc itself was the
+# first thing to ever target it — see this function's own docstring.
+
+def test_resolve_workspace_target_matches_by_leading_number():
+    assert resolve_workspace_target("8", ["1:I", "8:VIII", "9:IX"]) == "8:VIII"
+
+
+def test_resolve_workspace_target_passes_through_when_nothing_matches():
+    assert resolve_workspace_target("8", ["1:I", "9:IX"]) == "8"
+
+
+def test_resolve_workspace_target_passes_through_a_non_numeric_id():
+    # bare_id is always a plain workspace number in practice
+    # (Region.id/target_region), but this must never crash on
+    # something that isn't one.
+    assert resolve_workspace_target("chat", ["1:I", "chat"]) == "chat"
+
+
+def test_resolve_workspace_target_handles_empty_or_none_candidates():
+    assert resolve_workspace_target("8", []) == "8"
+    assert resolve_workspace_target("8", None) == "8"
+
+
+def test_resolve_workspace_target_bare_number_in_candidates_is_a_noop():
+    # A candidate list entry that's already just the bare number
+    # ("8", no colon suffix) still "matches" trivially — same value in,
+    # same value out, no behavior change from today.
+    assert resolve_workspace_target("8", ["1", "8", "9"]) == "8"

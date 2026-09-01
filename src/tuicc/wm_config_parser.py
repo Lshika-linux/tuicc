@@ -196,6 +196,49 @@ def parse_wm_config(config_text: str) -> WmConfigInfo:
     return WmConfigInfo(workspace_names=workspace_names, routing_rules=routing_rules)
 
 
+def _leading_number(name: str) -> str | None:
+    """The leading run of digits in name (e.g. "8" from "8:VIII"), or
+    None if name doesn't start with one at all (a plain name like
+    "chat" isn't number-addressable). Matches sway/i3's own `workspace
+    number <target>` semantics: <target>'s leading digits are what it
+    matches an EXISTING workspace by, or names a NEW one with in full
+    if none exists yet — see resolve_workspace_target()'s own docstring
+    for why that distinction is what this whole module exists to fix.
+    """
+    m = re.match(r"^(\d+)", name)
+    return m.group(1) if m else None
+
+
+def resolve_workspace_target(bare_id: str, candidate_names: list[str] | None) -> str:
+    """bare_id (a plain workspace number — always what Region.id and a
+    saved session's own target_region actually are, see
+    providers/sway.py's parse_tree()) resolved to its full configured
+    name (e.g. "8:VIII") when candidate_names — wm_config.workspace_names
+    or a manual [wm] workspace_names list, same resolution either way —
+    has one whose OWN leading number matches. bare_id unchanged if
+    candidate_names is empty/None or nothing matches (nothing configured
+    to respect, or bare_id isn't purely numeric to begin with).
+
+    Why this matters, not just cosmetic: sway/i3's `workspace number
+    <target>` command matches an EXISTING workspace by <target>'s
+    leading digits (whatever the rest of its real name is) if one's
+    already there, or CREATES a new one named exactly <target> if not.
+    Passing the bare number through unresolved works fine for FOCUSING
+    an already-existing workspace, but if tuicc is the first thing to
+    ever target that number in a session (a launcher spawn or session
+    restore onto a workspace nobody's switched to yet), sway creates it
+    under the bare number, not the user's configured full name — found
+    live, confirmed against a real sway config using numbered+named
+    workspaces (`bindsym $mod+8 workspace number 8:VIII`).
+    """
+    if not candidate_names:
+        return bare_id
+    for name in candidate_names:
+        if _leading_number(name) == bare_id:
+            return name
+    return bare_id
+
+
 def get_wm_config(conn) -> WmConfigInfo | None:
     """Thin IPC-issuing wrapper shared by SwayProvider/I3Provider (both
     just delegate their own wm_config() to this — identical either way,

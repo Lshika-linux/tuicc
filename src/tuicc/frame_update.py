@@ -232,7 +232,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         current_windows = [w for r in state.regions for w in r.windows]
         result = pending_moves.process(
             moves, provider, current_windows, loop_state.dismissed, time.monotonic(), cfg.fullscreen_only,
-            own_region_id=loop_state.last_focused_region_id,
+            own_region_id=loop_state.last_focused_region_id, wm_config=wm_config,
         )
         if result.reclaimed_focus:
             loop_state.expect_focus_reclaim = True

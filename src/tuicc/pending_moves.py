@@ -41,6 +41,7 @@ from pathlib import Path
 from tuicc.actions import spawn_detached
 from tuicc.model import Window
 from tuicc.procmon import scan_all_processes, build_children_map, subtree_pids
+from tuicc.wm_config_parser import resolve_workspace_target
 
 SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
 
@@ -369,7 +370,7 @@ def _timeout_failure_message(entry: dict) -> str:
 def process(
     queue: PendingMovesQueue, provider, current_windows: list[Window],
     dismissed: bool, now: float, fullscreen_only: bool = False,
-    own_region_id: str | None = None,
+    own_region_id: str | None = None, wm_config=None,
 ) -> PendingMovesResult:
     """Resolves every entry in queue against current_windows: enriches
     pids, grows each entry's known_pids with any real descendants its
@@ -404,7 +405,11 @@ def process(
     an ordinary single-window app) is a normal, successful end state,
     not a failure — no message either way.
     own_region_id decides whether to request force_relayout (see
-    CLAUDE/NOTES/wm-quirks.md#fullscreen-suppresses-layout). See
+    CLAUDE/NOTES/wm-quirks.md#fullscreen-suppresses-layout). wm_config
+    (None degrades to today's exact behavior) resolves a matched
+    entry's bare target_region against its known full workspace name
+    before issuing the move — see resolve_workspace_target()'s own
+    docstring for why. See
     CLAUDE/NOTES/design-decisions.md#pending-moves-process-contract for
     the full PendingMovesResult contract and the bugs it fixes.
     """
@@ -444,8 +449,21 @@ def process(
         match = resolve_pending_move(entry, current_windows, queue.claimed_ids)
         if match is not None:
             queue.claimed_ids.add(match.id)
-            provider.move_window_to_region(match.id, entry["target_region"])
-            resolved_target_regions.append(entry["target_region"])
+            # entry["target_region"] is always a bare workspace number
+            # (session.py/queue_launcher_spawn both record it that
+            # way) — resolve it against wm_config's own parsed full
+            # names first, so a target that doesn't live-exist yet gets
+            # CREATED under the user's configured name (e.g. "8:VIII")
+            # instead of a same-numbered bare one. Self-healing for
+            # sessions saved before this existed too — see
+            # wm_config_parser.resolve_workspace_target()'s own
+            # docstring. wm_config=None (no autodetect data) leaves
+            # target_region unchanged, today's exact behavior.
+            target_region = resolve_workspace_target(
+                entry["target_region"], wm_config.workspace_names if wm_config is not None else None,
+            )
+            provider.move_window_to_region(match.id, target_region)
+            resolved_target_regions.append(target_region)
             if entry.get("floating"):
                 provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
             if not dismissed:
