@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 
 from tuicc.context import RenderContext
+from tuicc.loop_state import push_mode, pop_mode
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order, resolve_selection, module_of_item
 from tuicc.render import collect_nav_items, PREVIEW_RENDERERS
@@ -116,7 +117,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
                 connectivity_mode.set_passphrase_error(error)
             else:
                 connectivity_mode.cancel_passphrase_entry()
-                loop_state.mode_stack.pop()
+                pop_mode(loop_state)
     if connectivity_mode.is_confirming_pairing() and connectivity_mode.is_pairing_waiting():
         pairing_request = connectivity_mode.current_pairing_request()
         if not status_worker.is_pending("bluetooth", pairing_request.device_id):
@@ -125,7 +126,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
                 connectivity_mode.set_pairing_error(error)
             else:
                 connectivity_mode.cancel_pairing_confirm()
-                loop_state.mode_stack.pop()
+                pop_mode(loop_state)
 
     connectivity_wants_input = (
         loop_state.pending_confirm is None
@@ -148,19 +149,17 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
     ):
         request = wifi_agent.mailbox.get_request()
         connectivity_mode.start_passphrase_entry(request.ssid)
-        # Guarded: the retry case above reaches here with the frame
-        # already pushed — a bare append would duplicate it, and the
-        # eventual single pop() wouldn't fully undo that.
-        if loop_state.mode_stack[-1] != "connectivity_passphrase":
-            loop_state.mode_stack.append("connectivity_passphrase")
+        # push_mode() is idempotent — the retry case above (iwd
+        # re-asking after a wrong password) reaches here with the
+        # frame already pushed, and needs to stay a single frame.
+        push_mode(loop_state, "connectivity_passphrase")
     elif bluez_agent is not None and bluez_agent.mailbox.has_pending() and (
         connectivity_wants_input
         or (loop_state.mode_stack[-1] == "connectivity_pairing" and connectivity_mode.is_pairing_waiting())
     ):
         request = bluez_agent.mailbox.get_request()
         connectivity_mode.start_pairing_confirm(request)
-        if loop_state.mode_stack[-1] != "connectivity_pairing":  # see passphrase branch above
-            loop_state.mode_stack.append("connectivity_pairing")
+        push_mode(loop_state, "connectivity_pairing")  # see passphrase branch above
 
     agent_has_pending = (
         wifi_agent.mailbox.has_pending()

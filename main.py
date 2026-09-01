@@ -36,7 +36,7 @@ from tuicc.config import (
     load_theme_preset,
     save_new_theme_preset,
 )
-from tuicc.loop_state import LoopState
+from tuicc.loop_state import LoopState, push_mode, pop_mode
 from tuicc.actions import spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.layout import ModuleBox
 from tuicc.navigation import (
@@ -149,7 +149,7 @@ def handle_connectivity_browsing(key, loop_state, cfg, status_worker, next_item_
         return True
     if section == "wifi" and key == cfg.keybinds["wifi_connect_hidden"]:
         connectivity_mode.start_hidden_ssid_entry()
-        loop_state.mode_stack.append("connectivity_hidden_ssid")
+        push_mode(loop_state, "connectivity_hidden_ssid")
         return True
     # Re-enabled after a real, live-confirmed fix — see
     # CLAUDE/NOTES/known-limitations.md#wifi-power-toggle-disabled for
@@ -301,7 +301,7 @@ def do_spawn_picker(loop_state, cfg, spawn_picker):
     # open_picker() is a no-op when `available` is empty (no modules
     # left to spawn) — only push the claim if it actually opened.
     if spawn_picker.active:
-        loop_state.mode_stack.append("spawn_picker")
+        push_mode(loop_state, "spawn_picker")
 
 
 def do_enter_box_editing(loop_state, resize, box, is_new=False):
@@ -311,12 +311,12 @@ def do_enter_box_editing(loop_state, resize, box, is_new=False):
     # branch, and handle_spawn_picker's handoff) stay in sync
     # automatically.
     resize_mode.enter_box_editing(resize, box, is_new=is_new)
-    loop_state.mode_stack.append("resize_editing")
+    push_mode(loop_state, "resize_editing")
 
 
 def do_enter_help(loop_state, help_state):
     help_mode.enter(help_state)
-    loop_state.mode_stack.append("help")
+    push_mode(loop_state, "help")
 
 
 # Called from two places: F1's Colors page (cfg.keybinds["cycle_preset"],
@@ -387,7 +387,7 @@ def handle_help(key, loop_state, cfg, help_state, stdscr, app):
             help_mode.move_color_index(help_state, 1)
         elif key == cfg.keybinds["confirm"]:
             help_mode.start_color_edit(help_state, get_raw_theme_values())
-            loop_state.mode_stack.append("help_colors")
+            push_mode(loop_state, "help_colors")
         elif key == cfg.keybinds["cycle_preset"]:
             do_cycle_theme_preset(loop_state, cfg, help_state, stdscr, app)
         elif key == cfg.keybinds["new_preset"]:
@@ -643,7 +643,7 @@ def handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize):
         # Handoff: pop "spawn_picker" before pushing "resize_editing" —
         # the generic dispatch's post-call pop would otherwise remove
         # whatever's on top AFTER we push, not our own frame.
-        loop_state.mode_stack.pop()
+        pop_mode(loop_state)
         do_enter_box_editing(loop_state, resize, new_box, is_new=True)
         return True  # stack already correctly arranged
     return False
@@ -656,7 +656,7 @@ def handle_resize_editing(key, loop_state, resize, cfg, direction_keys, boxes, t
     if result.deleted_name is not None and loop_state.active_module == result.deleted_name:
         loop_state.active_module = cfg.layout.boxes[0].name if cfg.layout.boxes else None
     if result.handoff is not None:
-        loop_state.mode_stack.pop()
+        pop_mode(loop_state)
         handoff_targets[result.handoff]()
         return True  # stack already correctly arranged, don't pop again
     return result.still_claiming
@@ -897,7 +897,7 @@ def main(stdscr):
             if loop_state.mode_stack[-1] != "normal":
                 still_claiming = MODE_HANDLERS[loop_state.mode_stack[-1]](key)
                 if not still_claiming:
-                    loop_state.mode_stack.pop()
+                    pop_mode(loop_state)
                 continue
 
             # Browsing: session open, no module being resized/moved —
@@ -947,11 +947,11 @@ def main(stdscr):
                 # main.py notices right after dispatch and claims the
                 # stack on their behalf.
                 if sessions_mode.is_naming():
-                    loop_state.mode_stack.append("sessions_naming")
+                    push_mode(loop_state, "sessions_naming")
                 if sysmon_mode.is_editing_nice():
-                    loop_state.mode_stack.append("sysmon_nice")
+                    push_mode(loop_state, "sysmon_nice")
                 if connectivity_mode.is_browsing():
-                    loop_state.mode_stack.append("connectivity_browsing")
+                    push_mode(loop_state, "connectivity_browsing")
                 if should_dismiss:
                     loop_state.dismissed = True
                     provider.dismiss_self()
@@ -1065,12 +1065,12 @@ def main(stdscr):
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id)
                 _apply_launcher_routing_default(loop_state, launcher, app)
-                loop_state.mode_stack.append("launcher")
+                push_mode(loop_state, "launcher")
                 loop_state.active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id, chr(key))
                 _apply_launcher_routing_default(loop_state, launcher, app)
-                loop_state.mode_stack.append("launcher")
+                push_mode(loop_state, "launcher")
                 loop_state.active_module = "launcher"
             elif key == 27:
                 # Escape collapses whichever two-level module is

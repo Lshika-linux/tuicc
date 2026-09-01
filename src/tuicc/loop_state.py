@@ -87,3 +87,32 @@ class LoopState:
     # trigger the corruption), not on every frame regardless of
     # activity.
     last_preview_line_count: int = 0
+
+
+def push_mode(loop_state: LoopState, name: str) -> None:
+    """Push a mode_stack tier, unless it's already the top one.
+
+    Idempotent on purpose: a tier whose entry condition gets re-checked
+    every frame (frame_update.py's connectivity_passphrase/pairing —
+    the daemon can keep re-asking across many frames while the prompt
+    is up) must never double-push itself. A naive .append() doesn't
+    have this property — that gap was a real, shipped bug during the
+    original input_claim -> mode_stack migration (a wrong wifi
+    passphrase re-triggered the daemon's request, double-pushing the
+    tier and leaving one Escape short of actually closing the prompt),
+    fixed there with a one-off inline guard. This is that guard, moved
+    to the one place mode_stack itself lives, so every call site gets
+    it for free instead of having to remember to write it again.
+    """
+    if loop_state.mode_stack[-1] != name:
+        loop_state.mode_stack.append(name)
+
+
+def pop_mode(loop_state: LoopState) -> None:
+    """Pop the current mode_stack tier, unless it's the base "normal"
+    sentinel — popping past it would leave mode_stack empty, and the
+    next mode_stack[-1] read (checked every frame, all over main.py)
+    would raise IndexError instead of degrading to plain navigation.
+    """
+    if loop_state.mode_stack[-1] != "normal":
+        loop_state.mode_stack.pop()
