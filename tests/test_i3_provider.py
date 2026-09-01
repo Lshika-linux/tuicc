@@ -1,12 +1,13 @@
 """Tests for the i3 provider's tree parsing, using recorded fixtures."""
 
 import json
+import os
 from pathlib import Path
 
 from i3ipc import Con
 
 import tuicc.providers.i3 as i3_module
-from tuicc.providers.i3 import parse_tree, MARK_PREFIX, _stale_self_marks
+from tuicc.providers.i3 import parse_tree, MARK_PREFIX, _stale_self_marks, _self_focused
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -82,15 +83,15 @@ def test_full_scene_matches_expected_layout():
     assert overlaps(floating[0], floating[1])
 
 
-def _tiled_leaf(id_, marks=()):
+def _tiled_leaf(id_, marks=(), focused=False):
     return {
         "id": id_, "type": "con", "app_id": None, "window_class": "XTerm",
-        "name": f"window-{id_}", "focused": False, "marks": list(marks),
+        "name": f"window-{id_}", "focused": focused, "marks": list(marks),
         "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
     }
 
 
-def _floating_leaf(id_, marks=()):
+def _floating_leaf(id_, marks=(), focused=False):
     # i3 wraps every floating window in a floating_con container that
     # carries none of the window's own properties — the real window (with
     # its marks) is the single nested child, same shape _unwrap_floating()
@@ -100,7 +101,7 @@ def _floating_leaf(id_, marks=()):
         "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
         "nodes": [{
             "id": id_, "type": "con", "app_id": None, "window_class": "XTerm",
-            "name": f"window-{id_}", "focused": False, "marks": list(marks),
+            "name": f"window-{id_}", "focused": focused, "marks": list(marks),
             "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
         }],
     }
@@ -208,3 +209,42 @@ def test_stale_self_marks_ignores_marks_that_are_not_tuiccs_own(monkeypatch):
     monkeypatch.setattr(i3_module, "_x11_pid_for_window", lambda xid: 9219)
     tree = _tree_with_windows(tiled=[_leaf_with_window(54, marks=["some-other-mark"], window=555)])
     assert _stale_self_marks(tree) == []
+
+
+# ---------- _self_focused ----------
+# os.getpid() (the real running test process's own pid) is what
+# mark_self() would actually embed in a real run — using it here, not
+# an arbitrary fake pid, is what makes these tests exercise the exact
+# mark _self_focused() looks for. No X11 mocking needed — unlike
+# _stale_self_marks(), this doesn't touch pid lookups at all, just
+# marks/focused straight off the tree.
+
+def test_self_focused_true_when_the_marked_window_is_focused():
+    pid = os.getpid()
+    tree = _tree_with_windows(tiled=[_tiled_leaf(60, marks=[f"{MARK_PREFIX}{pid}"], focused=True)])
+    assert _self_focused(tree) is True
+
+
+def test_self_focused_false_when_the_marked_window_is_not_focused():
+    pid = os.getpid()
+    tree = _tree_with_windows(tiled=[
+        _tiled_leaf(61, marks=[f"{MARK_PREFIX}{pid}"], focused=False),
+        _tiled_leaf(62, focused=True),
+    ])
+    assert _self_focused(tree) is False
+
+
+def test_self_focused_checks_floating_windows_too():
+    pid = os.getpid()
+    tree = _tree_with_windows(floating=[_floating_leaf(63, marks=[f"{MARK_PREFIX}{pid}"], focused=True)])
+    assert _self_focused(tree) is True
+
+
+def test_self_focused_none_when_the_mark_is_not_in_the_tree_at_all():
+    tree = _tree_with_windows(tiled=[_tiled_leaf(64)])
+    assert _self_focused(tree) is None
+
+
+def test_self_focused_ignores_a_different_tuicc_instances_own_mark():
+    tree = _tree_with_windows(tiled=[_tiled_leaf(65, marks=[f"{MARK_PREFIX}999999999"], focused=True)])
+    assert _self_focused(tree) is None

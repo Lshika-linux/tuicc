@@ -467,7 +467,13 @@ def process(
             if entry.get("floating"):
                 provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
             if not dismissed:
-                force_relayout = own_region_id is not None and entry["target_region"] == own_region_id
+                # target_region (resolved above), not entry["target_region"]
+                # (always bare) — own_region_id is loop_state.
+                # last_focused_region_id, itself resolved now too (see
+                # frame_update.py's own resolved_focused_region_id) —
+                # comparing the bare dict value against it would silently
+                # never match for a numbered+named workspace.
+                force_relayout = own_region_id is not None and target_region == own_region_id
                 provider.focus_self(fullscreen=fullscreen_only, force_relayout=force_relayout)
                 reclaimed_focus = True
             # Deliberately UNCONDITIONAL, not gated on known_pids

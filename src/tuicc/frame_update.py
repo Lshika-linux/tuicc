@@ -21,11 +21,13 @@ from tuicc.loop_state import push_mode, pop_mode
 from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order, resolve_selection, module_of_item
 from tuicc.render import collect_nav_items, PREVIEW_RENDERERS
-from tuicc import procmon, pending_moves
+from tuicc.wm_config_parser import resolve_workspace_target
+from tuicc import procmon, pending_moves, resize_mode
 from tuicc.modules import sessions as sessions_mode
 from tuicc.modules import media as media_mode
 from tuicc.modules import sysmon as sysmon_mode
 from tuicc.modules import connectivity as connectivity_mode
+from tuicc.modules import launcher as launcher_mode
 
 
 def _resolve_visible_pids(windows, selected_id, resolved_pid_cache, provider, visible_slots):
@@ -71,6 +73,62 @@ class FrameResult:
     term_height: int
     ordered: list
     selected_item: object | None
+
+
+def reset_ui_state(loop_state, resize, spawn_picker, help_state, launcher, wifi_agent, bluez_agent):
+    """Cancels every kind of in-progress interaction and forces
+    navigation back to clean, top-level sidebar state — shared by
+    main.py's do_dismiss() (dismissing through tuicc's own action
+    handlers) and update_frame()'s own self_focused()-transition
+    detection below (a genuine resummon, however it happened) instead
+    of each keeping its own copy. See do_dismiss()'s own docstring in
+    main.py for the full "why" (mode_stack never getting reset used to
+    leave a leftover menu/prompt claiming every keypress after
+    resummon) — this is exactly that logic, minus the two
+    dismiss-specific steps (loop_state.dismissed/provider.dismiss_self())
+    that only make sense when tuicc is actually about to hide.
+
+    active_module="sidebar", not None: the stale-selection recovery
+    block below treats selected_id=None as deliberate (skips recovery)
+    whenever active_module currently has zero nav items — exactly
+    "launcher"'s permanent state, the most common thing to have been
+    mid-interaction with. Leaving active_module untouched (or clearing
+    it to None, which also never matches a real item) would silently
+    suppress the very recovery this function exists to make reliable.
+    """
+    resize_mode.exit_edit_mode(resize)  # ends browsing AND editing, either level
+    spawn_picker.active = False
+    spawn_picker.choices = []
+    help_state.active = False
+    launcher_mode.exit_typing_mode(launcher)
+    # cancel_passphrase_entry()/cancel_pairing_confirm() alone only
+    # clear connectivity.py's own UI-side display state — found live,
+    # this wasn't enough on its own: the underlying D-Bus agent's
+    # mailbox stays pending (nobody ever actually replied to iwd/
+    # bluez's own RequestPassphrase/RequestConfirmation call), so the
+    # per-frame mailbox check just above this function pushes
+    # connectivity_passphrase/pairing right back onto mode_stack the
+    # very next frame, undoing the reset. wifi_agent.cancel_current()/
+    # bluez_agent.cancel_current() are the exact same calls
+    # main.py's handle_connectivity_passphrase()/handle_connectivity_
+    # pairing() already make on a real Escape keypress — both are
+    # already safe no-ops when nothing's actually pending.
+    wifi_agent.cancel_current()
+    if bluez_agent is not None:
+        bluez_agent.cancel_current()
+    connectivity_mode.cancel_passphrase_entry()
+    connectivity_mode.cancel_pairing_confirm()
+    connectivity_mode.stop_browsing()
+    connectivity_mode.cancel_hidden_ssid_entry()
+    connectivity_mode.cancel_forget()
+    sessions_mode.handle_naming_key(27)  # same Escape-cancels-naming path handle_sessions_naming falls through to
+    sysmon_mode.handle_nice_key(27)      # same Escape-cancels-nice-edit path handle_sysmon_nice falls through to
+    sessions_mode.collapse()
+    media_mode.collapse()
+    sysmon_mode.collapse()
+    loop_state.mode_stack = ["normal"]
+    loop_state.selected_id = None
+    loop_state.active_module = "sidebar"
 
 
 def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, launcher, moves) -> FrameResult:
@@ -191,6 +249,20 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
     term_height, term_width = stdscr.getmaxyx()
     boxes = compute_boxes(cfg.layout, term_width, term_height)
     state = provider.get_state()
+    # state.focused_region_id is always the bare workspace number
+    # (providers/sway.py's parse_tree() — a provider's own truthful
+    # contract, unchanged) — resolved here, once, against wm_config's
+    # own known full names so it's comparable to sidebar.py's NavItem.
+    # focus_target, which CAN be a resolved full name now (see
+    # wm_config_parser.resolve_workspace_target()'s own docstring).
+    # Found live: without this, the stale-selection recovery block
+    # below could never match the actually-focused workspace once it
+    # had a configured "N:Name" identity, silently falling back to
+    # whatever NavItem happened to sort first instead.
+    resolved_focused_region_id = (
+        resolve_workspace_target(state.focused_region_id, wm_config.workspace_names if wm_config is not None else None)
+        if state.focused_region_id is not None else None
+    )
 
     # Publishes this frame's window list for the background "windows"
     # Domain (procmon.py) — must run before this frame's own
@@ -204,9 +276,9 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         windows_this_frame, loop_state.selected_id, loop_state.resolved_pid_cache, provider, cfg.sysmon_visible_slots,
     ))
 
-    if state.focused_region_id is not None and state.focused_region_id != loop_state.last_focused_region_id:
+    if resolved_focused_region_id is not None and resolved_focused_region_id != loop_state.last_focused_region_id:
         loop_state.origin_region_id = loop_state.last_focused_region_id
-        loop_state.last_focused_region_id = state.focused_region_id
+        loop_state.last_focused_region_id = resolved_focused_region_id
         if loop_state.expect_focus_reclaim:
             # Self-inflicted (tuicc reclaiming its own focus after a
             # spawn/restore) — skip the reset below, but still update
@@ -219,6 +291,19 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
             # stay pinned to a stale context and every launcher spawn
             # keeps targeting it.
             loop_state.selected_id = None
+
+    # Independent of the transition-detector above, which only fires
+    # when resolved_focused_region_id actually changes — it doesn't if
+    # the user dismisses and resummons without ever leaving the
+    # workspace tuicc was summoned from (confirmed live: this is the
+    # common case, not an edge case). provider.self_focused() catches
+    # a real resummon directly instead, whether it went through
+    # main.py's own do_dismiss() or (also common) an external WM
+    # keybind that never touches tuicc's own code at all.
+    self_focused = provider.self_focused()
+    if self_focused and not loop_state.self_was_focused:
+        reset_ui_state(loop_state, resize, spawn_picker, help_state, launcher, wifi_agent, bluez_agent)
+    loop_state.self_was_focused = bool(self_focused)
 
     if action_ctx.restore_queue:
         known_ids = {w.id for r in state.regions for w in r.windows}
@@ -311,6 +396,24 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
             first_key = browsing_items[0].ssid if browsing_section_name == "wifi" else browsing_items[0].id
             loop_state.selected_id = f"connectivity:{id_prefix}:{first_key}"
 
+    # session.py's own capture_session() always records a saved
+    # session's target_region as the bare workspace number (session
+    # capture is independent of workspace-name resolution, deliberately
+    # unchanged — see pending_moves.process()'s own docstring for why
+    # that resolution happens at restore/use time instead). Resolved
+    # here, once, so sidebar.py's own ws_id (which CAN be a resolved
+    # "N:Name" now) actually finds a match — found live, a bare-vs-
+    # resolved mismatch here silently zeroed out every "what would this
+    # session restore here" preview.
+    raw_session_preview = sessions_mode.expanded_preview()
+    session_preview = None
+    if raw_session_preview is not None:
+        workspace_names = wm_config.workspace_names if wm_config is not None else None
+        session_preview = {
+            resolve_workspace_target(target, workspace_names): apps
+            for target, apps in raw_session_preview.items()
+        }
+
     ctx = RenderContext(
         state=state,
         selected_id=loop_state.selected_id,
@@ -329,7 +432,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         wifi_error=status_worker.get_error("wifi") or wifi_agent.get_error(),
         bluetooth_error=status_worker.get_error("bluetooth") or (bluez_agent.get_error() if bluez_agent else None),
         status=status_worker,
-        session_preview=sessions_mode.expanded_preview(),
+        session_preview=session_preview,
         control_colors=control_colors,
         cava=cava_reader,
         preview_renderers=PREVIEW_RENDERERS,
@@ -350,7 +453,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
     if not still_valid and not intentionally_unselected:
         match = None
         for item in ordered:
-            if item.target_kind == "region" and item.focus_target == state.focused_region_id:
+            if item.target_kind == "region" and item.focus_target == resolved_focused_region_id:
                 match = item
                 break
         if match is None and ordered:

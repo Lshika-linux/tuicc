@@ -38,6 +38,7 @@ from tuicc.config import (
     save_new_theme_preset,
 )
 from tuicc.loop_state import LoopState, push_mode, pop_mode
+from tuicc.wm_config_parser import resolve_workspace_target
 from tuicc.actions import spawn_detached, handle_pending_confirm, dispatch_action
 from tuicc.layout import ModuleBox
 from tuicc.navigation import (
@@ -320,6 +321,28 @@ def do_enter_help(loop_state, help_state):
     push_mode(loop_state, "help")
 
 
+def do_dismiss(loop_state, resize, spawn_picker, help_state, launcher, provider, wifi_agent, bluez_agent):
+    """The single mutation surface for dismissing — every should_dismiss
+    call site uses this instead of a bare loop_state.dismissed = True /
+    provider.dismiss_self() pair, same "one place, not N copies"
+    reasoning as loop_state.push_mode/pop_mode.
+
+    frame_update.reset_ui_state() (shared with that module's own
+    provider.self_focused()-transition detection — see its own
+    docstring for the full "why", including the discovery that this
+    dismiss-triggered path alone doesn't cover dismissing/resummoning
+    via an external WM keybind, which never runs this function at
+    all) does the actual work: cancels every kind of in-progress
+    interaction and resets mode_stack/selected_id/active_module. This
+    wrapper adds only the two steps that are specific to actually
+    dismissing, not resumming: loop_state.dismissed and
+    provider.dismiss_self() itself.
+    """
+    frame_update.reset_ui_state(loop_state, resize, spawn_picker, help_state, launcher, wifi_agent, bluez_agent)
+    loop_state.dismissed = True
+    provider.dismiss_self()
+
+
 # Called from two places: F1's Colors page (cfg.keybinds["cycle_preset"],
 # reusing that key the same way resize mode's own F4 means "next
 # layout preset" there) AND cfg.keybinds["cycle_theme_preset"] (F7,
@@ -569,7 +592,17 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
     # selected search result) — arrow keys never collide with typed
     # chars, including vim's own j/k (a separate keybind).
     if key == cfg.keybinds["up"]:
-        current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
+        # state.focused_region_id is always the bare workspace number
+        # (a provider's own contract) — resolved here against wm_config's
+        # own known full name so it's comparable to shift_workspace_id's
+        # own ids list, which can carry a resolved "N:Name" now (see
+        # wm_config_parser.resolve_workspace_target()'s own docstring).
+        resolved_focus = None
+        if state.focused_region_id is not None:
+            resolved_focus = resolve_workspace_target(
+                state.focused_region_id, app.wm_config.workspace_names if app.wm_config is not None else None,
+            )
+        current = loop_state.focus_id if loop_state.focus_id is not None else resolved_focus
         ids = sidebar_mode.slot_ids(
             state.regions, app.wm_config, cfg.total_workspaces,
             cfg.workspace_mode, cfg.workspace_names,
@@ -579,7 +612,17 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
         launcher.manual_target_app_id = selected[1] if selected else None
         return True
     if key == cfg.keybinds["down"]:
-        current = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
+        # state.focused_region_id is always the bare workspace number
+        # (a provider's own contract) — resolved here against wm_config's
+        # own known full name so it's comparable to shift_workspace_id's
+        # own ids list, which can carry a resolved "N:Name" now (see
+        # wm_config_parser.resolve_workspace_target()'s own docstring).
+        resolved_focus = None
+        if state.focused_region_id is not None:
+            resolved_focus = resolve_workspace_target(
+                state.focused_region_id, app.wm_config.workspace_names if app.wm_config is not None else None,
+            )
+        current = loop_state.focus_id if loop_state.focus_id is not None else resolved_focus
         ids = sidebar_mode.slot_ids(
             state.regions, app.wm_config, cfg.total_workspaces,
             cfg.workspace_mode, cfg.workspace_names,
@@ -920,8 +963,7 @@ def main(stdscr):
                 do_apply_reselect(loop_state, action_ctx, ordered)
                 do_apply_toast(loop_state, action_ctx)
                 if should_dismiss:
-                    loop_state.dismissed = True
-                    provider.dismiss_self()
+                    do_dismiss(loop_state, resize, spawn_picker, help_state, launcher, provider, wifi_agent, bluez_agent)
                 continue
 
             global_item = global_shortcut_item(cfg.global_shortcuts, key)
@@ -930,8 +972,7 @@ def main(stdscr):
                 do_apply_reselect(loop_state, action_ctx, ordered)
                 do_apply_toast(loop_state, action_ctx)
                 if should_dismiss:
-                    loop_state.dismissed = True
-                    provider.dismiss_self()
+                    do_dismiss(loop_state, resize, spawn_picker, help_state, launcher, provider, wifi_agent, bluez_agent)
                 continue
 
             if loop_state.mode_stack[-1] != "normal":
@@ -993,8 +1034,7 @@ def main(stdscr):
                 if connectivity_mode.is_browsing():
                     push_mode(loop_state, "connectivity_browsing")
                 if should_dismiss:
-                    loop_state.dismissed = True
-                    provider.dismiss_self()
+                    do_dismiss(loop_state, resize, spawn_picker, help_state, launcher, provider, wifi_agent, bluez_agent)
 
             elif key in next_item_keys and ordered:
                 if any_two_level_module_expanded():
@@ -1122,8 +1162,7 @@ def main(stdscr):
                     # dismiss at top level.
                     if cfg.return_to_origin and loop_state.origin_region_id is not None:
                         provider.focus_region(loop_state.origin_region_id)
-                    loop_state.dismissed = True
-                    provider.dismiss_self()
+                    do_dismiss(loop_state, resize, spawn_picker, help_state, launcher, provider, wifi_agent, bluez_agent)
     finally:
         status_worker.stop()
         cava_reader.stop()

@@ -88,6 +88,31 @@ def _stale_self_marks(tree) -> list:
     return stale
 
 
+def _self_focused(tree) -> bool | None:
+    """Whether THIS process's own exact mark (f"{MARK_PREFIX}{os.getpid()}")
+    sits on a currently-focused window — None if that exact mark isn't
+    anywhere in the tree at all (mark_self() hasn't run/found anything
+    yet). Deliberately the exact mark, not _is_tuicc_self()'s broader
+    prefix check — this must never match a DIFFERENT tuicc instance's
+    own mark, only this process's. Same tree-walk shape as
+    _stale_self_marks() above (pure function, no IPC, testable against
+    a recorded/synthetic tree), Provider.self_focused() is the thin
+    IPC-issuing wrapper around it.
+    """
+    mark = f"{MARK_PREFIX}{os.getpid()}"
+
+    def walk(node):
+        if mark in node.marks:
+            return node.focused
+        for child in node.nodes + node.floating_nodes:
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+
+    return walk(tree)
+
+
 def parse_tree(tree) -> WMState:
     """Convert an i3ipc tree into tuicc's generic WMState.
     
@@ -163,6 +188,9 @@ class SwayProvider(Provider):
         tree = self.conn.get_tree()
         for window_id, mark in _stale_self_marks(tree):
             self.conn.command(f"[con_id={window_id}] unmark {mark}")
+
+    def self_focused(self) -> bool | None:
+        return _self_focused(self.conn.get_tree())
 
     def dismiss_self(self) -> None:
         self.conn.command(f"[con_mark={MARK_PREFIX}{os.getpid()}] move scratchpad")

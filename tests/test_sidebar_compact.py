@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from tuicc.model import Region, Window, WMState
 from tuicc.modules.sidebar_compact import nav_items
+from tuicc.wm_config_parser import WmConfigInfo
 
 
 def _ctx(regions, total_workspaces=3, selected_id=None, wm_config=None):
@@ -16,6 +17,20 @@ def _ctx(regions, total_workspaces=3, selected_id=None, wm_config=None):
         selected_id=selected_id,
         wm_config=wm_config,
     )
+
+
+def test_nav_items_numbered_named_region_merges_not_duplicates():
+    # Same duplicated-module bug sidebar.py's own _build_slots() had:
+    # this file has its own separate copy of the same by_id-keyed-by-
+    # bare-region.id logic (deliberately not shared code, see this
+    # module's own docstring), so it needed the identical fix.
+    region = Region(id="8", name="8", windows=[])
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+    ctx = _ctx(regions=[region], total_workspaces=3, wm_config=wm_config)
+
+    items = nav_items((0, 0, 6, 10), ctx, "sidebar_compact")
+
+    assert [item.focus_target for item in items] == ["1:I", "8:VIII"]
 
 
 def test_nav_items_one_per_workspace_slot():

@@ -30,6 +30,7 @@ import curses
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, centered_x
 from tuicc.modules.sidebar import slot_ids
+from tuicc.wm_config_parser import resolve_workspace_target
 
 ROW_STEP = 2  # 1 content row + 1 blank spacer row
 
@@ -39,11 +40,15 @@ def _build_slots(ctx):
     logic (GitHub issue #9), reused rather than duplicated so the two
     sidebar variants can never drift apart on which slots exist.
     """
-    by_id = {region.id: region for region in ctx.state.regions}
     ids = slot_ids(
         ctx.state.regions, ctx.wm_config, ctx.config.total_workspaces,
         ctx.config.workspace_mode, ctx.config.workspace_names,
     )
+    # Keyed by the same resolved name slot_ids() already merged a
+    # numbered+named region's bare id into (see its own docstring) —
+    # a plain region.id key here would miss that merged slot entirely,
+    # same fix sidebar.py's own _build_slots() already needed.
+    by_id = {resolve_workspace_target(region.id, ids): region for region in ctx.state.regions}
     return [(ws_id, by_id.get(ws_id)) for ws_id in ids]
 
 

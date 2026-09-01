@@ -71,6 +71,27 @@ class Provider(ABC):
         """
         pass
 
+    def self_focused(self) -> bool | None:
+        """Whether tuicc's own marked window is currently the WM-focused
+        window. None if indeterminate — mark_self() hasn't run/found
+        anything yet, or this provider has no marks concept at all — same
+        "can't tell" convention every other optional method here uses,
+        never a guess. Used to detect a genuine resummon (dismissed then
+        shown again) even when the underlying workspace never changes —
+        get_state()/WMState.focused_region_id alone can't see this,
+        since tuicc filters its own window out of everything it reports
+        (see mark_self()'s own docstring for why). Found live: dismissing
+        and resummoning via the user's own WM keybind — the common case,
+        talking to sway/i3 directly, never going through tuicc's own
+        code at all — left stale menu/prompt state and a stale sidebar
+        selection in place, since neither of tuicc's other two signals
+        (a dismiss going through its own action handlers, or the
+        focused workspace actually changing) fired for that scenario.
+        Optional, default no-op returning None: a WM with no marks
+        concept just can't support this signal.
+        """
+        return None
+
     def dismiss_self(self) -> None:
         """Hide tuicc's own window without ending the process — see
         CLAUDE/NOTES/design-decisions.md#dismiss-vs-quit. Optional,

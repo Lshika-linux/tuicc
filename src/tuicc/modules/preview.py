@@ -27,6 +27,47 @@ import curses
 from tuicc.navigation import NavItem, module_of_item
 from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate, wrap_text
 from tuicc.title_condense import condense_title
+from tuicc.wm_config_parser import resolve_workspace_target
+
+
+def _resolved_target_id(ctx):
+    """ctx.focus_id if set, else ctx.state.focused_region_id, resolved
+    against ctx.wm_config's own known full workspace names (see
+    wm_config_parser.resolve_workspace_target()'s own docstring). The
+    same value _focused_region() below matches every Region.id against
+    — and also what draw() shows as this workspace's own display label
+    when there's no live Region to read a name off of at all (the
+    never-visited case), doubling as a label the same way sidebar.py's
+    own rows do.
+    """
+    target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
+    if target_id is None:
+        return None
+    names = ctx.wm_config.workspace_names if ctx.wm_config is not None else None
+    return resolve_workspace_target(target_id, names)
+
+
+def _focused_region(ctx):
+    """The region draw()/nav_items() both target. Resolved against
+    ctx.wm_config's own known full workspace names on BOTH sides before
+    comparing: region.id is always the bare workspace number
+    (providers/sway.py's parse_tree() — a provider's own truthful
+    contract, never changes), while _resolved_target_id() above can now
+    return a resolved "N:Name" — found live, a bare-vs-resolved
+    mismatch here made preview show empty for every populated
+    numbered+named workspace. resolve_workspace_target() is a safe
+    no-op on an already-resolved value (nothing's leading number equals
+    a full "N:Name" string), so resolving region.id unconditionally is
+    correct regardless of whether target_id started resolved or bare.
+    """
+    target_id = _resolved_target_id(ctx)
+    if target_id is None:
+        return None
+    names = ctx.wm_config.workspace_names if ctx.wm_config is not None else None
+    for region in ctx.state.regions:
+        if resolve_workspace_target(region.id, names) == target_id:
+            return region
+    return None
 
 
 def draw(stdscr, box, ctx, module_name):
@@ -136,12 +177,7 @@ def draw(stdscr, box, ctx, module_name):
             draw_centered_lines(stdscr, (x, content_y, w, content_h), ctx.selected_item.preview_text)
         return
 
-    target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
-
-    focused_region = None
-    for region in ctx.state.regions:
-        if region.id == target_id:
-            focused_region = region
+    focused_region = _focused_region(ctx)
 
     # focused_region can be None two different ways that both mean the
     # same thing to the user: a region that exists but lost all its
@@ -169,11 +205,12 @@ def draw(stdscr, box, ctx, module_name):
         # before drawing its own text (see its own docstring — the wide-
         # character corruption fix) — call it FIRST, then draw the
         # dashed outline on top, or the text wipes the outline out.
-        # target_id doubles as the workspace's own display label —
-        # sidebar.py's own rows use it exactly the same way (" {ws_id} "),
-        # so no separate lookup is needed even when there's no real
-        # Region object to read a name off of (the never-visited case).
-        draw_centered_lines(stdscr, (x, y, w, h), [(f"WS {target_id}", dim), ("empty *crickets*", dim)])
+        # _resolved_target_id() doubles as the workspace's own display
+        # label — sidebar.py's own rows use it exactly the same way
+        # (" {ws_id} "), so no separate lookup is needed even when
+        # there's no real Region object to read a name off of (the
+        # never-visited case).
+        draw_centered_lines(stdscr, (x, y, w, h), [(f"WS {_resolved_target_id(ctx)}", dim), ("empty *crickets*", dim)])
         _draw_dashed_outline(stdscr, y + 1, x + 1, h - 2, w - 2, dim)
         return
 
@@ -1140,12 +1177,7 @@ def _draw_tab_bar(stdscr, member, win_x, win_y, win_w, win_h, is_active, is_sele
 def nav_items(box, ctx, module_name) -> list[NavItem]:
     x, y, w, h = box
 
-    target_id = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
-
-    focused_region = None
-    for region in ctx.state.regions:
-        if region.id == target_id:
-            focused_region = region
+    focused_region = _focused_region(ctx)
 
     if focused_region is None:
         return []

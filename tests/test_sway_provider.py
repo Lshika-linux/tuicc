@@ -1,11 +1,12 @@
 """Tests for the sway provider's tree parsing, using recorded fixtures."""
 
 import json
+import os
 from pathlib import Path
 
 from i3ipc import Con
 
-from tuicc.providers.sway import parse_tree, MARK_PREFIX, _stale_self_marks
+from tuicc.providers.sway import parse_tree, MARK_PREFIX, _stale_self_marks, _self_focused
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -59,11 +60,11 @@ def _tree_with_windows(tiled=(), floating=()):
     }, None, None)
 
 
-def _leaf(id_, marks=(), floating_type=False, pid=None):
+def _leaf(id_, marks=(), floating_type=False, pid=None, focused=False):
     return {
         "id": id_, "type": "floating_con" if floating_type else "con",
         "app_id": "kitty", "name": f"window-{id_}",
-        "focused": False, "marks": list(marks), "pid": pid,
+        "focused": focused, "marks": list(marks), "pid": pid,
         "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
     }
 
@@ -162,3 +163,43 @@ def test_stale_self_marks_finds_multiple_across_the_tree():
         _leaf(57, marks=[f"{MARK_PREFIX}333"], pid=9220),  # stale
     ])
     assert _stale_self_marks(tree) == [("55", f"{MARK_PREFIX}111"), ("57", f"{MARK_PREFIX}333")]
+
+
+# ---------- _self_focused ----------
+# os.getpid() (the real running test process's own pid) is what
+# mark_self() would actually embed in a real run — using it here,
+# not an arbitrary fake pid, is what makes these tests exercise the
+# exact mark _self_focused() looks for.
+
+def test_self_focused_true_when_the_marked_window_is_focused():
+    pid = os.getpid()
+    tree = _tree_with_windows(tiled=[_leaf(60, marks=[f"{MARK_PREFIX}{pid}"], focused=True)])
+    assert _self_focused(tree) is True
+
+
+def test_self_focused_false_when_the_marked_window_is_not_focused():
+    pid = os.getpid()
+    tree = _tree_with_windows(tiled=[
+        _leaf(61, marks=[f"{MARK_PREFIX}{pid}"], focused=False),
+        _leaf(62, focused=True),
+    ])
+    assert _self_focused(tree) is False
+
+
+def test_self_focused_checks_floating_windows_too():
+    pid = os.getpid()
+    tree = _tree_with_windows(floating=[_leaf(63, marks=[f"{MARK_PREFIX}{pid}"], floating_type=True, focused=True)])
+    assert _self_focused(tree) is True
+
+
+def test_self_focused_none_when_the_mark_is_not_in_the_tree_at_all():
+    tree = _tree_with_windows(tiled=[_leaf(64)])
+    assert _self_focused(tree) is None
+
+
+def test_self_focused_ignores_a_different_tuicc_instances_own_mark():
+    # Must match THIS process's own exact mark only — a different
+    # tuicc instance's own mark (different pid suffix) must not count,
+    # even if that window happens to be focused.
+    tree = _tree_with_windows(tiled=[_leaf(65, marks=[f"{MARK_PREFIX}999999999"], focused=True)])
+    assert _self_focused(tree) is None

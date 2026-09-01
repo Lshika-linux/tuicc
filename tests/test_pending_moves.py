@@ -754,6 +754,26 @@ def test_process_does_not_request_force_relayout_for_a_different_target():
     assert provider.focus_self_force_relayout_args == [False]
 
 
+def test_process_force_relayout_compares_against_the_resolved_target_not_the_bare_one():
+    # Found live: entry["target_region"] is always bare ("8"), but
+    # own_region_id (loop_state.last_focused_region_id) is resolved now
+    # too (see frame_update.py's own resolved_focused_region_id) -
+    # comparing the bare dict value against it silently never matched
+    # for a numbered+named workspace, even when they really were the
+    # same region.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "8", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+
+    process(
+        queue, provider, current, dismissed=False, now=1.0, fullscreen_only=True,
+        own_region_id="8:VIII", wm_config=wm_config,
+    )
+
+    assert provider.focus_self_force_relayout_args == [True]
+
+
 def test_process_does_not_request_force_relayout_when_own_region_id_omitted():
     # Default None — a caller that doesn't track its own region simply
     # doesn't get this fix, same as main.py's own behavior before

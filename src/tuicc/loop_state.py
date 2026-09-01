@@ -87,6 +87,13 @@ class LoopState:
     # trigger the corruption), not on every frame regardless of
     # activity.
     last_preview_line_count: int = 0
+    # provider.self_focused()'s own value as of last frame — compared
+    # each frame in frame_update.py to catch a False/None -> True
+    # transition (tuicc just regained WM focus) independent of whether
+    # WMState.focused_region_id ever changed, which it doesn't when the
+    # user dismisses/resummons without leaving the same workspace. See
+    # Provider.self_focused()'s own docstring for the full "why".
+    self_was_focused: bool = False
 
 
 def push_mode(loop_state: LoopState, name: str) -> None:

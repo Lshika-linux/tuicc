@@ -12,13 +12,14 @@ draw()), but all three pure functions here are genuinely testable.
 import random
 from types import SimpleNamespace
 
-from tuicc.model import Window
+from tuicc.model import Region, Window, WMState
 from tuicc.modules.preview import (
     _corner_label, _corner_positions, _window_label, _window_screen_rect,
     _allocate_axis, _layout_tiled_windows, _partition_windows, _detail_tier,
     _group_tiled_windows, _place_tab_group, _TabGroupUnit, _group_corner_labels,
-    _place_slot_content,
+    _place_slot_content, _focused_region, _resolved_target_id,
 )
+from tuicc.wm_config_parser import WmConfigInfo
 
 
 def _cfg(terminal_apps=(), browser_apps=(), browser_title_names=()):
@@ -31,6 +32,78 @@ def _cfg(terminal_apps=(), browser_apps=(), browser_title_names=()):
 
 def _window(app_id, title):
     return Window(id="1", app_id=app_id, title=title, focused=False, rect=(0.0, 0.0, 1.0, 1.0))
+
+
+def _preview_ctx(regions, focus_id=None, focused_region_id=None, wm_config=None):
+    return SimpleNamespace(
+        state=WMState(regions=regions, focused_region_id=focused_region_id),
+        focus_id=focus_id,
+        wm_config=wm_config,
+    )
+
+
+# ---------- _focused_region ----------
+# Found live: sidebar.py's own workspace-naming fix (resolving a
+# numbered+named workspace's id to its configured full name, e.g.
+# "8:VIII") made ctx.focus_id sometimes carry that resolved form, while
+# Region.id (providers/sway.py's parse_tree()) stays the bare number
+# forever — a bare-vs-resolved mismatch here silently made preview show
+# empty for every populated numbered+named workspace.
+
+def test_focused_region_matches_bare_ids_when_nothing_is_configured():
+    region = Region(id="8", name="8", windows=[])
+    ctx = _preview_ctx([region], focus_id="8")
+    assert _focused_region(ctx) is region
+
+
+def test_focused_region_matches_resolved_focus_id_against_bare_region_id():
+    region = Region(id="8", name="8", windows=[])
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+    ctx = _preview_ctx([region], focus_id="8:VIII", wm_config=wm_config)
+    assert _focused_region(ctx) is region
+
+
+def test_focused_region_falls_back_to_state_focused_region_id():
+    region = Region(id="8", name="8", windows=[])
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+    ctx = _preview_ctx([region], focus_id=None, focused_region_id="8", wm_config=wm_config)
+    assert _focused_region(ctx) is region
+
+
+def test_focused_region_none_when_nothing_matches():
+    region = Region(id="9", name="9", windows=[])
+    ctx = _preview_ctx([region], focus_id="8")
+    assert _focused_region(ctx) is None
+
+
+def test_focused_region_none_when_focus_id_and_focused_region_id_both_none():
+    region = Region(id="8", name="8", windows=[])
+    ctx = _preview_ctx([region], focus_id=None, focused_region_id=None)
+    assert _focused_region(ctx) is None
+
+
+# ---------- _resolved_target_id ----------
+# Regression: draw() calls this directly too, for the "WS {id} empty"
+# label on a never-visited workspace slot — a leftover reference to
+# the old inline target_id variable (removed when _focused_region was
+# factored out) crashed with NameError the instant anyone navigated to
+# an empty slot. Covered here so that specific mistake can't recur
+# silently.
+
+def test_resolved_target_id_resolves_against_wm_config():
+    wm_config = WmConfigInfo(workspace_names=["1:I", "8:VIII"])
+    ctx = _preview_ctx([], focus_id="8", wm_config=wm_config)
+    assert _resolved_target_id(ctx) == "8:VIII"
+
+
+def test_resolved_target_id_falls_back_to_state_focused_region_id():
+    ctx = _preview_ctx([], focus_id=None, focused_region_id="3")
+    assert _resolved_target_id(ctx) == "3"
+
+
+def test_resolved_target_id_none_when_both_are_none():
+    ctx = _preview_ctx([], focus_id=None, focused_region_id=None)
+    assert _resolved_target_id(ctx) is None
 
 
 # ---------- _window_label ----------
