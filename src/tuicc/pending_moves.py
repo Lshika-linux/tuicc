@@ -41,6 +41,7 @@ from pathlib import Path
 from tuicc.actions import spawn_detached
 from tuicc.model import Window
 from tuicc.procmon import scan_all_processes, build_children_map, subtree_pids
+from tuicc.session import normalize_saved_cmdline
 from tuicc.wm_config_parser import resolve_workspace_target
 
 SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
@@ -206,6 +207,10 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     nothing was due this frame. On failure, nothing gets queued — no
     pid means no window will ever match this entry — so the caller
     doesn't need to do anything with queue.entries itself.
+
+    cmdline goes through normalize_saved_cmdline() right before the
+    spawn — see that function's own docstring for why a saved argv list
+    isn't always as clean as _parse_cmdline() intended it to be.
     """
     if not restore_queue:
         return None
@@ -214,7 +219,7 @@ def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: lis
     session_entry = restore_queue.pop(0)
     log_path = SPAWN_LOG_DIR / f"restore_{session_entry['app_id']}_{int(time.time())}.log"
     pid = spawn_detached(
-        session_entry["cmdline"], shell_true=False, log_path=log_path,
+        normalize_saved_cmdline(session_entry["cmdline"]), shell_true=False, log_path=log_path,
         env=session_entry.get("env"),
     )
     queue.last_restore_launch = now

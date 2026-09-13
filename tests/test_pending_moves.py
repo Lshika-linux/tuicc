@@ -407,6 +407,26 @@ def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monke
     assert queue.last_restore_launch == 10.0
 
 
+def test_promote_restore_queue_normalizes_a_collapsed_cmdline_before_spawning(monkeypatch):
+    # See session.normalize_saved_cmdline()'s docstring and
+    # CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash — a
+    # cmdline collapsed by Electron's own argv rewrite must be re-split
+    # before it ever reaches spawn_detached(), not passed through as a
+    # single bogus one-element argv.
+    calls = []
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(a) or 4242)
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(last_restore_launch=0.0)
+    restore_queue = [{
+        "cmdline": ["/usr/lib/electron43/electron /usr/lib/obsidian/app.asar"],
+        "target_region": "1", "app_id": "obsidian",
+    }]
+
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+
+    assert calls[0][0] == ["/usr/lib/electron43/electron", "/usr/lib/obsidian/app.asar"]
+
+
 def test_promote_restore_queue_returns_failure_message_when_spawn_fails(monkeypatch):
     # spawn_detached() returns None when subprocess.Popen() itself
     # raised — see its own docstring. Found live: an uncaught exception

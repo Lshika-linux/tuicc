@@ -15,6 +15,7 @@ from tuicc.session import (
     _parse_environ,
     capture_window,
     capture_session,
+    normalize_saved_cmdline,
     save_session,
     load_session,
 )
@@ -47,6 +48,36 @@ def test_parse_cmdline_ignores_trailing_empty_part():
     # /proc/.../cmdline is null-terminated, so a naive split leaves one
     # trailing empty string that isn't a real argument.
     assert _parse_cmdline(b"firefox\x00") == ["firefox"]
+
+
+# ---------- normalize_saved_cmdline ----------
+
+def test_normalize_saved_cmdline_splits_a_collapsed_single_element():
+    # The Electron/Chromium argv-rewrite case — see
+    # CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash.
+    assert normalize_saved_cmdline(
+        ["/usr/lib/electron43/electron /usr/lib/obsidian/app.asar"]
+    ) == ["/usr/lib/electron43/electron", "/usr/lib/obsidian/app.asar"]
+
+
+def test_normalize_saved_cmdline_leaves_multi_element_cmdline_untouched():
+    assert normalize_saved_cmdline(["electron", "app.asar"]) == ["electron", "app.asar"]
+
+
+def test_normalize_saved_cmdline_leaves_single_element_without_whitespace_untouched():
+    assert normalize_saved_cmdline(["kitty"]) == ["kitty"]
+
+
+def test_normalize_saved_cmdline_falls_back_on_unbalanced_quote():
+    # Nothing guarantees the collapsed string was ever valid shell
+    # syntax — shlex.split() raising must not crash the restore, and
+    # must not silently produce a different, wrong argv either.
+    bad = ['electron "unterminated']
+    assert normalize_saved_cmdline(bad) == bad
+
+
+def test_normalize_saved_cmdline_empty_list_untouched():
+    assert normalize_saved_cmdline([]) == []
 
 
 # ---------- _parse_environ ----------
@@ -184,6 +215,23 @@ def test_capture_window_floating_includes_geometry(monkeypatch):
     assert entry["y"] == 0.15
     assert entry["w"] == 0.3
     assert entry["h"] == 0.4
+
+
+def test_capture_window_normalizes_a_collapsed_cmdline_before_saving(monkeypatch):
+    # capture_window() is normalize_saved_cmdline()'s authoritative call
+    # site — a freshly-saved session.toml should already show the real,
+    # spawn-ready argv, not a raw /proc capture fixed only later at
+    # restore time. See CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash.
+    monkeypatch.setattr(
+        session_module, "read_cmdline",
+        lambda pid: ["/usr/lib/electron43/electron /usr/lib/obsidian/app.asar"],
+    )
+    monkeypatch.setattr(session_module, "read_environ", lambda pid: None)
+    window = _window("1", "obsidian", pid=111)
+
+    entry = capture_window(window, "5", _FakeProvider())
+
+    assert entry["cmdline"] == ["/usr/lib/electron43/electron", "/usr/lib/obsidian/app.asar"]
 
 
 def test_capture_window_tiled_omits_geometry(monkeypatch):

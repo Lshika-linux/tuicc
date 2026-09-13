@@ -16,6 +16,7 @@ restored on a different-resolution screen later, matching the reason
 tuicc normalizes rect everywhere else (see providers/base.py).
 """
 
+import shlex
 import tomllib
 import tomli_w
 from pathlib import Path
@@ -30,6 +31,58 @@ def _parse_cmdline(raw: bytes) -> list[str]:
     Testable without touching a real /proc file.
     """
     return [part.decode() for part in raw.split(b"\x00") if part]
+
+
+def normalize_saved_cmdline(cmdline: list[str]) -> list[str]:
+    """A saved session entry's cmdline, as it should actually be handed
+    to spawn_detached() — almost always a no-op, since _parse_cmdline()
+    already produces a clean argv list. The one exception, found live
+    restoring a saved Obsidian entry: some Electron/Chromium versions
+    rewrite their own argv memory on Linux to show a friendlier name in
+    `ps`/`top` (a well-known setproctitle-style trick), and do it by
+    overwriting the null-byte argv separators with plain spaces — so
+    what was really invoked as ["electron", "/path/app.asar"] shows up
+    in /proc/<pid>/cmdline, by the time tuicc reads it, as a SINGLE
+    argument: "electron /path/app.asar". Handed to spawn_detached() as a
+    one-element list, that's an argv of one nonexistent path (the space
+    is part of the "filename"), not two real arguments — a plain ENOENT,
+    not anything specific to Obsidian.
+
+    Only re-split when there's exactly one argv element AND it contains
+    whitespace — every multi-element cmdline (the overwhelming majority)
+    is returned untouched, so this can't rewrite a normal, correctly-
+    captured launch command. shlex.split() raising ValueError (a stray
+    unbalanced quote — nothing here guarantees the collapsed string was
+    ever valid shell syntax to begin with) falls back to the original
+    single element unchanged, so a spawn that would have failed with
+    today's plain ENOENT still fails exactly that way, not with an
+    uncaught exception.
+
+    Known, accepted cost of the heuristic itself: a genuinely single-
+    argument command whose one argument is an executable path that
+    contains a literal space (rare on Linux, not impossible) gets
+    incorrectly split too. Narrower than applying this to every cmdline
+    shape, and the failure mode it fixes is far more common in practice
+    — see CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash.
+
+    Called from two places, deliberately, not just one:
+    capture_window() is the authoritative point — a freshly-saved
+    session.toml should already show the real, spawn-ready argv, not a
+    raw /proc capture that only becomes correct via a later invisible
+    step (session files are plain, user-editable TOML; what's on disk
+    ought to be honest about what will actually run). promote_restore_queue()
+    also calls it, purely as a backward-compatible safety net for a
+    session.toml saved before this fix existed (or hand-edited into the
+    collapsed shape) — idempotent on an already-correct multi-element
+    cmdline, so calling it twice on a freshly-saved entry is a no-op,
+    not a double-transform.
+    """
+    if len(cmdline) != 1 or not any(ch.isspace() for ch in cmdline[0]):
+        return cmdline
+    try:
+        return shlex.split(cmdline[0])
+    except ValueError:
+        return cmdline
 
 
 def read_cmdline(pid: int) -> list[str] | None:
@@ -104,6 +157,15 @@ def capture_window(window: Window, region_id: str, provider) -> dict | None:
     read_environ() succeeds, omitted (not entry=None) when it doesn't
     — see CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for
     why it matters.
+
+    cmdline goes through normalize_saved_cmdline() before it's saved —
+    deliberately here, not only at restore time: a saved session.toml is
+    "plain TOML, user-editable like everything else in tuicc" (this
+    module's own docstring), so what's on disk should already be the
+    real, correct, spawn-ready argv a person could read or hand-edit,
+    not a raw /proc capture that only becomes right via an invisible
+    step at restore. See normalize_saved_cmdline()'s own docstring for
+    why the fix is applied at BOTH points, not just this one.
     """
     pid = window.pid if window.pid is not None else provider.resolve_pid(window.id)
     if pid is None:
@@ -112,6 +174,7 @@ def capture_window(window: Window, region_id: str, provider) -> dict | None:
     cmdline = read_cmdline(pid)
     if cmdline is None:
         return None
+    cmdline = normalize_saved_cmdline(cmdline)
 
     entry = {
         "app_id": window.app_id,
