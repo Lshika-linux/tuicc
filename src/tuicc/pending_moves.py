@@ -41,6 +41,7 @@ from pathlib import Path
 from tuicc.actions import spawn_detached
 from tuicc.model import Window
 from tuicc.procmon import scan_all_processes, build_children_map, subtree_pids
+from tuicc.winrestore import resolve_launch_argv
 from tuicc.wm_config_parser import resolve_workspace_target
 
 SPAWN_LOG_DIR = Path.home() / ".config" / "tuicc" / "logs"
@@ -122,31 +123,79 @@ class PendingMovesQueue:
     claimed_window_ids, only cleared once entries is fully drained, not
     per-entry. last_restore_launch gates promote_restore_queue's
     staggering.
+
+    resolved_tags accumulates {tag: matched_window_id} for every entry
+    that carried a "tag" (see queue_restore_entry's own docstring) and
+    matched — populated by process() below, consumed (popped) by
+    winrestore.advance_tree_build()'s own per-frame tick. Persists on
+    the queue itself, not just process()'s return value, because the
+    tag's OWN consumer (the tiled-tree builder) runs BEFORE process()
+    each frame (see frame_update.py's own call order) — a tag that
+    resolves on frame N is only visible to the builder on frame N+1,
+    exactly the same one-frame lag every other "drive a queue one step
+    per frame" mechanism in this codebase already has. Ordinary
+    launcher spawns and flat winrestore entries never set a tag, so
+    they never appear here — zero behavior change for either.
     """
     entries: list = field(default_factory=list)
     claimed_ids: set = field(default_factory=set)
     last_restore_launch: float = 0.0
+    resolved_tags: dict = field(default_factory=dict)
 
 
 def queue_restore_entry(
     queue: PendingMovesQueue, session_entry: dict, known_ids: set, pid, now: float,
     log_path: Path | None = None,
 ) -> None:
-    """Appends one entry for a session-restore spawn. Carries
-    floating+rect when the saved window was floating (session.py's
-    saved shape) — queue_launcher_spawn below never does, since the
-    launcher has no saved geometry to restore. log_path mirrors
-    queue_launcher_spawn's own param, same reason — promote_restore_queue
-    below already captures spawn_detached()'s output for a different
-    reason (CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash);
+    """Appends one entry for a winrestore spawn. Carries floating+rect
+    when the saved window was floating (winrestore.py's saved shape)
+    — queue_launcher_spawn below never does, since the launcher has no
+    saved geometry to restore. log_path mirrors queue_launcher_spawn's
+    own param, same reason — promote_restore_queue below already
+    captures spawn_detached()'s output for a different reason
+    (CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash);
     threading the same path through here means a fast nonzero-exit
     failure toast can reference it too, not just launcher spawns.
+
+    pid is deliberately passed as None by promote_restore_queue's own
+    caller for every winrestore entry, even though spawn_detached()
+    really did return a real pid — winrestore entries relaunch by
+    app_id (via resolve_launch_argv(), never a captured cmdline
+    anymore) and match by app_id-tier only (resolve_pending_move()'s
+    second tier below), on purpose: nothing here should ever depend on
+    the spawned process's pid matching the eventual window's owning
+    pid, which is exactly the assumption that made the fork/exec
+    pid-mismatch class of failure (CLAUDE/NOTES/known-limitations.md
+    #fork-exec-pid-mismatch) possible in the first place. Passing None
+    here reuses resolve_pending_move()'s existing, already-tested
+    app_id tier outright rather than needing a second matcher — see
+    CLAUDE/NOTES/design-decisions.md#winrestore-app-id-capture.
+    queue_launcher_spawn below is unaffected — a plain typed launch
+    still passes its real pid and still gets pid-tier matching, since
+    an ordinary launcher spawn has no reason to give that up.
     root_pid/known_pids: see resolve_pending_move()'s own docstring —
     root_pid is the immutable seed process() walks the descendant tree
     from every frame (independent of "pid" above, which DOES get
     cleared on a tier downgrade); known_pids is what actually gets
     matched against, grown (never shrunk) as real descendants are
-    observed.
+    observed. Both stay empty/None here since pid is always None for
+    this call site now.
+
+    placed_by_wm: dead weight from the retired append_layout mechanism
+    (CLAUDE/NOTES/design-decisions.md#append-layout-tiled-restore) —
+    every winrestore entry gets placed the ordinary way now, so this is
+    always False/absent in practice, but process() below still honors
+    it if a caller ever sets it (cheaper to leave the one-line check in
+    than to rip out a still-correct escape hatch).
+
+    tag (default None): an opaque, caller-chosen label — set only by
+    winrestore.py's tree-builder (advance_tree_build(), one leaf at a
+    time, never more than one tagged entry in flight simultaneously) so
+    it can tell WHICH of its own build steps a resolved window belongs
+    to. process() copies a matched entry's tag into
+    queue.resolved_tags[tag] = window_id; an entry with no tag (every
+    ordinary launcher spawn, every flat winrestore leaf) never touches
+    that dict at all.
     """
     entry = {
         "target_region": session_entry["target_region"],
@@ -157,6 +206,8 @@ def queue_restore_entry(
         "app_id": session_entry["app_id"],
         "started_at": now,
         "floating": session_entry.get("floating", False),
+        "placed_by_wm": session_entry.get("placed_by_wm", False),
+        "tag": session_entry.get("tag"),
         "log_path": log_path,
     }
     if entry["floating"]:
@@ -169,7 +220,7 @@ def queue_restore_entry(
 
 def queue_launcher_spawn(
     queue: PendingMovesQueue, target_region, known_ids: set, pid, app_id_hint, now: float,
-    log_path: Path | None = None,
+    log_path: Path | None = None, tag: str | None = None,
 ) -> None:
     """Appends one entry for a launcher-confirmed spawn — never carries
     floating/rect, unlike queue_restore_entry's entries. log_path (when
@@ -178,6 +229,14 @@ def queue_launcher_spawn(
     user's failure toast can point at real captured stderr instead of
     just an exit code. root_pid/known_pids — see queue_restore_entry's
     own docstring, same reasoning.
+
+    tag (default None): set only when the launcher's own placement-mode
+    picker (modules/launcher.py's LauncherState.placement_mode) asked
+    for anything other than plain `tiled` placement — main.py registers
+    a matching entry on a PlacementQueue before calling this, and
+    advance_placements() acts on it once process() resolves this tag
+    into queue.resolved_tags. Same mechanism queue_restore_entry's own
+    tag already uses — see PendingMovesQueue.resolved_tags' docstring.
     """
     queue.entries.append({
         "target_region": target_region,
@@ -187,44 +246,57 @@ def queue_launcher_spawn(
         "known_pids": {pid} if pid is not None else set(),
         "app_id": app_id_hint,
         "started_at": now,
+        "tag": tag,
         "log_path": log_path,
     })
 
 
-def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: list, known_ids: set, now: float) -> str | None:
+def promote_restore_queue(queue: PendingMovesQueue, provider, restore_queue: list, known_ids: set, now: float, desktop_apps=()) -> str | None:
     """Pops one entry off restore_queue and spawns it, staggered by
     RESTORE_STAGGER_SECONDS. No-ops if restore_queue is empty (checked
     before the stagger-time comparison, so an empty queue never blocks
-    a later real restore on a stale timestamp). Passes
-    session_entry.get("env") through to spawn_detached() and a log_path
-    under SPAWN_LOG_DIR — see
-    CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash for why.
+    a later real restore on a stale timestamp).
 
-    Returns a one-line failure message (see _spawn_failure_message) if
-    spawn_detached() couldn't even start the process at all, None on an
-    ordinary successful spawn (the overwhelmingly common case) or when
-    nothing was due this frame. On failure, nothing gets queued — no
-    pid means no window will ever match this entry — so the caller
-    doesn't need to do anything with queue.entries itself.
+    Relaunches via resolve_launch_argv() (winrestore.py) — the app's
+    own .desktop Exec= command, the same reliable, $PATH-resolved path
+    launcher.py's own spawns already use — rather than ever replaying a
+    captured raw argv (see CLAUDE/NOTES/design-decisions.md
+    #winrestore-app-id-capture for why that approach kept breaking on
+    real machines). desktop_apps is launcher.get_apps()'s own cached
+    list; default () means "no match possible", same as an app with no
+    .desktop entry at all.
+
+    Returns a one-line failure message when nothing could be relaunched
+    at all — either no matching .desktop entry (see
+    resolve_launch_argv()) or spawn_detached() itself couldn't start
+    the process (see _spawn_failure_message) — None on an ordinary
+    successful spawn (the overwhelmingly common case) or when nothing
+    was due this frame. On failure, nothing gets queued — no window
+    will ever match this entry — so the caller doesn't need to do
+    anything with queue.entries itself.
     """
     if not restore_queue:
         return None
     if now - queue.last_restore_launch < RESTORE_STAGGER_SECONDS:
         return None
     session_entry = restore_queue.pop(0)
-    log_path = SPAWN_LOG_DIR / f"restore_{session_entry['app_id']}_{int(time.time())}.log"
-    pid = spawn_detached(
-        session_entry["cmdline"], shell_true=False, log_path=log_path,
-        env=session_entry.get("env"),
-    )
     queue.last_restore_launch = now
+    argv = resolve_launch_argv(session_entry["app_id"], desktop_apps)
+    if argv is None:
+        return f"{session_entry['app_id']} could not be started: no launcher entry found"
+    log_path = SPAWN_LOG_DIR / f"winrestore_{session_entry['app_id']}_{int(time.time())}.log"
+    pid = spawn_detached(argv, shell_true=False, log_path=log_path)
     if pid is None:
         return _spawn_failure_message(session_entry, log_path)
     # See Provider.no_focus_next_window()'s docstring — called right
     # after the pid is known, well before the restored window has had a
-    # chance to map and steal focus/fullscreen from tuicc.
+    # chance to map and steal focus/fullscreen from tuicc. Unrelated to
+    # matching (see queue_restore_entry()'s own docstring for why pid
+    # itself is NOT threaded through below) — this is a one-shot WM
+    # for_window rule keyed on the real spawned pid, still valid even
+    # though matching itself now ignores pid entirely.
     provider.no_focus_next_window(pid)
-    queue_restore_entry(queue, session_entry, known_ids, pid, now, log_path)
+    queue_restore_entry(queue, session_entry, known_ids, None, now, log_path)
     return None
 
 
@@ -450,22 +522,43 @@ def process(
         if match is not None:
             queue.claimed_ids.add(match.id)
             # entry["target_region"] is always a bare workspace number
-            # (session.py/queue_launcher_spawn both record it that
+            # (winrestore.py/queue_launcher_spawn both record it that
             # way) — resolve it against wm_config's own parsed full
             # names first, so a target that doesn't live-exist yet gets
             # CREATED under the user's configured name (e.g. "8:VIII")
             # instead of a same-numbered bare one. Self-healing for
-            # sessions saved before this existed too — see
+            # layouts saved before this existed too — see
             # wm_config_parser.resolve_workspace_target()'s own
             # docstring. wm_config=None (no autodetect data) leaves
             # target_region unchanged, today's exact behavior.
             target_region = resolve_workspace_target(
                 entry["target_region"], wm_config.workspace_names if wm_config is not None else None,
             )
-            provider.move_window_to_region(match.id, target_region)
+            # placed_by_wm: dead weight from the retired append_layout
+            # mechanism (see queue_restore_entry()'s own docstring) —
+            # every real entry today reaches this unset/False, but the
+            # skip stays correct if anything ever sets it again.
+            if not entry.get("placed_by_wm"):
+                # Floating BEFORE the workspace move, not after — a
+                # container's `floating enable` re-homes it onto
+                # whatever workspace is CURRENTLY FOCUSED (real,
+                # live-confirmed sway behavior, see CLAUDE/NOTES/
+                # design-decisions.md#floating-enable-workspace-
+                # reparenting), so doing the move first only gets
+                # silently undone the moment set_floating_geometry()
+                # runs. A floating container's own geometry survives a
+                # SUBSEQUENT move just fine (confirmed live) — this
+                # order is the fix, not a redundant move needed here.
+                if entry.get("floating"):
+                    provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
+                provider.move_window_to_region(match.id, target_region)
+            if entry.get("tag") is not None:
+                # See PendingMovesQueue.resolved_tags' own docstring —
+                # winrestore.py's tree-builder pops this on a LATER
+                # frame (it runs before process() each frame_update()
+                # call), never this same one.
+                queue.resolved_tags[entry["tag"]] = match.id
             resolved_target_regions.append(target_region)
-            if entry.get("floating"):
-                provider.set_floating_geometry(match.id, entry["target_region"], entry["rect"])
             if not dismissed:
                 # target_region (resolved above), not entry["target_region"]
                 # (always bare) — own_region_id is loop_state.
@@ -513,3 +606,95 @@ def process(
     if not queue.entries:
         queue.claimed_ids.clear()
     return PendingMovesResult(reclaimed_focus, resolved_target_regions, failures)
+
+
+# Centered, no-saved-geometry default for a freshly launched floating
+# window — unlike winrestore's own floating restore (a real saved
+# normalized rect), a plain launcher spawn with `floating` chosen from
+# the placement-mode picker has nothing to restore, just a reasonable
+# starting size/position. Normalized 0..1, same space
+# set_floating_geometry() already expects.
+DEFAULT_FLOATING_RECT = (0.25, 0.25, 0.5, 0.5)
+
+
+@dataclass
+class PendingPlacement:
+    """One launcher spawn's own extra placement action, held until its
+    tag resolves — see PlacementQueue's own docstring. mode is one of
+    "stack_new"/"tab_new" (Provider.set_container_layout()), an
+    existing group's label like "S1"/"T1" (Provider.move_window_to_group(),
+    container_id set), or "floating" (Provider.set_floating_geometry());
+    "tiled" never reaches here at all — see queue_launcher_spawn()'s own
+    docstring, main.py only registers a PendingPlacement for anything
+    OTHER than plain tiled placement.
+    """
+    mode: str
+    container_id: str | None
+    region_id: str
+
+
+@dataclass
+class PlacementQueue:
+    """Drives the launcher's own placement-mode picker (modules/
+    launcher.py's LauncherState.placement_mode) — see CLAUDE/NOTES/
+    design-decisions.md#launcher-placement-mode. Reuses the exact same
+    tag/resolved_tags plumbing winrestore.py's TreeBuildState already
+    established (PendingMovesQueue.resolved_tags' own docstring) rather
+    than inventing a second mechanism: main.py registers one
+    PendingPlacement per tagged launcher spawn here, right before
+    calling queue_launcher_spawn() with that same tag; advance_placements()
+    below drains it once pending_moves.process() resolves the tag.
+    Unlike winrestore's tree-builder, MULTIPLE tags can be pending here
+    simultaneously (several launcher spawns in flight at once is
+    already an ordinary, supported case — see GUIDE.md's own
+    verification checklist), so this is a plain dict, not a
+    single-slot state machine.
+    """
+    pending: dict = field(default_factory=dict)
+
+
+def advance_placements(state: PlacementQueue, moves: PendingMovesQueue, provider) -> None:
+    """Call every frame (frame_update.py, same spot advance_tiled_restore()/
+    process() already run) — a cheap no-op whenever nothing's pending.
+    For every tag in state.pending that has now resolved in
+    moves.resolved_tags, pops both and dispatches the one matching
+    action: "stack_new"/"tab_new" -> Provider.set_container_layout()
+    (grouping the freshly-placed window with whatever's already on that
+    workspace — real mod4+S semantics, see set_container_layout()'s own
+    docstring); an existing group's label -> Provider.move_window_to_group()
+    (precise, mark-based targeting of ONE specific group, not just
+    "whatever's there"); "floating" -> Provider.set_floating_geometry()
+    with DEFAULT_FLOATING_RECT. A provider that doesn't support the
+    needed method just no-ops via its own default (False/None) — no
+    further fallback needed here, since main.py's own confirm-time
+    resolution (handle_launcher()) already downgrades to plain `tiled`
+    (never registers a PendingPlacement at all) whenever the provider
+    can't support the picked mode, checked once, right there.
+    """
+    if not state.pending:
+        return
+    resolved = [tag for tag in state.pending if tag in moves.resolved_tags]
+    for tag in resolved:
+        placement = state.pending.pop(tag)
+        window_id = moves.resolved_tags.pop(tag)
+        if placement.mode == "stack_new":
+            provider.set_container_layout(window_id, "stacked")
+        elif placement.mode == "tab_new":
+            provider.set_container_layout(window_id, "tabbed")
+        elif placement.mode == "floating":
+            provider.set_floating_geometry(window_id, placement.region_id, DEFAULT_FLOATING_RECT)
+            # set_floating_geometry()'s own `floating enable` re-homes
+            # the container onto WHATEVER'S CURRENTLY FOCUSED — a real,
+            # live-confirmed sway behavior (CLAUDE/NOTES/design-
+            # decisions.md#floating-enable-workspace-reparenting), not a
+            # bug in this call itself — undoing the ordinary
+            # move_window_to_region() process() already made for this
+            # entry moments ago. A floating container's own geometry
+            # and floating-ness survive being moved again afterward
+            # (confirmed live), so re-issuing the move right here is
+            # the fix — cheaper than reordering process()'s own,
+            # already-unconditional move for every entry just to save
+            # one extra IPC call on this one mode.
+            provider.move_window_to_region(window_id, placement.region_id)
+        elif placement.container_id is not None:
+            provider.move_window_to_group(window_id, placement.container_id)

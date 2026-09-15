@@ -303,7 +303,7 @@ def handle_editing_key(
     boxes: dict, term_width: int, term_height: int,
 ) -> EditKeyResult:
     """cfg passed wholesale, matching launcher.handle_typing_key/
-    sessions.handle_naming_key/sysmon.handle_nice_key's own established
+    winrestore.handle_naming_key/sysmon.handle_nice_key's own established
     shape — reading cfg.keybinds/cfg.layout.boxes as a value is fine;
     the module-boundary rule is about not importing config.py to build
     or persist a Config, which this doesn't do.

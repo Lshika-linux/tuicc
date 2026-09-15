@@ -20,7 +20,7 @@ from i3ipc import Con
 from tuicc.frame_update import reset_ui_state, update_frame
 from tuicc.loop_state import LoopState
 from tuicc.modules import connectivity as connectivity_mode
-from tuicc.modules import sessions as sessions_mode
+from tuicc.modules import winrestore as winrestore_mode
 from tuicc.modules import sysmon as sysmon_mode
 from tuicc.modules.launcher import LauncherState
 from tuicc.resize_mode import ResizeState, SpawnPickerState, enter_edit_mode
@@ -30,8 +30,10 @@ from tuicc.actions import ActionContext
 from tuicc.app_setup import AppContext
 from tuicc.procmon import PidFeed
 from tuicc.providers.sway import parse_tree
-from tuicc import pending_moves
-from tuicc.pending_moves import PendingMovesQueue, MOVE_TIMEOUT_SECONDS
+from tuicc import pending_moves, winrestore
+from tuicc.pending_moves import PendingMovesQueue, PlacementQueue, MOVE_TIMEOUT_SECONDS
+from tuicc.winrestore import TiledRestoreState
+from tuicc.wm_config_parser import WmConfigInfo
 from tuicc.connectivity.model import WifiNetwork
 
 from _curses_stub import FakeStdscr
@@ -154,12 +156,12 @@ def test_reset_ui_state_stops_connectivity_browsing():
 
 
 def test_reset_ui_state_cancels_an_in_progress_session_rename():
-    sessions_mode.start_naming(1, "old name")
-    assert sessions_mode.is_naming() is True
+    winrestore_mode.start_naming(1, "old name")
+    assert winrestore_mode.is_naming() is True
 
     _reset(_dirty_loop_state())
 
-    assert sessions_mode.is_naming() is False
+    assert winrestore_mode.is_naming() is False
 
 
 def test_reset_ui_state_cancels_an_in_progress_nice_edit():
@@ -218,9 +220,17 @@ class _FakeProvider:
         self.focus_self_calls = 0
         self.no_focus_next_window_calls = []
         self.resolved_pids = {}
+        self.layout_calls = []
+        self.layout_results = {}
+        self.groups_by_region = {}
+        self.list_container_groups_calls = []
 
     def get_state(self):
         return self.state
+
+    def list_container_groups(self, region_id):
+        self.list_container_groups_calls.append(region_id)
+        return self.groups_by_region.get(region_id, [])
 
     def self_focused(self):
         return self.self_focused_value
@@ -240,6 +250,14 @@ class _FakeProvider:
 
     def no_focus_next_window(self, pid):
         self.no_focus_next_window_calls.append(pid)
+
+    # ---- winrestore.advance_tree_build()'s own needs ----
+    def set_container_layout(self, window_id, layout):
+        self.layout_calls.append((window_id, layout))
+        key = (window_id, layout)
+        if key in self.layout_results:
+            return self.layout_results[key]
+        return f"wrapper_of_{window_id}"
 
 
 class _FakeStatusWorker:
@@ -302,7 +320,7 @@ class _FakeCavaReader:
         return None
 
 
-def _app(tmp_path, monkeypatch, provider=None, status=None, wifi_agent=None, bluez_agent=None, action_ctx=None):
+def _app(tmp_path, monkeypatch, provider=None, status=None, wifi_agent=None, bluez_agent=None, action_ctx=None, wm_config=None):
     cfg = load_packaged_default_config(tmp_path, monkeypatch)
     theme_pairs = {
         "accent": 1, "text": 2, "urgent": 3, "border": 4,
@@ -323,11 +341,11 @@ def _app(tmp_path, monkeypatch, provider=None, status=None, wifi_agent=None, blu
         status_worker=status,
         cava_reader=_FakeCavaReader(),
         action_ctx=action_ctx,
-        wm_config=None,
+        wm_config=wm_config,
     )
 
 
-def _frame(app, loop_state, moves=None, resize=None, spawn_picker=None, help_state=None, launcher=None):
+def _frame(app, loop_state, moves=None, resize=None, spawn_picker=None, help_state=None, launcher=None, tiled_restore=None, placements=None):
     return update_frame(
         FakeStdscr(), app, loop_state,
         resize if resize is not None else ResizeState(),
@@ -335,6 +353,8 @@ def _frame(app, loop_state, moves=None, resize=None, spawn_picker=None, help_sta
         help_state if help_state is not None else HelpState(),
         launcher if launcher is not None else LauncherState(),
         moves if moves is not None else PendingMovesQueue(),
+        tiled_restore if tiled_restore is not None else TiledRestoreState(),
+        placements if placements is not None else PlacementQueue(),
     )
 
 
@@ -418,11 +438,16 @@ def test_timed_out_pending_move_sets_a_failure_toast(tmp_path, monkeypatch):
 
 
 def test_restore_queue_spawn_failure_sets_a_failure_toast(tmp_path, monkeypatch):
+    # resolve_launch_argv() mocked directly (not via a real desktop_apps
+    # match) — isolates this test to the "spawn_detached() itself
+    # failed" path, independent of whatever .desktop files happen to
+    # exist on the machine running the suite.
+    monkeypatch.setattr(pending_moves, "resolve_launch_argv", lambda app_id, desktop_apps: ["obsidian"])
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: None)
     provider = _FakeProvider()
     action_ctx = ActionContext(
         provider=provider, status=_FakeStatusWorker(),
-        restore_queue=[{"cmdline": ["/nonexistent"], "target_region": "2", "app_id": "obsidian"}],
+        restore_queue=[{"target_region": "2", "app_id": "obsidian", "floating": False}],
     )
     app = _app(tmp_path, monkeypatch, provider=provider, action_ctx=action_ctx)
     loop_state = LoopState()
@@ -431,6 +456,101 @@ def test_restore_queue_spawn_failure_sets_a_failure_toast(tmp_path, monkeypatch)
 
     assert loop_state.resize_message is not None
     assert action_ctx.restore_queue == []
+
+
+def test_pending_layout_regions_drains_into_restore_queue_and_spawns(tmp_path, monkeypatch):
+    # See ActionContext.pending_layout_regions' own docstring — one
+    # frame after a "load" queues region-shaped entries there,
+    # update_frame() absorbs them into tiled_restore's own queue and
+    # runs one step of winrestore.advance_tiled_restore() — a
+    # tree-less region (only tiled_flat here) skips straight to its
+    # "flat" phase in that one step, so the flattened entry reaches
+    # restore_queue and (same frame — pending_moves.promote_restore_queue()
+    # runs unconditionally right after) gets spawned too. No "tiled"
+    # tree here — no TreeBuildState/set_container_layout() calls
+    # needed, see test_pending_layout_regions_tiled_region_waits_before_
+    # advancing below for the sequential-with-a-tree case.
+    monkeypatch.setattr(pending_moves, "resolve_launch_argv", lambda app_id, desktop_apps: ["kitty"])
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)
+    provider = _FakeProvider()
+    action_ctx = ActionContext(
+        provider=provider, status=_FakeStatusWorker(),
+        pending_layout_regions=[{"target_region": "2", "tiled_flat": [{"app_id": "kitty"}]}],
+    )
+    app = _app(tmp_path, monkeypatch, provider=provider, action_ctx=action_ctx)
+    loop_state = LoopState()
+    moves = PendingMovesQueue()
+
+    _frame(app, loop_state, moves=moves)
+
+    assert action_ctx.pending_layout_regions == []
+    assert action_ctx.restore_queue == []  # already popped and spawned this same frame
+    assert len(moves.entries) == 1
+    assert moves.entries[0]["target_region"] == "2"
+    assert moves.entries[0]["placed_by_wm"] is False
+
+
+def test_pending_layout_regions_tiled_region_waits_before_advancing(tmp_path, monkeypatch):
+    # See CLAUDE/NOTES/design-decisions.md#append-layout-doesnt-exist-on-sway
+    # — two regions must never both be "in flight" at once, so a second
+    # queued region must not start on the same frame the first region's
+    # tiled leaf is still unmatched. resolve_launch_argv/spawn_detached
+    # mocked so the tiled leaf actually spawns (a real pid, kept
+    # unmatched by not advancing current_windows past known_ids — see
+    # WMState() below).
+    monkeypatch.setattr(pending_moves, "resolve_launch_argv", lambda app_id, desktop_apps: ["kitty"])
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)
+    provider = _FakeProvider()
+    tree = {"type": "window", "app_id": "kitty"}  # trivial (single-window) — flat "tiled" phase, no TreeBuildState
+    action_ctx = ActionContext(
+        provider=provider, status=_FakeStatusWorker(),
+        pending_layout_regions=[
+            {"target_region": "1", "tiled": tree},
+            {"target_region": "2", "tiled_flat": [{"app_id": "firefox"}]},
+        ],
+    )
+    app = _app(tmp_path, monkeypatch, provider=provider, action_ctx=action_ctx)
+    loop_state = LoopState()
+    moves = PendingMovesQueue()
+    tiled_restore = TiledRestoreState()
+
+    _frame(app, loop_state, moves=moves, tiled_restore=tiled_restore)
+
+    # Region "1"'s own tiled leaf spawned and is still unmatched (no
+    # real window for it in app.provider.state) — region "2" must not
+    # have started yet, still sitting in tiled_restore's own queue.
+    assert tiled_restore.active_region_id == "1"
+    assert tiled_restore.active_phase == "tiled"
+    assert len(tiled_restore.queued_regions) == 1
+    assert tiled_restore.queued_regions[0]["target_region"] == "2"
+    assert moves.entries[0]["pid"] is None  # app_id-tier matching, not pid-tier — see queue_restore_entry()
+
+
+def test_pending_layout_regions_tree_build_resolves_against_wm_config(tmp_path, monkeypatch):
+    # Found live: a custom-named workspace ("2:II") that doesn't
+    # live-exist yet got created bare as literally "2" instead —
+    # app.wm_config's own workspace_names must reach the TreeBuildState
+    # a real split tree gets, the same way it already reaches
+    # pending_moves.process()'s own move_window_to_region() calls. See
+    # CLAUDE/NOTES/design-decisions.md#append-layout-doesnt-exist-on-sway.
+    provider = _FakeProvider()
+    tree = {
+        "type": "split", "layout": "tabbed",
+        "children": [{"type": "window", "app_id": "firefox"}, {"type": "window", "app_id": "kitty"}],
+    }
+    action_ctx = ActionContext(
+        provider=provider, status=_FakeStatusWorker(),
+        pending_layout_regions=[{"target_region": "2", "tiled": tree}],
+    )
+    wm_config = WmConfigInfo(workspace_names=["1:I", "2:II"])
+    app = _app(tmp_path, monkeypatch, provider=provider, action_ctx=action_ctx, wm_config=wm_config)
+    loop_state = LoopState()
+    tiled_restore = TiledRestoreState()
+
+    _frame(app, loop_state, tiled_restore=tiled_restore)
+
+    assert tiled_restore.active_phase == "tree"
+    assert tiled_restore.tree_build.target_region == "2:II"
 
 
 def test_stale_selection_recovers_to_the_focused_region(tmp_path, monkeypatch):
@@ -489,3 +609,27 @@ def test_connectivity_browsing_selection_follows_the_list_emptying_and_refilling
         assert loop_state.selected_id == "connectivity:wifi:MyWifi"
     finally:
         connectivity_mode.stop_browsing()
+
+
+def test_launcher_placement_options_reflect_live_existing_groups(tmp_path, monkeypatch):
+    provider = _FakeProvider()
+    provider.groups_by_region = {"2": [{"label": "S1", "container_id": "10"}]}
+    app = _app(tmp_path, monkeypatch, provider=provider)
+    loop_state = LoopState(focus_id="2")
+    launcher = LauncherState(typing_mode=True, placement_mode="tiled")
+
+    frame = _frame(app, loop_state, launcher=launcher)
+
+    assert frame.ctx.launcher_placement_options == ["tiled", "stack_new", "tab_new", "S1", "floating"]
+
+
+def test_launcher_placement_options_empty_and_no_ipc_call_when_not_typing(tmp_path, monkeypatch):
+    provider = _FakeProvider()
+    app = _app(tmp_path, monkeypatch, provider=provider)
+    loop_state = LoopState(focus_id="2")
+    launcher = LauncherState(typing_mode=False)
+
+    frame = _frame(app, loop_state, launcher=launcher)
+
+    assert frame.ctx.launcher_placement_options == []
+    assert provider.list_container_groups_calls == []

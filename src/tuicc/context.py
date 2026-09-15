@@ -22,6 +22,22 @@ class RenderContext:
     typing_mode: bool = False
     search_query: str = ""
     search_selected_index: int = 0
+    # launcher.LauncherState.placement_mode's own raw label ("tiled",
+    # "stack_new"/"tab_new", an existing group's own "S1"/"T1"/..., or
+    # "floating") — sidebar.py's own "launching here (...)" label calls
+    # launcher_mode.placement_mode_display() on this to build the
+    # friendly text. See CLAUDE/NOTES/design-decisions.md
+    # #launcher-placement-mode.
+    launcher_placement_mode: str = "tiled"
+    # The FULL live cycle order (launcher_mode.placement_mode_options()'s
+    # own return shape) for the target region right now — tiled/
+    # stack_new/tab_new/any real existing group's own label ("S1"/"T1"/
+    # ...)/floating — so the launcher box's own condensed row can show
+    # a real existing group as its own entry, not just the 4 fixed
+    # categories. Empty only while not typing (frame_update.py never
+    # queries it then) — modules/launcher.py's own draw() already
+    # returns before ever reading this in that case.
+    launcher_placement_options: list = field(default_factory=list)
     # None (not just an empty list) is a real value here, not just the
     # unset default — see status_worker.py's StatusWorker.get() and
     # modules/connectivity.py's _build_rows: it means the last poll for
@@ -51,15 +67,15 @@ class RenderContext:
     # selected_item already use. See navigation.py's own preview_data
     # docstring for what this is for.
     preview_renderers: dict = field(default_factory=dict)
-    # {target_region: [app_id, ...]} for whichever session slot is
-    # currently expanded in the Sessions module (None if none is, or
-    # that slot has nothing saved) — main.py reads sessions.py's own
+    # {target_region: [app_id, ...]} for whichever slot is currently
+    # expanded in the Sessions module (None if none is, or that slot
+    # has nothing saved) — main.py reads winrestore.py's own
     # expanded_preview() once per frame and threads it through here so
     # sidebar.py can render a while-you're-looking preview of what LOAD
     # would actually spawn and where, the same "modules talk only
     # through main.py-computed values" pattern focus_id already uses
-    # for preview.py, not sidebar.py reaching into sessions.py directly.
-    session_preview: dict | None = None
+    # for preview.py, not sidebar.py reaching into winrestore.py directly.
+    winrestore_preview: dict | None = None
     # {(toggle_index, state_index): curses_color_pair} for every
     # [[control.toggle.state]] with an explicit `color` — built once at
     # startup by theme_setup.assign_control_toggle_pairs(), not

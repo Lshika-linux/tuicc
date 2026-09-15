@@ -21,7 +21,7 @@ def _cfg():
     return SimpleNamespace(terminal_apps=set(), browser_apps=set(), browser_title_names=set())
 
 
-def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None, wm_config=None):
+def _ctx(regions, total_workspaces=3, selected_id=None, winrestore_preview=None, wm_config=None):
     return SimpleNamespace(
         state=WMState(regions=regions),
         config=SimpleNamespace(
@@ -29,7 +29,7 @@ def _ctx(regions, total_workspaces=3, selected_id=None, session_preview=None, wm
             **vars(_cfg()),
         ),
         selected_id=selected_id,
-        session_preview=session_preview,
+        winrestore_preview=winrestore_preview,
         typing_mode=False,
         focus_id=None,
         wm_config=wm_config,
@@ -186,20 +186,20 @@ def test_grouped_window_rows_reorders_so_group_rows_stay_adjacent():
 
 # ---------- _preview_apps_for ----------
 
-def test_preview_apps_for_no_session_preview_returns_empty_list():
-    ctx = _ctx(regions=[], session_preview=None)
+def test_preview_apps_for_no_winrestore_preview_returns_empty_list():
+    ctx = _ctx(regions=[], winrestore_preview=None)
 
     assert _preview_apps_for(ctx, "3") == []
 
 
 def test_preview_apps_for_returns_the_matching_regions_apps():
-    ctx = _ctx(regions=[], session_preview={"3": ["kitty", "firefox"], "5": ["obsidian"]})
+    ctx = _ctx(regions=[], winrestore_preview={"3": ["kitty", "firefox"], "5": ["obsidian"]})
 
     assert _preview_apps_for(ctx, "3") == ["kitty", "firefox"]
 
 
 def test_preview_apps_for_region_with_no_preview_entries_returns_empty_list():
-    ctx = _ctx(regions=[], session_preview={"5": ["obsidian"]})
+    ctx = _ctx(regions=[], winrestore_preview={"5": ["obsidian"]})
 
     assert _preview_apps_for(ctx, "3") == []
 
@@ -311,12 +311,12 @@ def test_nav_items_height_matches_window_count():
     assert items[0].rect[3] == 4  # 2 (base) + 2 windows
 
 
-def test_nav_items_height_grows_with_a_session_preview():
+def test_nav_items_height_grows_with_a_winrestore_preview():
     # Must match draw()'s own extra rows exactly, or the highlighted/
     # clickable region and what's actually drawn drift apart the moment
     # a slot below this one shifts position.
     region = Region(id="1", name="1", windows=[_window("w1", "a")])
-    ctx = _ctx(regions=[region], total_workspaces=1, session_preview={"1": ["kitty", "firefox"]})
+    ctx = _ctx(regions=[region], total_workspaces=1, winrestore_preview={"1": ["kitty", "firefox"]})
 
     items = nav_items((0, 0, 20, 20), ctx, "sidebar")
 
@@ -325,7 +325,7 @@ def test_nav_items_height_grows_with_a_session_preview():
 
 def test_nav_items_subsequent_slot_offset_accounts_for_preview_height():
     region1 = Region(id="1", name="1", windows=[])
-    ctx = _ctx(regions=[region1], total_workspaces=2, session_preview={"1": ["kitty", "firefox", "obsidian"]})
+    ctx = _ctx(regions=[region1], total_workspaces=2, winrestore_preview={"1": ["kitty", "firefox", "obsidian"]})
 
     items = nav_items((0, 0, 20, 20), ctx, "sidebar")
 

@@ -25,7 +25,8 @@ import time
 from tuicc.navigation import NavItem, LAST_ITEM_QUERY
 from tuicc.render_utils import draw_box_outline, display_width, wc_truncate, marquee_text
 from tuicc.title_condense import condense_title
-from tuicc.wm_config_parser import resolve_workspace_target
+from tuicc.wm_config_parser import resolve_workspace_target, workspace_display_label
+from tuicc.modules.launcher import placement_mode_display
 
 
 def _grouped_window_rows(windows, cfg):
@@ -116,16 +117,17 @@ def _slot_height(region, cfg, preview_count=0):
 
 
 def _preview_apps_for(ctx, ws_id):
-    """The incoming app_ids a saved-but-not-yet-loaded session would
+    """The incoming app_ids a saved-but-not-yet-loaded layout would
     spawn onto this workspace, if the Sessions module currently has a
     slot expanded and that slot has something saved — see
-    RenderContext.session_preview's own docstring. [] the overwhelming
-    rest of the time (nothing expanded, or this workspace isn't one of
-    that session's targets), so callers never need their own None check.
+    RenderContext.winrestore_preview's own docstring. [] the
+    overwhelming rest of the time (nothing expanded, or this workspace
+    isn't one of that layout's targets), so callers never need their
+    own None check.
     """
-    if not ctx.session_preview:
+    if not ctx.winrestore_preview:
         return []
-    return ctx.session_preview.get(ws_id, [])
+    return ctx.winrestore_preview.get(ws_id, [])
 
 
 def slot_ids(regions, wm_config, total_workspaces, workspace_mode="autodetect", manual_workspace_names=None) -> list[str]:
@@ -370,11 +372,21 @@ def draw(stdscr, box, ctx, module_name):
         # anywhere while typing. Label the one slot it's actually going
         # to land on, live, for as long as typing_mode stays true.
         is_launch_target = ctx.typing_mode and ctx.focus_id == ws_id
+        display_id = ws_id if ctx.config.show_workspace_number else workspace_display_label(ws_id)
         if is_launch_target:
-            label = f" {ws_id} - launching here "
+            # See CLAUDE/NOTES/design-decisions.md#launcher-placement-mode
+            # — the placement-mode picker's own current choice, shown
+            # live right here so it's visible for as long as typing_mode
+            # stays true, same reasoning as the "launching here" label
+            # itself. ↑↓ names the keys that move WHICH region shows
+            # this label at all (handle_launcher()'s Up/Down branches,
+            # main.py) — [mode_text] matches the launcher box's own
+            # bracket style for the identical value, not parens.
+            mode_text = placement_mode_display(ctx.launcher_placement_mode)
+            label = f" {display_id} - launching here ↑↓ [{mode_text}] "
             label_color = theme.get("accent", 0) | curses.A_BOLD
         else:
-            label = f" {ws_id} "
+            label = f" {display_id} "
             label_color = text_color
         try:
             stdscr.addstr(item_y, x + 2, wc_truncate(label, max(w - 4, 0)), label_color)
@@ -435,7 +447,7 @@ def draw(stdscr, box, ctx, module_name):
                     pass
             existing_count = len(grouped)
 
-        # Apps a currently-expanded (see sessions.py) session slot would
+        # Apps a currently-expanded (see winrestore.py) slot would
         # spawn HERE if loaded — not yet real, so urgent (same role
         # power_menu uses for its destructive actions) instead of the
         # plain/bold style real windows get, and always listed after

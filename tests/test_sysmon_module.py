@@ -1,6 +1,6 @@
 """Tests for modules/sysmon.py's pure logic — expand/collapse state
-machinery (same two-level model sessions.py/media.py established, see
-test_sessions_module.py's own docstring for why module-level state is
+machinery (same two-level model winrestore.py/media.py established, see
+test_winrestore_module.py's own docstring for why module-level state is
 reset per-test by hand), the NICE input quartet, row/nav_items
 building, and handle_row/handle_action. draw() needs a real curses
 screen, left untested here, same as every other module.

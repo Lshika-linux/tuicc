@@ -164,6 +164,12 @@ total_workspaces = 10
 # always shown too, even if it's missing from here.
 workspace_mode = "autodetect"
 
+# A configured "8:VIII"-style name shows in the sidebar as just "VIII"
+# by default — the leading number is already redundant to look at once
+# it's also the slot's own position on screen. Set true to show the
+# name in full, number included, exactly as it's used in WM commands.
+# show_workspace_number = true
+
 # Strongly recommended, not just for rapid multi-launch edge cases.
 # If your launch command gives tuicc's window a known, stable app_id
 # (e.g. `kitty --app-id tuicc_scratch ...` — see README's "Summoning
@@ -437,10 +443,10 @@ metric = "swap"
 column = 3
 row = 2
 
-[sessions]
+[winrestore]
 # Display name for each of the 3 save/load/delete slots — purely
 # cosmetic, doesn't affect which file a slot reads/writes
-# (~/.config/tuicc/sessions/<N>.toml). Editable from inside tuicc too
+# (~/.config/tuicc/winrestore/<N>.toml). Editable from inside tuicc too
 # (NAME action on a slot) — doing it that way writes back here for you.
 # An empty value falls back to "Slot <N>".
 name_1 = "Slot 1"

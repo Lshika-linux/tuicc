@@ -11,7 +11,7 @@
 #
 # Most boxes below use fh: a module with a specific row count of real
 # content (control's toggle list, connectivity/media/sysmon's tables,
-# sessions/power_menu/launcher/rwb's own compact strips) needs THAT
+# winrestore/power_menu/launcher/rwb's own compact strips) needs THAT
 # MANY rows to look right — fewer and content gets clipped/unusable,
 # more and it's just wasted empty space, so scaling it proportionally
 # with the terminal is actively wrong. bars is the fw case: its
@@ -61,7 +61,7 @@
 #
 # This is tuicc's own "thesis screen" (see CLAUDE/VISION.md's R7
 # section) — captured from live use, F2/F3'd into shape rather than
-# hand-derived: left column stacks sessions/sidebar/control/power_menu,
+# hand-derived: left column stacks winrestore/sidebar/control/power_menu,
 # launcher fills the top strip with rwb in the corner, preview
 # dominates the center, bars runs the full height on the right edge,
 # and connectivity/media/sysmon share the bottom row.
@@ -70,7 +70,7 @@
 # is its own real column count, on Rafi's own daily terminal (51 rows,
 # 192 cols).
 #
-# control/connectivity/media/sessions/rwb additionally set fh_auto —
+# control/connectivity/media/winrestore/rwb additionally set fh_auto —
 # their fh gets RECOMPUTED from each module's own real content every
 # launch (how many [[control.toggle]] entries are enabled, connectivity/
 # media's own visible_slots, rwb's always-reserved-either-way row 3),
@@ -90,7 +90,7 @@
 # sidebar/preview a bit more.
 
 [[box]]
-name = "sessions"
+name = "winrestore"
 x = 0.0
 y = 0.0
 w = 0.1875

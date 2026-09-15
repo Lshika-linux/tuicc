@@ -136,8 +136,9 @@ class Provider(ABC):
         return None
 
     def resolve_pid(self, window_id: str) -> int | None:
-        """Best-effort process id for the window's owning process (e.g.
-        to relaunch it later — see session.py). Not part of the
+        """Best-effort process id for the window's owning process — used
+        by pending_moves.py's own pid-tier launcher-spawn matching and
+        by sysmon.py's per-window CPU/RAM aggregation. Not part of the
         per-frame get_state() path. Optional, default no-op returning
         None: only needed for a WM whose get_state() doesn't already put
         pid on Window (sway does; i3.py resolves via X11 _NET_WM_PID).
@@ -147,12 +148,78 @@ class Provider(ABC):
     def set_floating_geometry(self, window_id: str, region_id: str, rect: tuple[float, float, float, float]) -> None:
         """Move window_id into floating mode and position/resize it to
         rect (normalized 0..1, relative to region_id's own dimensions —
-        looked up fresh, not from when the session was saved). Used by
-        session restore. Optional, default no-op: sway/i3 both
+        looked up fresh, not from when the layout was saved). Used by
+        winrestore. Optional, default no-op: sway/i3 both
         implement it; a WM with no floating concept just leaves the
         restored window at the WM's own default placement.
         """
         pass
+
+    def get_tiled_tree(self, region_id: str) -> dict | None:
+        """Best-effort tiled/stacked/tabbed layout tree for region_id's
+        own workspace, walked straight off the WM's raw IPC tree (never
+        WMState — Region.windows is a flat list, see model.py's own
+        docstring, so there's no split/stacked/tabbed structure to read
+        off it) — see tiled_tree.py's capture_tiled_tree() for the
+        actual walk. winrestore.py's own "save" branch calls this per
+        region; a None here (or an empty tiled area) falls back to its
+        existing flat per-window capture for that one region, same
+        graceful per-region degradation as every other optional method
+        here degrades per-provider. Optional, default None: a WM whose
+        IPC has no tree/split concept at all (or one not yet wired up)
+        just never gets a tree captured for any region.
+        """
+        return None
+
+    def set_container_layout(self, window_id: str, layout: str) -> str | None:
+        """Groups window_id together with its current container siblings
+        under a new (or already-existing, extended) parent container of
+        the given layout ("splith"/"splitv"/"stacked"/"tabbed" — the one
+        "stacked"->"stacking" set-vs-read spelling asymmetry is handled
+        inside tiled_tree.set_container_layout(), not by callers), and
+        returns that container's own con id — a stable handle for
+        moving the whole group as one unit or folding a further sibling
+        into it later. Replaces the retired append_layout mechanism
+        (see CLAUDE/NOTES/design-decisions.md
+        #append-layout-doesnt-exist-on-sway for why, and
+        winrestore.py's TreeBuildState/advance_tree_build() for how
+        this is actually driven, one grouping call at a time, as real
+        windows finish spawning). Returns None on any failure — the
+        caller's own abort path (advance_tree_build()'s docstring)
+        handles that by falling back to flat placement for whatever
+        didn't make it. Optional, default None: a WM without a `layout`
+        concept (Hyprland/niri/scroll, or just not implemented yet)
+        always degrades to flat target_region placement, unchanged.
+        """
+        return None
+
+    def list_container_groups(self, region_id: str) -> list[dict]:
+        """Every top-level stacked/tabbed group already sitting on
+        region_id's own workspace, labeled S1/S2/T1/... in on-screen
+        order — see tiled_tree.list_container_groups()'s own docstring
+        for the exact shape and the "top-level only" scoping. Used by
+        the launcher's placement-mode picker (modules/launcher.py's
+        LauncherState.placement_mode) to offer "launch into S1" etc.
+        as real, named choices, not just a generic "stacked"/"tabbed".
+        Optional, default `[]`: a WM without a tree/group concept just
+        never offers an existing-group target, same graceful
+        degradation as get_tiled_tree()'s own None default.
+        """
+        return []
+
+    def move_window_to_group(self, window_id: str, container_id: str) -> bool:
+        """Moves window_id to join container_id SPECIFICALLY — see
+        tiled_tree.move_window_to_group()'s own docstring for the
+        mark-based mechanism and why set_container_layout() alone can't
+        do this (it only ever groups with whatever's already on a
+        workspace, no way to pick between two coexisting groups).
+        Returns whether it actually worked; the caller (main.py's
+        launcher confirm handling) falls back to plain `tiled`
+        placement when this isn't supported or fails, same as every
+        other optional-degrades-to-simpler-behavior method here.
+        Optional, default False.
+        """
+        return False
 
     def copy_to_clipboard(self, text: str) -> bool:
         """Copy text to the system clipboard — sysmon.py's diagnostics

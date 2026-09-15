@@ -3,7 +3,7 @@ this exists (GitHub issue #9) and what it deliberately can't cover
 (runtime/exec-generated bindings).
 """
 
-from tuicc.wm_config_parser import parse_wm_config, get_wm_config, resolve_workspace_target
+from tuicc.wm_config_parser import parse_wm_config, get_wm_config, resolve_workspace_target, workspace_display_label, bare_workspace_id
 
 
 def test_plain_numeric_bindings():
@@ -288,3 +288,46 @@ def test_resolve_workspace_target_bare_number_in_candidates_is_a_noop():
     # ("8", no colon suffix) still "matches" trivially — same value in,
     # same value out, no behavior change from today.
     assert resolve_workspace_target("8", ["1", "8", "9"]) == "8"
+
+
+# ---------- workspace_display_label ----------
+
+def test_workspace_display_label_strips_number_prefix():
+    assert workspace_display_label("8:VIII") == "VIII"
+
+
+def test_workspace_display_label_handles_multi_digit_numbers():
+    assert workspace_display_label("10:X") == "X"
+
+
+def test_workspace_display_label_passes_through_bare_number():
+    assert workspace_display_label("8") == "8"
+
+
+def test_workspace_display_label_passes_through_a_name_with_no_leading_number():
+    assert workspace_display_label("chat") == "chat"
+
+
+def test_workspace_display_label_keeps_a_colon_that_isnt_a_number_prefix():
+    # Not something real WM config text produces, but the regex must
+    # still degrade to "unchanged" rather than mangling it.
+    assert workspace_display_label("chat:general") == "chat:general"
+
+
+# ---------- bare_workspace_id ----------
+
+def test_bare_workspace_id_passes_through_an_already_bare_id():
+    assert bare_workspace_id("8") == "8"
+
+
+def test_bare_workspace_id_strips_a_resolved_name():
+    # The real bug this exists to fix: loop_state.focus_id (main.py)
+    # can already hold a resolved "N:Name" (set from
+    # pending_moves.process()'s own resolved_target_regions), and
+    # Provider.set_floating_geometry()/list_container_groups() both
+    # need the bare number to match str(workspace.num) exactly.
+    assert bare_workspace_id("8:VIII") == "8"
+
+
+def test_bare_workspace_id_passes_through_a_non_numeric_name_unchanged():
+    assert bare_workspace_id("chat") == "chat"

@@ -324,16 +324,22 @@ def test_handle_pending_confirm_confirm_key_also_answers_yes(monkeypatch):
     assert (should_dismiss, new_pending) == (True, None)
 
 
-def test_handle_pending_confirm_yes_restore_shaped_extends_restore_queue():
+def test_handle_pending_confirm_yes_restore_shaped_extends_pending_layout_regions():
+    # Region-shaped entries land in pending_layout_regions, NOT
+    # restore_queue directly — see that field's own docstring:
+    # frame_update.py is the one place that's allowed to run the real
+    # append_layout IPC side effects, always the frame AFTER this exact
+    # confirm_yes, never before it.
     ctx = ActionContext(provider=_FakeProvider(), status=None)
     pending = {
-        "restore_entries": [{"cmdline": ["kitty"]}],
+        "restore_entries": [{"target_region": "1", "tiled_flat": [{"app_id": "kitty"}]}],
         "dismiss_after_confirm": False,
     }
 
     should_dismiss, new_pending = handle_pending_confirm(ctx, pending, ord("y"), _cfg)
 
-    assert ctx.restore_queue == [{"cmdline": ["kitty"]}]
+    assert ctx.pending_layout_regions == [{"target_region": "1", "tiled_flat": [{"app_id": "kitty"}]}]
+    assert ctx.restore_queue == []
     assert (should_dismiss, new_pending) == (False, None)
 
 
@@ -341,7 +347,7 @@ def test_handle_pending_confirm_yes_restore_shaped_sets_reselect_region_id():
     # See ActionContext.reselect_region_id's docstring — the confirm-
     # needed load path (kill_regions overlap) sets it here, once the
     # restore is actually committed, mirroring the direct no-confirm
-    # path in sessions.py's handle_action.
+    # path in winrestore.py's handle_action.
     provider = _FakeProvider()
     provider.focused_region_id = "1"
     ctx = ActionContext(provider=provider, status=None)

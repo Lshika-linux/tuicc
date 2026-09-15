@@ -22,8 +22,8 @@ from tuicc.layout_engine import compute_boxes
 from tuicc.navigation import tab_order, resolve_selection, module_of_item
 from tuicc.render import collect_nav_items, PREVIEW_RENDERERS
 from tuicc.wm_config_parser import resolve_workspace_target
-from tuicc import procmon, pending_moves, resize_mode
-from tuicc.modules import sessions as sessions_mode
+from tuicc import procmon, pending_moves, resize_mode, winrestore
+from tuicc.modules import winrestore as winrestore_mode
 from tuicc.modules import media as media_mode
 from tuicc.modules import sysmon as sysmon_mode
 from tuicc.modules import connectivity as connectivity_mode
@@ -121,9 +121,9 @@ def reset_ui_state(loop_state, resize, spawn_picker, help_state, launcher, wifi_
     connectivity_mode.stop_browsing()
     connectivity_mode.cancel_hidden_ssid_entry()
     connectivity_mode.cancel_forget()
-    sessions_mode.handle_naming_key(27)  # same Escape-cancels-naming path handle_sessions_naming falls through to
+    winrestore_mode.handle_naming_key(27)  # same Escape-cancels-naming path handle_winrestore_naming falls through to
     sysmon_mode.handle_nice_key(27)      # same Escape-cancels-nice-edit path handle_sysmon_nice falls through to
-    sessions_mode.collapse()
+    winrestore_mode.collapse()
     media_mode.collapse()
     sysmon_mode.collapse()
     loop_state.mode_stack = ["normal"]
@@ -131,7 +131,7 @@ def reset_ui_state(loop_state, resize, spawn_picker, help_state, launcher, wifi_
     loop_state.active_module = "sidebar"
 
 
-def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, launcher, moves) -> FrameResult:
+def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, launcher, moves, tiled_restore, placements) -> FrameResult:
     cfg = app.cfg
     control_colors = app.control_colors
     provider = app.provider
@@ -305,9 +305,32 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         reset_ui_state(loop_state, resize, spawn_picker, help_state, launcher, wifi_agent, bluez_agent)
     loop_state.self_was_focused = bool(self_focused)
 
+    if action_ctx.pending_layout_regions:
+        # Real IPC side effects follow (append_layout, a real WM
+        # workspace switch per region needing tree reconstruction) —
+        # see ActionContext.pending_layout_regions' own docstring for
+        # why this can't run any earlier than the frame right after a
+        # "load" (or a load confirm's "yes") actually queued something
+        # here. Absorbed into tiled_restore's own queue, not spawned
+        # directly — advance_tiled_restore() below drives it one region
+        # at a time, never all at once (see its own docstring —
+        # CLAUDE/NOTES/design-decisions.md#append-layout-tiled-restore's
+        # "Phase 3 correction" for why: a real, live-confirmed bug when
+        # multiple regions' placeholders were ever open at once).
+        tiled_restore.queued_regions.extend(action_ctx.pending_layout_regions)
+        action_ctx.pending_layout_regions.clear()
+
+    winrestore.advance_tiled_restore(
+        tiled_restore, moves, provider, action_ctx.restore_queue, time.monotonic(),
+        workspace_names=wm_config.workspace_names if wm_config is not None else None,
+    )
+
     if action_ctx.restore_queue:
         known_ids = {w.id for r in state.regions for w in r.windows}
-        spawn_failure = pending_moves.promote_restore_queue(moves, provider, action_ctx.restore_queue, known_ids, time.monotonic())
+        spawn_failure = pending_moves.promote_restore_queue(
+            moves, provider, action_ctx.restore_queue, known_ids, time.monotonic(),
+            desktop_apps=launcher_mode.get_apps(),
+        )
         if spawn_failure is not None:
             loop_state.resize_message = spawn_failure
             loop_state.resize_message_until = time.monotonic() + 5.0
@@ -342,12 +365,20 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
             loop_state.resize_message_until = time.monotonic() + 5.0
             loop_state.resize_message_urgent = True
 
+    # Launcher placement-mode picker (CLAUDE/NOTES/design-decisions.md
+    # #launcher-placement-mode) — cheap no-op whenever nothing's
+    # pending. Runs right after process() above so a tag resolved this
+    # very frame gets acted on the same frame, not one frame later —
+    # unlike the tree-builder's tag consumption, there's no ordering
+    # invariant here that needs the extra lag.
+    pending_moves.advance_placements(placements, moves, provider)
+
     # A two-level module's expanded state may only be left via Escape
     # or picking an action, never silently by navigating elsewhere —
     # one check per frame catches every way active_module can change,
     # instead of patching each site.
-    if loop_state.active_module != "sessions" and sessions_mode.is_expanded():
-        sessions_mode.collapse()
+    if loop_state.active_module != "winrestore" and winrestore_mode.is_expanded():
+        winrestore_mode.collapse()
     if loop_state.active_module != "media" and media_mode.is_expanded():
         media_mode.collapse()
     if loop_state.active_module != "sysmon" and sysmon_mode.is_expanded():
@@ -396,23 +427,41 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
             first_key = browsing_items[0].ssid if browsing_section_name == "wifi" else browsing_items[0].id
             loop_state.selected_id = f"connectivity:{id_prefix}:{first_key}"
 
-    # session.py's own capture_session() always records a saved
-    # session's target_region as the bare workspace number (session
-    # capture is independent of workspace-name resolution, deliberately
-    # unchanged — see pending_moves.process()'s own docstring for why
-    # that resolution happens at restore/use time instead). Resolved
-    # here, once, so sidebar.py's own ws_id (which CAN be a resolved
+    # winrestore.py's own capture_session() always records a saved
+    # layout's target_region as the bare workspace number (capture is
+    # independent of workspace-name resolution, deliberately unchanged
+    # — see pending_moves.process()'s own docstring for why that
+    # resolution happens at restore/use time instead). Resolved here,
+    # once, so sidebar.py's own ws_id (which CAN be a resolved
     # "N:Name" now) actually finds a match — found live, a bare-vs-
     # resolved mismatch here silently zeroed out every "what would this
-    # session restore here" preview.
-    raw_session_preview = sessions_mode.expanded_preview()
-    session_preview = None
-    if raw_session_preview is not None:
+    # layout restore here" preview.
+    raw_winrestore_preview = winrestore_mode.expanded_preview()
+    winrestore_preview = None
+    if raw_winrestore_preview is not None:
         workspace_names = wm_config.workspace_names if wm_config is not None else None
-        session_preview = {
+        winrestore_preview = {
             resolve_workspace_target(target, workspace_names): apps
-            for target, apps in raw_session_preview.items()
+            for target, apps in raw_winrestore_preview.items()
         }
+
+    # The launcher's own placement-mode row needs the FULL live options
+    # list (including any real "S1"/"T1"/... existing groups on the
+    # target region, not just the 4 fixed categories — asked for live:
+    # "taky v by se v tom seznamu měl objevovat into S1, T1 cokoliv if
+    # applicable"), same list main.py's own handle_launcher() already
+    # builds for Tab-cycling (launcher_mode.placement_mode_options()) —
+    # reused here, not re-derived, so the row always shows exactly
+    # what Tab can actually reach. Only queried while typing_mode is
+    # true (an IPC round trip every frame otherwise, for a row nobody's
+    # looking at) — same "nothing cached, but don't do needless work
+    # either" restraint status_worker-fed fields on this same
+    # RenderContext already follow.
+    launcher_placement_options = []
+    if launcher.typing_mode:
+        target_region = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
+        groups = provider.list_container_groups(target_region) if target_region is not None else []
+        launcher_placement_options = launcher_mode.placement_mode_options(groups)
 
     ctx = RenderContext(
         state=state,
@@ -425,6 +474,8 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         typing_mode=launcher.typing_mode,
         search_query=launcher.search_query,
         search_selected_index=launcher.search_selected_index,
+        launcher_placement_mode=launcher.placement_mode,
+        launcher_placement_options=launcher_placement_options,
         wifi_networks=status_worker.get("wifi"),
         bluetooth_devices=status_worker.get("bluetooth"),
         # Poll failure (backend unreachable) takes priority over an
@@ -432,7 +483,7 @@ def update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, laun
         wifi_error=status_worker.get_error("wifi") or wifi_agent.get_error(),
         bluetooth_error=status_worker.get_error("bluetooth") or (bluez_agent.get_error() if bluez_agent else None),
         status=status_worker,
-        session_preview=session_preview,
+        winrestore_preview=winrestore_preview,
         control_colors=control_colors,
         cava=cava_reader,
         preview_renderers=PREVIEW_RENDERERS,

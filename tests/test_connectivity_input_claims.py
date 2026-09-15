@@ -1,6 +1,6 @@
 """Tests for modules/connectivity.py's two R4 input-claim quartets —
 wifi passphrase entry and bluetooth pairing confirm. Module-level
-state, no I/O, same testability class as sessions.py's own naming
+state, no I/O, same testability class as winrestore.py's own naming
 quartet.
 
 Both flows are a small state machine (typing -> waiting -> error-or-
@@ -86,7 +86,7 @@ def test_handle_passphrase_key_escape_returns_false():
 
 
 def test_apply_passphrase_does_not_clear_state():
-    # Unlike sessions.py's apply_naming(), this must NOT end the flow —
+    # Unlike winrestore.py's apply_naming(), this must NOT end the flow —
     # main.py still needs is_entering_passphrase()/the ssid while it
     # waits for the real connect result.
     start_passphrase_entry("Home")

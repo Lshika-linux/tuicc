@@ -27,7 +27,7 @@ import curses
 from tuicc.navigation import NavItem, module_of_item
 from tuicc.render_utils import draw_box_outline, draw_corner_marks, draw_filled_box, draw_centered_lines, centered_x, display_width, wc_truncate, wrap_text
 from tuicc.title_condense import condense_title
-from tuicc.wm_config_parser import resolve_workspace_target
+from tuicc.wm_config_parser import resolve_workspace_target, workspace_display_label
 
 
 def _resolved_target_id(ctx):
@@ -205,12 +205,16 @@ def draw(stdscr, box, ctx, module_name):
         # before drawing its own text (see its own docstring — the wide-
         # character corruption fix) — call it FIRST, then draw the
         # dashed outline on top, or the text wipes the outline out.
-        # _resolved_target_id() doubles as the workspace's own display
-        # label — sidebar.py's own rows use it exactly the same way
-        # (" {ws_id} "), so no separate lookup is needed even when
-        # there's no real Region object to read a name off of (the
-        # never-visited case).
-        draw_centered_lines(stdscr, (x, y, w, h), [(f"WS {_resolved_target_id(ctx)}", dim), ("empty *crickets*", dim)])
+        # _resolved_target_id() is the real ws_id, even with no real
+        # Region object to read a name off of (the never-visited case,
+        # where it can also be None — nothing to strip a number off of
+        # then, so skip the call entirely). workspace_display_label()
+        # (same [wm] show_workspace_number-gated call sidebar.py's own
+        # rows make) turns it into the same on-screen label otherwise.
+        target_id = _resolved_target_id(ctx)
+        if target_id is not None and not ctx.config.show_workspace_number:
+            target_id = workspace_display_label(target_id)
+        draw_centered_lines(stdscr, (x, y, w, h), [(f"WS {target_id}", dim), ("empty *crickets*", dim)])
         _draw_dashed_outline(stdscr, y + 1, x + 1, h - 2, w - 2, dim)
         return
 
@@ -262,7 +266,8 @@ def draw(stdscr, box, ctx, module_name):
             # rect is the group, same as any other single-window group.
             too_small_groups.append((win_x, win_y, win_w, win_h, [window]))
         else:
-            _draw_window(stdscr, window, win_x, win_y, win_w, win_h, color, color, ctx.config, filled=True)
+            clamp = _clamped_edges(window, x, y, w, h)
+            _draw_window(stdscr, window, win_x, win_y, win_w, win_h, color, color, ctx.config, filled=True, clamp=clamp)
 
     # Every too-small window (see _detail_tier()'s own docstring) still
     # HAS a real nav target — it just didn't get its own drawn box, a
@@ -970,7 +975,56 @@ def _window_screen_rect(window, x, y, w, h):
     bottom = y + 1 + round((ry + rh) * (h - 2))
     win_w = max(right - win_x - 1, 1)
     win_h = max(bottom - win_y - 1, 1)
+
+    # Clamp to this box's own inner area (inside its 1-cell border) —
+    # window.rect is only EXPECTED to stay within 0..1 (a window fully
+    # inside its own workspace), never actually guaranteed: a real WM
+    # rect for a floating window whose real on-screen geometry ends up
+    # larger than or offset outside its workspace (a resize that didn't
+    # land the way tuicc asked, or a genuinely huge/off-workspace
+    # window) produces rx/ry/rw/rh outside 0..1, and this function had
+    # no floor under that — the computed box then draws straight
+    # through this module's own border into whatever sits on screen
+    # next to it (found live: a floating spawn's own preview corrupted
+    # the sidebar's Workspaces box next door). Every OTHER draw call in
+    # this codebase stays inside its own box by construction (tiled
+    # layout math, fixed-position labels); this is the one place a
+    # value genuinely computed from a live, WM-reported number could
+    # legitimately land anywhere — clamp defensively rather than trust
+    # window.rect's own range.
+    inner_x0, inner_x1 = x + 1, x + w - 1
+    inner_y0, inner_y1 = y + 1, y + h - 1
+    win_x = min(max(win_x, inner_x0), max(inner_x1 - 1, inner_x0))
+    win_y = min(max(win_y, inner_y0), max(inner_y1 - 1, inner_y0))
+    win_w = max(min(win_x + win_w, inner_x1) - win_x, 1)
+    win_h = max(min(win_y + win_h, inner_y1) - win_y, 1)
     return win_x, win_y, win_w, win_h
+
+
+def _clamped_edges(window, x, y, w, h) -> tuple[bool, bool, bool, bool]:
+    """Which of a floating window's own 4 edges got clamped by
+    _window_screen_rect() — (top, bottom, left, right) — Rafi's own
+    live follow-up once the clamp itself shipped: "dokázali bychom třeba
+    ty rohy co pokračují mimo obrazovku udělat šrafovaně?" (could we
+    hatch the corners that continue past the screen?), so a viewer can
+    tell "this window's real edge is out there, past what's shown" from
+    "this window genuinely ends right here" at a glance — see
+    _draw_clamped_outline() for the actual hatching.
+
+    Deliberately a SEPARATE function re-deriving the same pre-clamp
+    coordinates, rather than changing _window_screen_rect()'s own
+    return shape — most of that function's callers (nav_items()'s own
+    hit-testing) only ever need the plain 4-tuple, and every existing
+    test already asserts exactly that shape.
+    """
+    rx, ry, rw, rh = window.rect
+    win_x = x + 1 + round(rx * (w - 2))
+    win_y = y + 1 + round(ry * (h - 2))
+    right = x + 1 + round((rx + rw) * (w - 2))
+    bottom = y + 1 + round((ry + rh) * (h - 2))
+    inner_x0, inner_x1 = x + 1, x + w - 1
+    inner_y0, inner_y1 = y + 1, y + h - 1
+    return (win_y < inner_y0, bottom > inner_y1, win_x < inner_x0, right > inner_x1)
 
 
 def _corner_positions(win_y, win_x, win_h, win_w, label_len):
@@ -1026,6 +1080,41 @@ def _draw_dashed_outline(stdscr, y, x, h, w, color):
         pass
 
 
+_HATCH = "╱"
+
+
+def _draw_clamped_outline(stdscr, y, x, h, w, color, clamp_top, clamp_bottom, clamp_left, clamp_right):
+    """Like render_utils.draw_box_outline(), except any edge whose own
+    clamp_* flag is set (_clamped_edges()'s own return) is drawn as a
+    DENSE hatch (every cell, not _draw_dashed_outline()'s sparse tick)
+    instead of a normal solid line — a floating window's own real edge
+    genuinely continues past what this box can show, so the whole edge
+    reads as "cut off here", not just stylistically different. A corner
+    shared by two edges is hatched if EITHER of those two is clamped —
+    there's no real corner glyph to draw there once even one of its own
+    two edges doesn't actually end at that cell.
+    """
+    if h < 1 or w < 1:
+        return
+    try:
+        stdscr.addstr(y, x, _HATCH if (clamp_top or clamp_left) else "┌", color)
+        stdscr.addstr(y, x + w - 1, _HATCH if (clamp_top or clamp_right) else "┐", color)
+        stdscr.addstr(y + h - 1, x, _HATCH if (clamp_bottom or clamp_left) else "└", color)
+        stdscr.addstr(y + h - 1, x + w - 1, _HATCH if (clamp_bottom or clamp_right) else "┘", color)
+        top_char = _HATCH if clamp_top else "─"
+        bottom_char = _HATCH if clamp_bottom else "─"
+        for i in range(1, w - 1):
+            stdscr.addstr(y, x + i, top_char, color)
+            stdscr.addstr(y + h - 1, x + i, bottom_char, color)
+        left_char = _HATCH if clamp_left else "│"
+        right_char = _HATCH if clamp_right else "│"
+        for i in range(1, h - 1):
+            stdscr.addstr(y + i, x, left_char, color)
+            stdscr.addstr(y + i, x + w - 1, right_char, color)
+    except curses.error:
+        pass
+
+
 _MIN_FULL_DETAIL_W = 10
 _MIN_FULL_DETAIL_H = 4
 _MIN_LETTER_DETAIL_W = 5
@@ -1066,7 +1155,7 @@ def _detail_tier(win_w, win_h):
     return "none"
 
 
-def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_color, cfg, filled=False):
+def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_color, cfg, filled=False, clamp=(False, False, False, False)):
     detail = _detail_tier(win_w, win_h)
     if detail == "none":
         # Drawn as nothing HERE, deliberately — see draw()'s own call
@@ -1079,7 +1168,16 @@ def _draw_window(stdscr, window, win_x, win_y, win_w, win_h, border_color, text_
     if filled:
         draw_filled_box(stdscr, win_y, win_x, win_h, win_w, border_color)
 
-    draw_box_outline(stdscr, win_y, win_x, win_h, win_w, border_color)
+    # clamp (top, bottom, left, right) is only ever non-default for a
+    # floating window whose real WM-reported geometry got clamped to
+    # fit this box (_clamped_edges()) — tiled windows' own call site
+    # never passes it, since _layout_tiled_windows()'s own math is
+    # already bounded by construction. Any edge set hatches instead of
+    # a normal solid line — see _draw_clamped_outline()'s own docstring.
+    if any(clamp):
+        _draw_clamped_outline(stdscr, win_y, win_x, win_h, win_w, border_color, *clamp)
+    else:
+        draw_box_outline(stdscr, win_y, win_x, win_h, win_w, border_color)
 
     if detail == "letter":
         # One clean, centered "[K]" — see _detail_tier()'s own

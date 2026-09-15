@@ -32,7 +32,7 @@ from tuicc.modules import (
     launcher,
     connectivity,
     power_menu,
-    sessions,
+    winrestore,
     control,
     media,
     bars,
@@ -50,7 +50,7 @@ MODULES = {
     "launcher": launcher.draw,
     "connectivity": connectivity.draw,
     "power_menu": power_menu.draw,
-    "sessions": sessions.draw,
+    "winrestore": winrestore.draw,
     "control": control.draw,
     "media": media.draw,
     "bars": bars.draw,
@@ -66,7 +66,7 @@ NAV_PROVIDERS = {
     "launcher": launcher.nav_items,
     "connectivity": connectivity.nav_items,
     "power_menu": power_menu.nav_items,
-    "sessions": sessions.nav_items,
+    "winrestore": winrestore.nav_items,
     "control": control.nav_items,
     "media": media.nav_items,
     "bars": bars.nav_items,
@@ -81,7 +81,7 @@ AUTO_FH_PROVIDERS = {
     "control": control.required_fh,
     "connectivity": connectivity.required_fh,
     "media": media.required_fh,
-    "sessions": sessions.required_fh,
+    "winrestore": winrestore.required_fh,
     "rwb": rwb.required_fh,
 }
 
@@ -90,7 +90,7 @@ ACTION_HANDLERS[quick_actions.TARGET_KIND] = quick_actions.handle
 ACTION_HANDLERS[power_menu.TARGET_KIND] = power_menu.handle
 ACTION_HANDLERS[control.TARGET_KIND] = control.handle
 ACTION_HANDLERS.update(connectivity.HANDLERS)
-ACTION_HANDLERS.update(sessions.HANDLERS)
+ACTION_HANDLERS.update(winrestore.HANDLERS)
 ACTION_HANDLERS.update(media.HANDLERS)
 ACTION_HANDLERS.update(sysmon.HANDLERS)
 

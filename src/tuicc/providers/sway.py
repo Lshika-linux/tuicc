@@ -7,8 +7,9 @@ from i3ipc import Connection
 
 from tuicc.model import Window, Region, WMState
 from tuicc.providers.base import Provider
-from tuicc.wm_config_parser import get_wm_config
+from tuicc.wm_config_parser import get_wm_config, bare_workspace_id
 from tuicc.tab_groups import tab_info_by_leaf_id
+from tuicc import tiled_tree
 
 
 # The mark mark_self() applies to tuicc's own window, so parse_tree() can
@@ -216,7 +217,9 @@ class SwayProvider(Provider):
         return parse_tree(self.conn.get_tree())
 
     def set_floating_geometry(self, window_id: str, region_id: str, rect: tuple[float, float, float, float]) -> None:
-        workspace = next((w for w in self.conn.get_tree().workspaces() if str(w.num) == region_id), None)
+        # bare_workspace_id(): region_id isn't always guaranteed bare —
+        # see that function's own docstring for the real bug this fixes.
+        workspace = next((w for w in self.conn.get_tree().workspaces() if str(w.num) == bare_workspace_id(region_id)), None)
         if workspace is None:
             return
 
@@ -233,6 +236,24 @@ class SwayProvider(Provider):
 
     def wm_config(self):
         return get_wm_config(self.conn)
+
+    def get_tiled_tree(self, region_id: str) -> dict | None:
+        workspace = next((w for w in self.conn.get_tree().workspaces() if str(w.num) == bare_workspace_id(region_id)), None)
+        if workspace is None:
+            return None
+        return tiled_tree.capture_tiled_tree(workspace)
+
+    def set_container_layout(self, window_id: str, layout: str) -> str | None:
+        return tiled_tree.set_container_layout(self.conn, window_id, layout)
+
+    def list_container_groups(self, region_id: str) -> list[dict]:
+        workspace = next((w for w in self.conn.get_tree().workspaces() if str(w.num) == bare_workspace_id(region_id)), None)
+        if workspace is None:
+            return []
+        return tiled_tree.list_container_groups(workspace)
+
+    def move_window_to_group(self, window_id: str, container_id: str) -> bool:
+        return tiled_tree.move_window_to_group(self.conn, window_id, container_id)
 
     def copy_to_clipboard(self, text: str) -> bool:
         """wl-copy — the standard Wayland clipboard CLI (wl-clipboard),

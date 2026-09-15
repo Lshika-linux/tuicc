@@ -72,11 +72,23 @@ class _FakeAgent:
 
 
 class _FakeProvider:
-    def __init__(self):
+    def __init__(self, groups=None):
         self.no_focus_next_window_calls = []
+        self._groups = groups or {}
+        self.layout_calls = []
+        self.group_move_calls = []
 
     def no_focus_next_window(self, pid):
         self.no_focus_next_window_calls.append(pid)
+
+    def list_container_groups(self, region_id):
+        return self._groups.get(region_id, [])
+
+    def set_container_layout(self, window_id, layout):
+        self.layout_calls.append((window_id, layout))
+
+    def move_window_to_group(self, window_id, container_id):
+        self.group_move_calls.append((window_id, container_id))
 
 
 # ==================== single-purpose do_*/handle_* ====================
@@ -154,9 +166,9 @@ def test_do_dismiss_hides_and_resets(tmp_path, monkeypatch):
     assert wifi_agent.cancel_current_calls == 1
 
 
-def test_any_two_level_module_expanded_reports_sessions(tmp_path, monkeypatch):
-    main.sessions_mode.start_naming(1, "x")  # not "expanded", just proving nothing here false-positives
-    main.sessions_mode.handle_naming_key(27)
+def test_any_two_level_module_expanded_reports_winrestore(tmp_path, monkeypatch):
+    main.winrestore_mode.start_naming(1, "x")  # not "expanded", just proving nothing here false-positives
+    main.winrestore_mode.handle_naming_key(27)
     assert main.any_two_level_module_expanded() is False
 
 
@@ -229,36 +241,36 @@ def test_do_apply_toast_is_a_no_op_when_nothing_was_set():
     assert loop_state.resize_message == "unrelated"
 
 
-# ==================== sessions/sysmon naming/nice-edit ====================
+# ==================== winrestore/sysmon naming/nice-edit ====================
 
-def test_handle_sessions_naming_confirm_applies_and_releases_the_claim(monkeypatch):
+def test_handle_winrestore_naming_confirm_applies_and_releases_the_claim(monkeypatch):
     calls = []
-    monkeypatch.setattr(main, "set_session_name", lambda slot, name: calls.append((slot, name)))
-    cfg = SimpleNamespace(keybinds={"confirm": ord("\n")}, session_names={1: "Slot 1"})
-    main.sessions_mode.start_naming(1, "")
+    monkeypatch.setattr(main, "set_winrestore_name", lambda slot, name: calls.append((slot, name)))
+    cfg = SimpleNamespace(keybinds={"confirm": ord("\n")}, winrestore_names={1: "Slot 1"})
+    main.winrestore_mode.start_naming(1, "")
     try:
         for ch in "New":
-            main.handle_sessions_naming(ord(ch), cfg)
-        still_claiming = main.handle_sessions_naming(cfg.keybinds["confirm"], cfg)
+            main.handle_winrestore_naming(ord(ch), cfg)
+        still_claiming = main.handle_winrestore_naming(cfg.keybinds["confirm"], cfg)
 
         assert still_claiming is False
-        assert cfg.session_names[1] == "New"
+        assert cfg.winrestore_names[1] == "New"
         assert calls == [(1, "New")]
     finally:
-        main.sessions_mode.handle_naming_key(27)
+        main.winrestore_mode.handle_naming_key(27)
 
 
-def test_handle_sessions_naming_escape_cancels_without_writing(monkeypatch):
+def test_handle_winrestore_naming_escape_cancels_without_writing(monkeypatch):
     calls = []
-    monkeypatch.setattr(main, "set_session_name", lambda slot, name: calls.append((slot, name)))
-    cfg = SimpleNamespace(keybinds={"confirm": ord("\n")}, session_names={1: "Slot 1"})
-    main.sessions_mode.start_naming(1, "old")
+    monkeypatch.setattr(main, "set_winrestore_name", lambda slot, name: calls.append((slot, name)))
+    cfg = SimpleNamespace(keybinds={"confirm": ord("\n")}, winrestore_names={1: "Slot 1"})
+    main.winrestore_mode.start_naming(1, "old")
 
-    still_claiming = main.handle_sessions_naming(27, cfg)
+    still_claiming = main.handle_winrestore_naming(27, cfg)
 
     assert still_claiming is False
     assert calls == []
-    assert cfg.session_names[1] == "Slot 1"
+    assert cfg.winrestore_names[1] == "Slot 1"
 
 
 def test_handle_sysmon_nice_confirm_applies(monkeypatch):
@@ -468,7 +480,10 @@ def test_handle_connectivity_pairing_escape_rejects():
 def test_handle_launcher_confirm_spawns_and_queues_a_move(tmp_path, monkeypatch):
     monkeypatch.setattr(main.launcher_mode, "_apps_cache", [("kitty", "kitty", "kitty")])
     monkeypatch.setattr(main, "spawn_detached", lambda *a, **k: 4242)
-    cfg = SimpleNamespace(keybinds={"confirm": ord("\n"), "up": curses_up(), "down": curses_down()})
+    cfg = SimpleNamespace(keybinds={
+        "confirm": ord("\n"), "up": curses_up(), "down": curses_down(),
+        "tab": 9, "previous": 353,
+    })
     provider = _FakeProvider()
     moves = main.pending_moves.PendingMovesQueue()
     app = SimpleNamespace(wm_config=None)
@@ -477,7 +492,7 @@ def test_handle_launcher_confirm_spawns_and_queues_a_move(tmp_path, monkeypatch)
     loop_state = LoopState(focus_id="2")
     state = WMState(regions=[Region(id="2", name="2", windows=[])], focused_region_id="2")
 
-    still_claiming = main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app)
+    still_claiming = main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app, main.pending_moves.PlacementQueue())
 
     assert still_claiming is False
     assert len(moves.entries) == 1
@@ -489,7 +504,10 @@ def test_handle_launcher_confirm_spawns_and_queues_a_move(tmp_path, monkeypatch)
 def test_handle_launcher_confirm_when_spawn_fails_shows_a_toast(tmp_path, monkeypatch):
     monkeypatch.setattr(main.launcher_mode, "_apps_cache", [("kitty", "kitty", "kitty")])
     monkeypatch.setattr(main, "spawn_detached", lambda *a, **k: None)
-    cfg = SimpleNamespace(keybinds={"confirm": ord("\n"), "up": curses_up(), "down": curses_down()})
+    cfg = SimpleNamespace(keybinds={
+        "confirm": ord("\n"), "up": curses_up(), "down": curses_down(),
+        "tab": 9, "previous": 353,
+    })
     provider = _FakeProvider()
     moves = main.pending_moves.PendingMovesQueue()
     app = SimpleNamespace(wm_config=None)
@@ -497,10 +515,136 @@ def test_handle_launcher_confirm_when_spawn_fails_shows_a_toast(tmp_path, monkey
     loop_state = LoopState()
     state = WMState()
 
-    main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app)
+    main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app, main.pending_moves.PlacementQueue())
 
     assert moves.entries == []
     assert loop_state.resize_message_urgent is True
+
+
+def _launcher_cfg():
+    return SimpleNamespace(keybinds={
+        "confirm": ord("\n"), "up": curses_up(), "down": curses_down(),
+        "tab": 9, "previous": 353,
+    })
+
+
+def test_handle_launcher_tab_cycles_placement_mode(tmp_path, monkeypatch):
+    cfg = _launcher_cfg()
+    provider = _FakeProvider()
+    launcher = LauncherState(typing_mode=True, placement_mode="tiled")
+    loop_state = LoopState(focus_id="2")
+
+    still_claiming = main.handle_launcher(
+        cfg.keybinds["tab"], loop_state, cfg, WMState(), launcher, provider, main.pending_moves.PendingMovesQueue(), SimpleNamespace(wm_config=None), main.pending_moves.PlacementQueue(),
+    )
+
+    assert still_claiming is True
+    assert launcher.placement_mode == "stack_new"
+
+
+def test_handle_launcher_shift_tab_cycles_placement_mode_backward(tmp_path, monkeypatch):
+    cfg = _launcher_cfg()
+    provider = _FakeProvider()
+    launcher = LauncherState(typing_mode=True, placement_mode="tiled")
+    loop_state = LoopState(focus_id="2")
+
+    main.handle_launcher(
+        cfg.keybinds["previous"], loop_state, cfg, WMState(), launcher, provider, main.pending_moves.PendingMovesQueue(), SimpleNamespace(wm_config=None), main.pending_moves.PlacementQueue(),
+    )
+
+    assert launcher.placement_mode == "floating"  # wraps backward past "tiled"
+
+
+def test_handle_launcher_tab_offers_existing_groups(tmp_path, monkeypatch):
+    cfg = _launcher_cfg()
+    provider = _FakeProvider(groups={"2": [{"label": "S1", "container_id": "10"}]})
+    launcher = LauncherState(typing_mode=True, placement_mode="tab_new")
+    loop_state = LoopState(focus_id="2")
+
+    main.handle_launcher(
+        cfg.keybinds["tab"], loop_state, cfg, WMState(), launcher, provider, main.pending_moves.PendingMovesQueue(), SimpleNamespace(wm_config=None), main.pending_moves.PlacementQueue(),
+    )
+
+    assert launcher.placement_mode == "S1"
+
+
+def test_handle_launcher_confirm_with_stack_new_registers_a_pending_placement(tmp_path, monkeypatch):
+    monkeypatch.setattr(main.launcher_mode, "_apps_cache", [("kitty", "kitty", "kitty")])
+    monkeypatch.setattr(main, "spawn_detached", lambda *a, **k: 4242)
+    cfg = _launcher_cfg()
+    provider = _FakeProvider()
+    moves = main.pending_moves.PendingMovesQueue()
+    placements = main.pending_moves.PlacementQueue()
+    app = SimpleNamespace(wm_config=None)
+    launcher = LauncherState(typing_mode=True, search_query="kitty", search_selected_index=0, placement_mode="stack_new")
+    loop_state = LoopState(focus_id="2")
+    state = WMState(regions=[Region(id="2", name="2", windows=[])], focused_region_id="2")
+
+    main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app, placements)
+
+    assert len(placements.pending) == 1
+    placement = next(iter(placements.pending.values()))
+    assert placement.mode == "stack_new"
+    assert placement.region_id == "2"
+    assert moves.entries[0]["tag"] is not None
+
+
+def test_handle_launcher_confirm_with_stale_group_label_falls_back_to_tiled(tmp_path, monkeypatch):
+    # The picked group ("S1") no longer exists by confirm time — must
+    # quietly degrade to plain tiled placement, not error.
+    monkeypatch.setattr(main.launcher_mode, "_apps_cache", [("kitty", "kitty", "kitty")])
+    monkeypatch.setattr(main, "spawn_detached", lambda *a, **k: 4242)
+    cfg = _launcher_cfg()
+    provider = _FakeProvider(groups={})  # S1 no longer exists
+    moves = main.pending_moves.PendingMovesQueue()
+    placements = main.pending_moves.PlacementQueue()
+    app = SimpleNamespace(wm_config=None)
+    launcher = LauncherState(typing_mode=True, search_query="kitty", search_selected_index=0, placement_mode="S1")
+    loop_state = LoopState(focus_id="2")
+    state = WMState(regions=[Region(id="2", name="2", windows=[])], focused_region_id="2")
+
+    main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app, placements)
+
+    assert placements.pending == {}
+    assert moves.entries[0]["tag"] is None
+
+
+def test_handle_launcher_confirm_tiled_registers_no_pending_placement(tmp_path, monkeypatch):
+    monkeypatch.setattr(main.launcher_mode, "_apps_cache", [("kitty", "kitty", "kitty")])
+    monkeypatch.setattr(main, "spawn_detached", lambda *a, **k: 4242)
+    cfg = _launcher_cfg()
+    provider = _FakeProvider()
+    moves = main.pending_moves.PendingMovesQueue()
+    placements = main.pending_moves.PlacementQueue()
+    app = SimpleNamespace(wm_config=None)
+    launcher = LauncherState(typing_mode=True, search_query="kitty", search_selected_index=0, placement_mode="tiled")
+    loop_state = LoopState(focus_id="2")
+    state = WMState(regions=[Region(id="2", name="2", windows=[])], focused_region_id="2")
+
+    main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app, placements)
+
+    assert placements.pending == {}
+    assert moves.entries[0]["tag"] is None
+
+
+def test_reset_placement_mode_default_uses_first_existing_group():
+    provider = _FakeProvider(groups={"2": [{"label": "S1", "container_id": "10"}]})
+    launcher = LauncherState()
+    loop_state = LoopState(focus_id="2")
+
+    main._reset_placement_mode_default(loop_state, launcher, provider)
+
+    assert launcher.placement_mode == "S1"
+
+
+def test_reset_placement_mode_default_falls_back_to_tiled():
+    provider = _FakeProvider()
+    launcher = LauncherState(placement_mode="S1")
+    loop_state = LoopState(focus_id="2")
+
+    main._reset_placement_mode_default(loop_state, launcher, provider)
+
+    assert launcher.placement_mode == "tiled"
 
 
 def test_apply_launcher_routing_default_falls_back_to_pre_routing_focus_id(tmp_path, monkeypatch):

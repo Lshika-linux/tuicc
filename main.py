@@ -27,7 +27,7 @@ from tuicc.config import (
     set_active_preset,
     set_theme_color,
     set_theme_colors,
-    set_session_name,
+    set_winrestore_name,
     get_raw_theme_values,
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
@@ -58,9 +58,9 @@ from tuicc.render_utils import draw_status_line
 from tuicc.theme import resolve_color
 from tuicc.theme_setup import reassign_theme_pairs, apply_background, assign_control_toggle_pairs
 from tuicc.theme_presets import preset_cycle_list, next_preset
-from tuicc import app_setup, frame_update, resize_mode, help_mode, pending_moves
+from tuicc import app_setup, frame_update, resize_mode, help_mode, pending_moves, winrestore
 from tuicc.modules import launcher as launcher_mode
-from tuicc.modules import sessions as sessions_mode
+from tuicc.modules import winrestore as winrestore_mode
 from tuicc.modules import media as media_mode
 from tuicc.modules import sysmon as sysmon_mode
 from tuicc.modules import connectivity as connectivity_mode
@@ -69,24 +69,24 @@ from tuicc.modules import sidebar as sidebar_mode
 
 # Module-level, not closures: touch none of main()'s LoopState fields
 # (CLAUDE/NOTES/design-decisions.md#loopstate-migration). Still not
-# moved into sessions.py/sysmon.py/connectivity.py — sessions_naming
-# needs cfg.session_names/set_session_name, and no module here imports
+# moved into winrestore.py/sysmon.py/connectivity.py — winrestore_naming
+# needs cfg.winrestore_names/set_winrestore_name, and no module here imports
 # config.py.
 
 def do_enter_resize(resize):
     resize_mode.enter_edit_mode(resize)
 
 
-def handle_sessions_naming(key, cfg):
+def handle_winrestore_naming(key, cfg):
     if key == cfg.keybinds["confirm"]:
-        result = sessions_mode.apply_naming()
+        result = winrestore_mode.apply_naming()
         if result is not None:
             slot, new_name = result
-            cfg.session_names[slot] = new_name or f"Slot {slot}"
-            set_session_name(slot, new_name)
+            cfg.winrestore_names[slot] = new_name or f"Slot {slot}"
+            set_winrestore_name(slot, new_name)
             return False
         return True
-    return sessions_mode.handle_naming_key(key)
+    return winrestore_mode.handle_naming_key(key)
 
 
 def handle_sysmon_nice(key, cfg):
@@ -98,7 +98,7 @@ def handle_sysmon_nice(key, cfg):
 
 # Level-2 connectivity browsing (see connectivity.py's own "level-2
 # browsing" section docstring for why this is a real mode_stack claim,
-# not the orthogonal two-level-expand mechanism sessions/media/sysmon
+# not the orthogonal two-level-expand mechanism winrestore/media/sysmon
 # use) — hand-rolls every key itself, same "no dispatch_action inside
 # a claimed modal" shape as handle_connectivity_pairing below and
 # resize_mode.handle_editing_key. next_item_keys/prev_item_keys are
@@ -285,12 +285,12 @@ def handle_connectivity_pairing(key, cfg, bluez_agent):
 
 
 def any_two_level_module_expanded():
-    # sessions/media/sysmon each own a two-level browsing/expanded
+    # winrestore/media/sysmon each own a two-level browsing/expanded
     # session — Tab/Shift+Tab/Left/Right's wrap behavior needs to know
     # if ANY is expanded, not just one specifically. Needed no params
     # even before flattening — every name it touches is a module object,
     # never main()-local state.
-    return sessions_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
+    return winrestore_mode.is_expanded() or media_mode.is_expanded() or sysmon_mode.is_expanded()
 
 
 # mode_stack was these four's only shared dependency, and never needed
@@ -586,7 +586,39 @@ def _apply_launcher_routing_default(loop_state, launcher, app):
     loop_state.focus_id = routed if routed is not None else launcher.pre_routing_focus_id
 
 
-def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app):
+def _reset_placement_mode_default(loop_state, launcher, provider):
+    """Resets launcher.placement_mode to whatever's natural for the
+    CURRENT target region (loop_state.focus_id) — its own first
+    existing group if it has one, else "tiled". Called once right after
+    typing starts (past _apply_launcher_routing_default(), so a
+    routing-rule redirect is already accounted for — see that
+    function's own docstring for why the target can move right at
+    typing-start) and again every time Up/Down shifts the target region
+    during typing — a group label only ever means something on the
+    workspace it came from, so this is never "sticky" across a region
+    change, unlike manual_target_app_id's own per-app persistence.
+    """
+    groups = provider.list_container_groups(loop_state.focus_id) if loop_state.focus_id is not None else []
+    launcher.placement_mode = launcher_mode.default_placement_mode(groups)
+
+
+def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app, placements):
+    # Tab/Shift+Tab cycle the placement-mode picker (tiled/stack_new/
+    # tab_new/existing-group-labels/floating) — inert during ordinary
+    # typing otherwise (handle_typing_key() below never reacts to
+    # them), so repurposing them here has no collision. Checked before
+    # Up/Down/confirm/handle_typing_key() below, same "claim the keys
+    # this mode actually uses first" shape those already follow.
+    if key == cfg.keybinds["tab"]:
+        groups = provider.list_container_groups(loop_state.focus_id) if loop_state.focus_id is not None else []
+        options = launcher_mode.placement_mode_options(groups)
+        launcher.placement_mode = launcher_mode.cycle_placement_mode(launcher.placement_mode, options, 1)
+        return True
+    if key == cfg.keybinds["previous"]:
+        groups = provider.list_container_groups(loop_state.focus_id) if loop_state.focus_id is not None else []
+        options = launcher_mode.placement_mode_options(groups)
+        launcher.placement_mode = launcher_mode.cycle_placement_mode(launcher.placement_mode, options, -1)
+        return True
     # Up/Down shift the ambient launch target without leaving typing
     # mode. Left/Right stay with handle_typing_key (they move the
     # selected search result) — arrow keys never collide with typed
@@ -610,6 +642,7 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
         loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, -1)
         selected = launcher_mode.resolve_selected(launcher)
         launcher.manual_target_app_id = selected[1] if selected else None
+        _reset_placement_mode_default(loop_state, launcher, provider)
         return True
     if key == cfg.keybinds["down"]:
         # state.focused_region_id is always the bare workspace number
@@ -630,6 +663,7 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
         loop_state.focus_id = sidebar_mode.shift_workspace_id(current, ids, 1)
         selected = launcher_mode.resolve_selected(launcher)
         launcher.manual_target_app_id = selected[1] if selected else None
+        _reset_placement_mode_default(loop_state, launcher, provider)
         return True
     if key == cfg.keybinds["confirm"]:
         selected = launcher_mode.resolve_selected(launcher)
@@ -658,10 +692,34 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app)
                 # Falls back to whatever's actually focused when no sidebar
                 # region is explicitly selected. app_id_hint is only a
                 # fallback — the pid tier is tried first.
+                target_region = loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id
+                # Placement-mode picker (CLAUDE/NOTES/design-decisions.md
+                # #launcher-placement-mode) — "tiled" needs nothing extra,
+                # the overwhelmingly common case stays exactly as fast as
+                # before this feature existed. Anything else registers a
+                # PendingPlacement, resolved once this spawn's own tag
+                # matches (advance_placements(), frame_update.py). An
+                # existing group's own label is re-checked against a
+                # FRESH list_container_groups() call right here, never
+                # trusted from whenever it was originally picked — if it
+                # vanished since (that group closed), this quietly
+                # degrades to plain tiled placement instead of erroring.
+                tag = None
+                mode = launcher.placement_mode
+                if mode != "tiled":
+                    container_id = None
+                    if mode not in ("stack_new", "tab_new", "floating"):
+                        groups = provider.list_container_groups(target_region) if target_region is not None else []
+                        container_id = next((g["container_id"] for g in groups if g["label"] == mode), None)
+                        if container_id is None:
+                            mode = "tiled"
+                    if mode != "tiled":
+                        tag = f"placement_{pid}"
+                        placements.pending[tag] = pending_moves.PendingPlacement(
+                            mode=mode, container_id=container_id, region_id=target_region,
+                        )
                 pending_moves.queue_launcher_spawn(
-                    moves,
-                    loop_state.focus_id if loop_state.focus_id is not None else state.focused_region_id,
-                    known_ids, pid, app_id_hint, time.monotonic(), log_path,
+                    moves, target_region, known_ids, pid, app_id_hint, time.monotonic(), log_path, tag=tag,
                 )
             launcher_mode.exit_typing_mode(launcher)
             loop_state.selected_id = launcher.saved_selected_id
@@ -795,6 +853,8 @@ def main(stdscr):
     help_state = help_mode.HelpState()
     launcher = launcher_mode.LauncherState()
     moves = pending_moves.PendingMovesQueue()
+    tiled_restore = winrestore.TiledRestoreState()
+    placements = pending_moves.PlacementQueue()
 
     # Keyed by the same names as cfg.keybinds/resize_mode.EditKeyResult's
     # own handoff strings — one vocabulary, not two. Change resize_mode's
@@ -839,7 +899,7 @@ def main(stdscr):
     }
 
     MODE_HANDLERS = {
-        "sessions_naming": lambda key: handle_sessions_naming(key, cfg),
+        "winrestore_naming": lambda key: handle_winrestore_naming(key, cfg),
         "sysmon_nice": lambda key: handle_sysmon_nice(key, cfg),
         "connectivity_passphrase": lambda key: handle_connectivity_passphrase(key, cfg, wifi_agent),
         "connectivity_pairing": lambda key: handle_connectivity_pairing(key, cfg, bluez_agent),
@@ -849,7 +909,7 @@ def main(stdscr):
         "connectivity_hidden_ssid": lambda key: handle_connectivity_hidden_ssid(key, loop_state, cfg, status_worker),
         "help": lambda key: handle_help(key, loop_state, cfg, help_state, stdscr, app),
         "help_colors": lambda key: handle_help_colors(key, loop_state, cfg, help_state, stdscr, app),
-        "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app),
+        "launcher": lambda key: handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app, placements),
         "spawn_picker": lambda key: handle_spawn_picker(key, loop_state, cfg, spawn_picker, resize),
         "resize_editing": lambda key: handle_resize_editing(
             key, loop_state, resize, cfg, direction_keys, boxes, term_width, term_height, HANDOFF_TARGETS
@@ -861,7 +921,7 @@ def main(stdscr):
     # unhandled exception (in practice Ctrl+C, caught at file bottom).
     try:
         while True:
-            frame = frame_update.update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, launcher, moves)
+            frame = frame_update.update_frame(stdscr, app, loop_state, resize, spawn_picker, help_state, launcher, moves, tiled_restore, placements)
             ctx = frame.ctx
             boxes = frame.boxes
             term_width = frame.term_width
@@ -1023,12 +1083,12 @@ def main(stdscr):
                 should_dismiss, loop_state.pending_confirm = dispatch_action(action_ctx, ACTION_HANDLERS, selected_item, cfg)
                 do_apply_reselect(loop_state, action_ctx, ordered)
                 do_apply_toast(loop_state, action_ctx)
-                # sessions.py's/sysmon.py's own "name"/NICE actions call
+                # winrestore.py's/sysmon.py's own "name"/NICE actions call
                 # start_naming()/start_nice_edit() on themselves —
                 # main.py notices right after dispatch and claims the
                 # stack on their behalf.
-                if sessions_mode.is_naming():
-                    push_mode(loop_state, "sessions_naming")
+                if winrestore_mode.is_naming():
+                    push_mode(loop_state, "winrestore_naming")
                 if sysmon_mode.is_editing_nice():
                     push_mode(loop_state, "sysmon_nice")
                 if connectivity_mode.is_browsing():
@@ -1056,13 +1116,13 @@ def main(stdscr):
                     prev_item = prev_item_across_modules(ordered, module_names, loop_state.active_module, loop_state.selected_id)
                     if (
                         prev_item is not None
-                        and loop_state.active_module != "sessions"
-                        and module_of_item(prev_item) == "sessions"
+                        and loop_state.active_module != "winrestore"
+                        and module_of_item(prev_item) == "winrestore"
                     ):
                         # Sessions exception: always slot 1, not the
                         # module's last item — otherwise Shift+Tab-ing in
                         # lands on slot 3, one Tab from rolling back out.
-                        prev_item = first_item_in_module(ordered, "sessions")
+                        prev_item = first_item_in_module(ordered, "winrestore")
                     elif (
                         prev_item is not None
                         and loop_state.active_module != "sidebar"
@@ -1094,7 +1154,7 @@ def main(stdscr):
                     loop_state.selected_id, loop_state.active_module, loop_state.focus_id = resolve_selection(prev_item, loop_state.focus_id)
             elif key in module_next_keys:
                 # same_row_neighbor first: a row with multiple items
-                # (e.g. sessions.py's expanded LOAD/SAVE/DEL/NAME) steps
+                # (e.g. winrestore.py's expanded LOAD/SAVE/DEL/NAME) steps
                 # across them before Right jumps to the next module.
                 # None for the common single-column case — a no-op there.
                 neighbor = same_row_neighbor(ordered, loop_state.selected_id, direction=1, wrap=any_two_level_module_expanded())
@@ -1133,22 +1193,24 @@ def main(stdscr):
             elif cfg.vim_mode and not resize.active and key == cfg.keybinds["insert"]:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id)
                 _apply_launcher_routing_default(loop_state, launcher, app)
+                _reset_placement_mode_default(loop_state, launcher, provider)
                 push_mode(loop_state, "launcher")
                 loop_state.active_module = "launcher"
             elif not cfg.vim_mode and not resize.active and 32 <= key <= 126:
                 launcher_mode.enter_typing_mode(launcher, loop_state.selected_id, loop_state.active_module, loop_state.focus_id, chr(key))
                 _apply_launcher_routing_default(loop_state, launcher, app)
+                _reset_placement_mode_default(loop_state, launcher, provider)
                 push_mode(loop_state, "launcher")
                 loop_state.active_module = "launcher"
             elif key == 27:
                 # Escape collapses whichever two-level module is
                 # expanded, back to browsing. collapse() is safe to call
-                # unconditionally — all three mirror sessions.py's own,
+                # unconditionally — all three mirror winrestore.py's own,
                 # returning None as a no-op when nothing was expanded —
                 # so trying each in turn needs no is_expanded() guard.
                 # All three share the same "module:value:row" id shape.
                 for mod_name, collapse_fn in (
-                    ("sessions", sessions_mode.collapse),
+                    ("winrestore", winrestore_mode.collapse),
                     ("media", media_mode.collapse),
                     ("sysmon", sysmon_mode.collapse),
                 ):

@@ -17,7 +17,7 @@ from tuicc.modules.preview import (
     _corner_label, _corner_positions, _window_label, _window_screen_rect,
     _allocate_axis, _layout_tiled_windows, _partition_windows, _detail_tier,
     _group_tiled_windows, _place_tab_group, _TabGroupUnit, _group_corner_labels,
-    _place_slot_content, _focused_region, _resolved_target_id,
+    _place_slot_content, _focused_region, _resolved_target_id, _clamped_edges,
 )
 from tuicc.wm_config_parser import WmConfigInfo
 
@@ -338,6 +338,63 @@ def test_window_screen_rect_basic_conversion_with_one_cell_shave():
     win_x, win_y, win_w, win_h = _window_screen_rect(_rect_window((0.0, 0.0, 1.0, 1.0)), x=0, y=0, w=42, h=22)
     assert (win_x, win_y) == (1, 1)
     assert (win_w, win_h) == (39, 19)  # (42-2)-1, (22-2)-1
+
+
+def test_window_screen_rect_clamps_a_rect_extending_past_the_region():
+    # Live-found: a floating window's own real geometry (as reported by
+    # the WM) ending up larger than/offset outside its own workspace
+    # (e.g. a resize that didn't land the way tuicc asked) produces
+    # rx/ry/rw/rh outside 0..1 — this must stay inside the box's own
+    # inner area (never draw into whatever sits on screen next to this
+    # module), not just compute whatever the raw arithmetic says.
+    win_x, win_y, win_w, win_h = _window_screen_rect(_rect_window((0.5, 0.5, 1.0, 1.0)), x=0, y=0, w=42, h=22)
+
+    assert win_x + win_w <= 41  # inner right edge = x + w - 1
+    assert win_y + win_h <= 21  # inner bottom edge = y + h - 1
+    assert win_w >= 1 and win_h >= 1
+
+
+def test_window_screen_rect_clamps_a_rect_entirely_beyond_the_region():
+    # An extreme case: the window's own reported position is entirely
+    # past the region's own bounds (rx/ry > 1.0) — must still produce a
+    # valid, in-bounds (if degenerate) box, never negative/zero size or
+    # coordinates outside this module's own box.
+    win_x, win_y, win_w, win_h = _window_screen_rect(_rect_window((2.0, 2.0, 0.5, 0.5)), x=0, y=0, w=42, h=22)
+
+    assert 1 <= win_x <= 40
+    assert 1 <= win_y <= 20
+    assert win_w >= 1 and win_h >= 1
+    assert win_x + win_w <= 41
+    assert win_y + win_h <= 21
+
+
+def test_window_screen_rect_clamps_within_a_non_zero_origin_box():
+    # The box itself doesn't start at (0, 0) on screen (a real module
+    # box never does) — clamping must respect x/y as the box's own
+    # origin, not assume it's always the top-left of the terminal.
+    win_x, win_y, win_w, win_h = _window_screen_rect(_rect_window((0.5, 0.5, 1.0, 1.0)), x=10, y=5, w=42, h=22)
+
+    assert win_x >= 11  # inner left edge = x + 1
+    assert win_y >= 6  # inner top edge = y + 1
+    assert win_x + win_w <= 51  # inner right edge = x + w - 1
+    assert win_y + win_h <= 26  # inner bottom edge = y + h - 1
+
+
+def test_clamped_edges_none_clamped_for_a_window_fully_inside_the_region():
+    assert _clamped_edges(_rect_window((0.1, 0.1, 0.5, 0.5)), x=0, y=0, w=42, h=22) == (False, False, False, False)
+
+
+def test_clamped_edges_reports_right_and_bottom_when_the_window_overflows_past_them():
+    # (top, bottom, left, right)
+    assert _clamped_edges(_rect_window((0.5, 0.5, 1.0, 1.0)), x=0, y=0, w=42, h=22) == (False, True, False, True)
+
+
+def test_clamped_edges_reports_top_and_left_when_the_window_starts_before_the_region():
+    assert _clamped_edges(_rect_window((-0.5, -0.5, 0.3, 0.3)), x=0, y=0, w=42, h=22) == (True, False, True, False)
+
+
+def test_clamped_edges_reports_all_four_when_the_window_engulfs_the_whole_region():
+    assert _clamped_edges(_rect_window((-1.0, -1.0, 3.0, 3.0)), x=0, y=0, w=42, h=22) == (True, True, True, True)
 
 
 def test_window_screen_rect_floors_at_one_cell_rather_than_zero():

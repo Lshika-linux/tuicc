@@ -130,12 +130,75 @@ this session; don't invent a different one.
   lookup — may take a moment longer than sway, budgeted up to
   `PID_GRACE_SECONDS = 6.0s` before downgrading to the app_id tier).
 
-### Window placement — session restore
+### Window placement — launcher placement-mode picker
 
-- Save a session with **5+ windows across different real apps**
-  (mix of light apps like terminals and heavy/slow-starting ones —
-  browsers, Electron apps, office suites) spread across several target
-  regions, some floating, some tiled. Load it back.
+See `CLAUDE/NOTES/design-decisions.md#launcher-placement-mode` for the
+full design. Not yet live-tested on real hardware as of this writing —
+run this checklist before trusting it.
+
+- Start typing in the launcher with a target region selected. Tab
+  cycles the sidebar's `" {id} - launching here (...)"` label through
+  `tiled → stacked (new) → tabbed (new) → floating`, wrapping both
+  directions; Shift+Tab cycles backward. Left/Right (app-result
+  cycling) and Up/Down (target-region shifting) must keep working
+  completely unaffected.
+- Confirm with `stacked (new)` selected on a target region with
+  nothing else on it: the app lands there as a real 1-member stack
+  (`swaymsg -t get_tree`: `layout: "stacked"`, one child).
+- Launch a second app at the same region: the picker's default choice
+  is now `into S1` (not `tiled`) — confirming it joins the SAME
+  container, not a new one.
+- With both an `S1` (stacked) and a `T1` (tabbed) group present on one
+  workspace, the picker lists both by name, and confirming `into T1`
+  specifically lands there — not `S1` — regardless of which was
+  created more recently.
+- A plain `tiled` launch alongside an existing `S1`/`T1` does **not**
+  join either — matches real `mod4+S` semantics (windows already on
+  the workspace before a stack existed never retroactively join it).
+- `floating` produces a reasonable centered floating window (no saved
+  geometry exists for a fresh spawn, unlike winrestore's own restore)
+  **on the actually-selected target region, not tuicc's own workspace**
+  — this specific combination was live-broken and fixed once already
+  (`floating enable` re-homes onto whatever's currently focused unless
+  the move-to-region happens AFTER it, not before — see
+  `CLAUDE/NOTES/design-decisions.md#floating-enable-workspace-
+  reparenting`); test with tuicc running on a DIFFERENT workspace than
+  the target, same as the plain launcher-spawn item above.
+- Launch several apps back-to-back with different placement modes
+  before any of them resolve — each must land in ITS OWN chosen
+  place, none dropped or swapped (mirrors the existing multi-spawn
+  launcher checklist item above, now also exercising `PlacementQueue`
+  handling more than one tag at once).
+
+### Window placement — layout restore (winrestore)
+
+**"load" is currently disabled** — see `CLAUDE/NOTES/design-decisions.md
+#launcher-placement-mode` (`RESTORE_DISABLED = True`,
+`modules/winrestore.py`). The tree-reconstruction mechanism the
+checklist below originally described doesn't actually work on a real
+multi-region, repeated-app_id layout; don't spend time re-verifying it
+until that flag comes back off. "save" still works (still just writes
+a plain TOML file). The launcher's own placement-mode picker (Tab/
+Shift+Tab while typing — see that same design-decisions.md section) is
+the live, working replacement for "land this window tiled/stacked/
+tabbed/floating", and is what the checklist below should eventually be
+rewritten around once restore itself is rebuilt as a replay of it.
+
+Note the mechanism this checklist still describes below changed once
+already before being disabled — see `CLAUDE/NOTES/design-decisions.md
+#winrestore-app-id-capture`. A saved layout no longer captures/replays a
+real `cmdline`; it relaunches each app by `app_id` through the same
+`.desktop` `Exec=` path `launcher.py` already uses, and matches the
+resulting window by `app_id`-tier only (`pending_moves.py`'s pid-tier
+is never used for a winrestore entry — `queue_restore_entry()` is
+always called with `pid=None` for these). This means a saved layout no
+longer reopens the exact file/vault/tab that was open — just the same
+app, in the same place, tiled/stacked/floating correctly.
+
+- Save a layout with **5+ windows across different real apps** (mix of
+  light apps like terminals and heavy/slow-starting ones — browsers,
+  Electron apps, office suites) spread across several target regions,
+  some floating, some tiled. Load it back.
 - Restores are staggered `RESTORE_STAGGER_SECONDS = 0.3s` apart, not
   all fired in the same frame — verify via the tree poll that new
   processes actually launch staggered, not bunched.
@@ -143,18 +206,21 @@ this session; don't invent a different one.
   additionally end up at their saved relative position/size (normalized
   0..1 rect, see `set_floating_geometry()`), not just floating-enabled
   at some default WM geometry.
-- Loading a session offers a kill-existing-windows-on-target-regions
+- Loading a layout offers a kill-existing-windows-on-target-regions
   confirm first (see "Confirm dialogs" below, `"kill_regions" in
   pending`) — verify both accepting and declining behave correctly:
   accepting closes the named regions' existing windows before
   restoring; declining restores anyway without closing anything.
-- **Specifically hunt for apps that never get relocated at all** —
-  landing on tuicc's own workspace and staying there past
-  `MOVE_TIMEOUT_SECONDS`. This is a known, live-reproduced (not yet
-  fixed) failure mode — see "Known open issues" below. If you find a
-  real app that triggers it, note which one and whether it's
-  reproducible 3/3 tries; that's more valuable than just re-confirming
-  the happy path works.
+- An app with no matching `.desktop` entry at all fails immediately
+  (a toast naming it, no window ever spawned) rather than silently
+  timing out — verify this by saving a layout, then testing restore
+  after temporarily renaming/hiding that app's `.desktop` file.
+- The fork/exec pid-mismatch known issue this section used to send you
+  to (`CLAUDE/NOTES/known-limitations.md#fork-exec-pid-mismatch`)
+  no longer applies to winrestore specifically — it never depends on a
+  captured pid matching a live window's owning pid any more. It still
+  applies to plain launcher spawns (previous section, above) — hunt
+  for those there, not here.
 
 ### Confirm dialogs
 
@@ -206,6 +272,10 @@ this session; don't invent a different one.
   entry would otherwise time out, when exactly one unclaimed new window
   is still sitting there — low collision risk since it only fires at
   the very end of the timeout window, not as an early shortcut.
+  (Whatever this bullet's own status ends up being for plain launcher
+  spawns, it no longer applies to layout restore specifically — see
+  "Window placement — layout restore (winrestore)" above and
+  `CLAUDE/NOTES/design-decisions.md#winrestore-app-id-capture`.)
 - **Resummon keeps a stale workspace selection.** Reported live (this
   session, both sway and i3): dismissing tuicc and re-summoning it
   sometimes shows the sidebar still selected on whatever workspace was

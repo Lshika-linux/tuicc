@@ -30,7 +30,7 @@ import curses
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, centered_x
 from tuicc.modules.sidebar import slot_ids
-from tuicc.wm_config_parser import resolve_workspace_target
+from tuicc.wm_config_parser import resolve_workspace_target, workspace_display_label
 
 ROW_STEP = 2  # 1 content row + 1 blank spacer row
 
@@ -84,13 +84,14 @@ def draw(stdscr, box, ctx, module_name):
         dot = "●" if occupied else "○"
         dot_color = theme.get("accent", 0) if occupied else (theme.get("text", 0) | curses.A_DIM)
         num_color = theme.get("selected", 0) if is_selected else theme.get("text", 0)
+        display_id = ws_id if ctx.config.show_workspace_number else workspace_display_label(ws_id)
 
-        content = f"{dot} {ws_id}"
+        content = f"{dot} {display_id}"
         cx = centered_x(x + 1, inner_w, content)
 
         try:
             stdscr.addstr(row, cx, dot, dot_color)
-            stdscr.addstr(row, cx + 2, ws_id, num_color | curses.A_BOLD)
+            stdscr.addstr(row, cx + 2, display_id, num_color | curses.A_BOLD)
         except curses.error:
             pass
 

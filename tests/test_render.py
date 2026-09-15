@@ -10,7 +10,7 @@ from unittest.mock import Mock
 import tuicc.render as render
 from tuicc.render import MODULES, NAV_PROVIDERS, ACTION_HANDLERS, AUTO_FH_PROVIDERS, apply_auto_fh, draw_all, collect_nav_items
 from tuicc.layout import Layout, ModuleBox
-from tuicc.modules import power_menu, quick_actions, sessions, control, media
+from tuicc.modules import power_menu, quick_actions, winrestore, control, media
 
 
 def test_every_module_has_both_draw_and_nav_items():
@@ -20,7 +20,7 @@ def test_every_module_has_both_draw_and_nav_items():
 def test_expected_modules_are_registered():
     expected = {
         "sidebar", "sidebar_compact", "preview", "quick_actions", "rwb", "launcher",
-        "connectivity", "power_menu", "sessions", "control", "media", "bars", "sysmon",
+        "connectivity", "power_menu", "winrestore", "control", "media", "bars", "sysmon",
     }
     assert set(MODULES.keys()) == expected
 
@@ -37,9 +37,9 @@ def test_control_toggle_handler_registered():
     assert ACTION_HANDLERS[control.TARGET_KIND] is control.handle
 
 
-def test_sessions_handlers_registered():
-    assert ACTION_HANDLERS["session_row"] is sessions.handle_row
-    assert ACTION_HANDLERS["session_action"] is sessions.handle_action
+def test_winrestore_handlers_registered():
+    assert ACTION_HANDLERS["winrestore_row"] is winrestore.handle_row
+    assert ACTION_HANDLERS["winrestore_action"] is winrestore.handle_action
 
 
 def test_media_handlers_registered():
@@ -79,7 +79,7 @@ def test_auto_fh_providers_registered_for_the_5_list_modules():
         "control": control.required_fh,
         "connectivity": connectivity.required_fh,
         "media": media.required_fh,
-        "sessions": sessions.required_fh,
+        "winrestore": winrestore.required_fh,
         "rwb": rwb.required_fh,
     }
 

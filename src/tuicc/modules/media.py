@@ -4,7 +4,7 @@ set_default_sink — volume itself stays modules/control.py's concern,
 a system property, not a player one).
 
 Now-playing rows use the same two-level browsing/expanded model
-sessions.py established; both sections render a fixed VISIBLE_SLOTS
+winrestore.py established; both sections render a fixed VISIBLE_SLOTS
 window regardless of how much real content exists. See
 CLAUDE/NOTES/design-decisions.md#media-module-layout for why (tab_order
 interaction, stale-expansion handling, fixed-slot rationale) and
@@ -161,7 +161,7 @@ def collapse() -> str | None:
     is expanded, or when active_module leaves "media" entirely. Returns
     the bus_name that WAS expanded (None if none was), so the caller
     can reselect "media:<bus_name>:row" directly — same reason
-    sessions.py's collapse() returns the slot it collapsed (see its own
+    winrestore.py's collapse() returns the slot it collapsed (see its own
     docstring): nav_items() no longer reports the just-selected action
     id the instant this collapses, which would otherwise trip main.py's
     stale-selection recovery into jumping to the sidebar.
@@ -586,7 +586,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 
 def handle_row(ctx, item, cfg):
     """Enter on a browsing-level player row expands it — mirrors
-    sessions.py's handle_row exactly, including the reselect_item_id
+    winrestore.py's handle_row exactly, including the reselect_item_id
     fix-up (see ActionContext's own docstring): nav_items() stops
     reporting this row's id the instant _expanded_bus_name changes, so
     without this the stale-selection recovery would jump to the

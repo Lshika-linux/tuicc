@@ -14,7 +14,7 @@ runs (hide, don't quit — see CLAUDE/NOTES/design-decisions.md
 value, deferred until the y/n answer comes in.
 
 pending_confirm deliberately stays a plain ad hoc dict, not a dataclass:
-four different producer call sites (sessions.py, power_menu.py,
+four different producer call sites (winrestore.py, power_menu.py,
 quick_actions.py) build it with different key subsets.
 """
 
@@ -50,15 +50,34 @@ class ActionContext:
     # not `connectivity`, despite wifi/bluetooth handlers being its
     # first consumers here.
     status: object
-    # Session entries (from session.py's load_session) waiting to be
-    # spawned — a handler appends to this, main.py's loop drains it
-    # over time (staggered, not all at once — see main.py's restore
-    # processing). Shared mutable resource a handler can act on,
-    # same shape as status above.
+    # Flat, spawn-ready entries (app_id/target_region/floating, + rect
+    # when floating, + tag when queued by winrestore's own tree-builder
+    # — see pending_moves.queue_restore_entry()'s own docstring for the
+    # exact shape) waiting to be spawned — a handler appends to this,
+    # main.py's loop drains it over time (staggered, not all at once —
+    # see main.py's restore processing). Shared mutable resource a
+    # handler can act on, same shape as status above.
     restore_queue: list = field(default_factory=list)
+    # Per-REGION entries (winrestore.load_session()'s own raw shape —
+    # target_region + tiled/tiled_flat/floating, see
+    # winrestore.capture_session()'s docstring), queued by winrestore.py's
+    # "load" action instead of restore_queue directly. frame_update.py
+    # drains this once per frame into winrestore.TiledRestoreState.
+    # queued_regions, which advance_tiled_restore()/advance_tree_build()
+    # then drive one region (and, within a region with real tree
+    # structure, one leaf) at a time — real IPC side effects (WM
+    # move/layout commands) that must never fire before a "load?
+    # (overwrites your layout)" confirm dialog's own y/n answer comes
+    # back, which actions.handle_pending_confirm()'s generic confirm-
+    # resolution can't know how to defer on its own — routing through
+    # this separate field, instead of straight into restore_queue,
+    # means handle_pending_confirm() (shared with power_menu.py/
+    # quick_actions.py, no winrestore-specific knowledge) doesn't have
+    # to change shape at all; it only ever appends here.
+    pending_layout_regions: list = field(default_factory=list)
     # A handler sets this to a region id to ask main.py to move
     # selection to that region's sidebar item right after this action
-    # resolves — sessions.py's "load" branch sets it to wherever tuicc's
+    # resolves — winrestore.py's "load" branch sets it to wherever tuicc's
     # own window currently lives (ctx.provider.get_state().focused_region_id
     # — already tuicc's own region whenever tuicc has WM focus, see
     # CLAUDE.md), so confirming a session load returns you to the
@@ -188,12 +207,19 @@ def handle_pending_confirm(ctx, pending, key, cfg):
     """Resolves a y/n confirm dialog. confirm_yes (or confirm — Enter
     doubles as "yes" here too, confirm_no has no such alternate) runs
     whichever action `pending` describes — branching on
-    `"restore_entries" in pending`, not a discriminator field, matching
-    how sessions.py/power_menu.py/quick_actions.py build this dict — and
-    returns (pending["dismiss_after_confirm"], None). confirm_no
-    returns (False, None). Any other key leaves the dialog open
-    unchanged: (False, pending). The caller still calls
-    provider.dismiss_self() itself when should_dismiss comes back True.
+    `"restore_entries" in pending`, not a discriminator field (only
+    winrestore.py ever builds this shape; power_menu.py/quick_actions.py
+    build the other, `{"command", "shell_true", ...}`) — and returns
+    (pending["dismiss_after_confirm"], None). confirm_no returns
+    (False, None). Any other key leaves the dialog open unchanged:
+    (False, pending). The caller still calls provider.dismiss_self()
+    itself when should_dismiss comes back True.
+
+    `pending["restore_entries"]` (winrestore.py's own raw per-region
+    shape) goes into ctx.pending_layout_regions here, not
+    ctx.restore_queue directly — see that field's own docstring for why
+    (its real IPC side effects must not fire before this exact y/n
+    answer).
     """
     if key == cfg.keybinds["confirm_yes"] or key == cfg.keybinds["confirm"]:
         if "restore_entries" in pending:
@@ -203,7 +229,7 @@ def handle_pending_confirm(ctx, pending, key, cfg):
                     if region.id in kill_regions:
                         for window in region.windows:
                             ctx.provider.close_window(window.id)
-            ctx.restore_queue.extend(pending["restore_entries"])
+            ctx.pending_layout_regions.extend(pending["restore_entries"])
             ctx.reselect_region_id = ctx.provider.get_state().focused_region_id
         else:
             spawn_detached(pending["command"], pending["shell_true"])

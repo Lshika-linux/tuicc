@@ -13,9 +13,12 @@ Summon TUICC with a key-combo, and get modules that help you see and control the
 
 - your workspaces and what's in them (sidebar.py);
 - a live overview of what's on screen (preview.py);
-- an integrated app launcher (launcher.py);
+- an integrated app launcher, with a placement-mode picker (tiled, a new
+  stack/tab, an existing named group, or floating — cycled with Tab/Shift+Tab)
+  for exactly where and how the launched app lands (launcher.py);
 - which wifi/BT devices are connected, and connecting to new ones (connectivity.py);
-- a way to save and restore open windows across workspaces (sessions.py);
+- saving a window layout across workspaces (winrestore.py) — **restore is
+  currently disabled**, see the SESSIONS note below;
 - system toggles — night light, power profiles, DND, whatever on/off-style
   shell commands your setup uses (control.py);
 - now-playing + transport controls for whatever's running over MPRIS, output
@@ -39,7 +42,7 @@ Summon TUICC with a key-combo, and get modules that help you see and control the
 ![Power menu's Y/N confirmation before shutting down](./screenshots/power-menu-confirm.png)
 
 ### SESSIONS
-**Loading a session tells you exactly what's about to change.** Windows that would spawn show up in red under the workspace they're headed for, right alongside what's already there — so you know before you commit whether a workspace's existing windows are about to get replaced.
+**Restoring a saved layout is currently non-functional and disabled.** Saving still works — Sessions still writes a plain, forward-compatible TOML file — but LOAD is switched off outright rather than shipped broken (the previous mechanism, reconstructing tiled/stacked/tabbed structure across every workspace in one batch, turned out not to work reliably). The plan is to rebuild restore later as a simple replay of the launcher's own single-window placement-mode picker (tiled/stacked/tabbed/floating, see above) instead of a whole separate restore engine.
 
 ![Sessions module previewing incoming windows in red against each workspace's current contents](./screenshots/sessions-preview.png)
 
@@ -357,7 +360,10 @@ src/tuicc/
 ├── sensors.py                               # `sensors -j` wrapper — vendor-aware CPU temp + hottest-sensor reading
 ├── diagnostics.py                           # failed systemd units + OOM + deduped journal errors — sysmon.py's
 │                                          #   diagnostics line
-├── session.py                              # capture/save/load a session's window layout (sessions.py's backend)
+├── winrestore.py                          # capture/save/load a window layout by app_id, real tiled tree where
+│                                          #   the provider supports it (modules/winrestore.py's backend)
+├── tiled_tree.py                             # tiled/stacked/tabbed tree capture + set_container_layout(), shared
+│                                          #   by providers/sway.py and providers/i3.py
 ├── pending_moves.py                         # PendingMovesQueue — matches a spawned/restored window to its
 │                                          #   target region once it maps, staggered, with a timeout
 ├── tab_groups.py                             # stacked/tabbed container detection, shared by providers/sway.py
@@ -379,7 +385,7 @@ src/tuicc/
 │   ├── sysmon.py                       # per-window CPU/RAM list (CLOSE/KILL/NICE) + a configurable
 │   │                                  #   ([[sysmon.block]]) overall-stats grid + a diagnostics summary line
 │   ├── power_menu.py                   # lock/logout/reboot/shutdown, user-defined
-│   ├── sessions.py                      # save/load/delete a named set of window positions
+│   ├── winrestore.py                  # save/load/delete a named window layout (app_id + region + floating/rect)
 │   ├── quick_actions.py                  # generic action list — not in the default layout yet
 │   └── rwb.py                             # "real world box" — time, date, and a compact weather
 │                                          #   readout when [weather] is configured (see weather.py)

@@ -104,7 +104,7 @@ def test_handle_confirm_required_tags_pending_with_owning_module():
     # Regression: draw() only shows a pending_confirm dict if it's
     # tagged with its own module name — otherwise every visible
     # confirm-capable module shows the same dialog at once (a real bug
-    # caught live, once sessions.py and power_menu.py were both on
+    # caught live, once winrestore.py and power_menu.py were both on
     # screen together for the first time).
     cfg = SimpleNamespace(power_menu_actions=[
         {"label": "Shutdown", "command": "systemctl poweroff", "confirm": True, "shell_true": False},

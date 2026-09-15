@@ -57,12 +57,12 @@ USER_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "presets"
 # "Dracula" itself in place the way a layout preset invites editing.
 USER_THEME_PRESETS_DIR = Path.home() / ".config" / "tuicc" / "theme_presets"
 
-# Must match modules/sessions.py's own SLOT_COUNT — duplicated rather
+# Must match modules/winrestore.py's own SLOT_COUNT — duplicated rather
 # than imported, since config.py sits below modules/ in the dependency
-# order (modules import from config, never the reverse). Session slot
-# count isn't exposed as configurable today, same as it wasn't before
+# order (modules import from config, never the reverse). Slot count
+# isn't exposed as configurable today, same as it wasn't before
 # per-slot names existed.
-SESSION_SLOT_COUNT = 3
+WINRESTORE_SLOT_COUNT = 3
 
 
 @dataclass
@@ -74,6 +74,7 @@ class Config:
     total_workspaces: int
     workspace_mode: str
     workspace_names: list | None
+    show_workspace_number: bool
     self_app_id: str | None
     return_to_origin: bool
     fullscreen_only: bool
@@ -104,7 +105,7 @@ class Config:
     audio_backend_name: str
     power_menu_actions: list
     global_shortcuts: dict
-    session_names: dict
+    winrestore_names: dict
     control_toggles: list
     sysmon_blocks: list
     sysmon_visible_slots: int
@@ -409,10 +410,10 @@ def _patch_config_line(section: str, key: str, replacement_line: str) -> None:
     in USER_CONFIG_PATH, leaving every other line — comments included
     — byte-for-byte untouched. Not a tomllib/tomli_w round-trip, which
     would silently strip comments. Shared by set_active_preset,
-    set_theme_color, set_session_name. If `key` (or even `[section]`)
+    set_theme_color, set_winrestore_name. If `key` (or even `[section]`)
     isn't found, it's appended rather than silently doing nothing —
-    needed for set_session_name, since [sessions] may not exist in an
-    older config.toml yet. Atomic write (tmp + replace).
+    needed for set_winrestore_name, since [winrestore] may not exist in
+    an older config.toml yet. Atomic write (tmp + replace).
     """
     lines = USER_CONFIG_PATH.read_text().splitlines(keepends=True)
 
@@ -464,17 +465,17 @@ def set_theme_color(role: str, value: str) -> None:
     _patch_config_line("theme", role, tomli_w.dumps({role: value}))
 
 
-def set_session_name(slot: int, value: str) -> None:
-    """Switches config.toml's [sessions] name_<slot> over to value —
-    the sessions module's rename action. value may be empty (clearing
+def set_winrestore_name(slot: int, value: str) -> None:
+    """Switches config.toml's [winrestore] name_<slot> over to value —
+    the winrestore module's rename action. value may be empty (clearing
     a custom name back to the "Slot <N>" default — see load_config's
-    session_names).
+    winrestore_names).
     """
     # See set_theme_color's matching comment — same free-text-needs-
-    # real-escaping reasoning (session names accept the same printable
+    # real-escaping reasoning (slot names accept the same printable
     # range, including `"`).
     key = f"name_{slot}"
-    _patch_config_line("sessions", key, tomli_w.dumps({key: value}))
+    _patch_config_line("winrestore", key, tomli_w.dumps({key: value}))
 
 
 def get_raw_theme_values() -> dict:
@@ -525,21 +526,22 @@ def get_raw_power_menu_actions() -> list[dict]:
         return []
 
 
-def _build_session_names(user_data: dict) -> dict:
+def _build_winrestore_names(user_data: dict) -> dict:
     """{1: name, 2: name, 3: name} — falsy (missing key entirely, or an
     empty string from clearing a rename back out) both fall back to
-    "Slot <N>". [sessions] itself may not exist at all in a config.toml
-    predating this feature, so .get() at every level, same "missing key
-    -> sane default, never a crash" treatment fullscreen_only gets in
-    load_config() below. A separate function (not inlined into
-    load_config) purely so it's testable without a full config.toml
-    fixture, same reasoning resolve_color()/resolve_key() are their own
-    functions instead of being written inline where they're used.
+    "Slot <N>". [winrestore] itself may not exist at all in a
+    config.toml predating this feature, so .get() at every level, same
+    "missing key -> sane default, never a crash" treatment
+    fullscreen_only gets in load_config() below. A separate function
+    (not inlined into load_config) purely so it's testable without a
+    full config.toml fixture, same reasoning resolve_color()/
+    resolve_key() are their own functions instead of being written
+    inline where they're used.
     """
-    sessions_data = user_data.get("sessions", {})
+    winrestore_data = user_data.get("winrestore", {})
     return {
-        n: sessions_data.get(f"name_{n}") or f"Slot {n}"
-        for n in range(1, SESSION_SLOT_COUNT + 1)
+        n: winrestore_data.get(f"name_{n}") or f"Slot {n}"
+        for n in range(1, WINRESTORE_SLOT_COUNT + 1)
     }
 
 
@@ -778,6 +780,12 @@ def load_config(preset_override: int | None = None) -> Config:
             "list the workspace names/numbers to show, e.g. "
             'workspace_names = ["1", "2", "chat"]'
         )
+    # Off by default: a configured "8:VIII"-style name shows as just
+    # "VIII" (wm_config_parser.workspace_display_label()) — the number
+    # is already redundant to look at once it's also the slot's own
+    # position in the sidebar. Set true to see the configured name in
+    # full, number included, exactly as it's used in WM commands.
+    show_workspace_number = user_data["wm"].get("show_workspace_number", False)
     self_app_id = user_data["wm"].get("self_app_id") or None
     return_to_origin = user_data["wm"].get("return_to_origin", False)
     fullscreen_only = user_data["wm"].get("fullscreen_only", False)
@@ -890,7 +898,7 @@ def load_config(preset_override: int | None = None) -> Config:
         used_by[key_code] = item_id
         global_shortcuts[key_code] = {"target_kind": "power_action", "item_id": item_id}
 
-    session_names = _build_session_names(user_data)
+    winrestore_names = _build_winrestore_names(user_data)
 
     rwb_time_format = user_data["rwb"]["time_format"]
     rwb_date_format = user_data["rwb"]["date_format"]
@@ -937,6 +945,7 @@ def load_config(preset_override: int | None = None) -> Config:
         total_workspaces=total_workspaces,
         workspace_mode=workspace_mode,
         workspace_names=workspace_names,
+        show_workspace_number=show_workspace_number,
         self_app_id=self_app_id,
         return_to_origin=return_to_origin,
         fullscreen_only=fullscreen_only,
@@ -960,7 +969,7 @@ def load_config(preset_override: int | None = None) -> Config:
         audio_backend_name=audio_backend_name,
         power_menu_actions=power_menu_actions,
         global_shortcuts=global_shortcuts,
-        session_names=session_names,
+        winrestore_names=winrestore_names,
         control_toggles=control_toggles,
         sysmon_blocks=sysmon_blocks,
         sysmon_visible_slots=sysmon_visible_slots,

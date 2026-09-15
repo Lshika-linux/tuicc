@@ -4,14 +4,14 @@ sections of one box. WiFi/Bluetooth headers are the only level-1
 ("connectivity_browsing") and browses that section's own networks/
 devices exclusively; see this module's own "level-2 browsing" section
 docstring for the full design (a genuine input claim, not the
-orthogonal two-level-expand mechanism sessions.py/media.py/sysmon.py
+orthogonal two-level-expand mechanism winrestore.py/media.py/sysmon.py
 use). Within browsing, Enter connects/disconnects the selected item —
 actual connect/disconnect happens on the StatusWorker's background
 thread (ctx.status), never blocking the render loop.
 
 CLAUDE/VISION.md's R4 added two more input claims this module owns the
 display state for, same "module-level state, main.py notices and pushes
-onto mode_stack on its behalf" idiom sessions.py's naming field
+onto mode_stack on its behalf" idiom winrestore.py's naming field
 established: a wifi passphrase prompt (is_entering_passphrase()'s own
 quartet, driven by iwd_agent.py's IwdAgent registering a D-Bus agent
 with iwd) and a bluetooth pairing confirm (is_confirming_pairing(),
@@ -161,7 +161,7 @@ def _build_rows(ctx, box_h):
 
 
 # ---------- R4: wifi passphrase entry (iwd_agent.py's RequestPassphrase) ----------
-# Same "module-level state, quartet of functions" shape as sessions.py's
+# Same "module-level state, quartet of functions" shape as winrestore.py's
 # naming field — see this module's own docstring for why main.py
 # notices and drives this differently (IwdAgent.mailbox.has_pending(),
 # not a dispatch_action() call).
@@ -224,7 +224,7 @@ def cancel_passphrase_entry() -> None:
 
 
 def handle_passphrase_key(key: int) -> bool:
-    """Same shape as sessions.py's handle_naming_key — Enter isn't
+    """Same shape as winrestore.py's handle_naming_key — Enter isn't
     handled here (submitting needs the live IwdAgent this function
     doesn't have), so the caller checks for confirm before falling
     back to this for everything else. Returns still_claiming (False
@@ -274,7 +274,7 @@ def apply_passphrase() -> str | None:
     needs is_entering_passphrase()/the ssid while it waits for the
     real connect result; call mark_passphrase_submitted() right after
     actually handing this to IwdAgent.reply_passphrase(). Unlike
-    sessions.py's apply_naming(), also never writes anything to cfg —
+    winrestore.py's apply_naming(), also never writes anything to cfg —
     the caller is the one that knows how to deliver this answer.
     """
     if _entering_passphrase_ssid is None:
@@ -374,9 +374,9 @@ def pairing_error() -> str | None:
 # reachable) items — Enter on one claims mode_stack ("connectivity_
 # browsing", pushed by main.py right after dispatch_action(), same
 # "module sets its own state, main.py notices and pushes" idiom as
-# sessions.py's is_naming()) and browses that section's own items
+# winrestore.py's is_naming()) and browses that section's own items
 # exclusively, via main.py's handle_connectivity_browsing hand-rolling
-# every key itself — NOT the same mechanism as sessions.py/media.py/
+# every key itself — NOT the same mechanism as winrestore.py/media.py/
 # sysmon.py's own two-level expand (that one stays orthogonal to
 # mode_stack; this one is a genuine modal claim, same shape as
 # resize_mode.py's editing level, chosen specifically so a dedicated
@@ -669,7 +669,7 @@ def _header_status_dim(theme, segments):
     header row itself isn't the current selection (level-1 navigation
     — Rafi's own call: the whole legend should read as quiet/inert
     background info until you've actually navigated onto this row,
-    same "dim until relevant" instinct sessions.py's own LOAD/SAVE/
+    same "dim until relevant" instinct winrestore.py's own LOAD/SAVE/
     DEL/NAME and media.py's own transport glyphs already apply, just
     keyed off row selection here rather than an expanded/collapsed
     state).
@@ -868,7 +868,7 @@ def draw(stdscr, box, ctx, module_name):
 
     # R4's two overlays take over the whole box while active, same
     # "full-box takeover, draw_centered_lines, then return" shape
-    # sessions.py's own pending_confirm branch uses — checked via this
+    # winrestore.py's own pending_confirm branch uses — checked via this
     # module's own state (is_entering_passphrase()/is_confirming_pairing()),
     # not ctx.pending_confirm, since these are driven by IwdAgent/
     # BluezAgent mailboxes, not the generic pending_confirm dict (see
@@ -1008,7 +1008,7 @@ def draw(stdscr, box, ctx, module_name):
                 )
             # Right-aligned to the box's own right edge (same "block's
             # own last character sits one cell in from the border"
-            # convention sessions.py's own _action_positions() uses),
+            # convention winrestore.py's own _action_positions() uses),
             # not left-anchored right after the label — Rafi's own ask:
             # a consistent right edge regardless of how long "WiFi
             # [19]"/"BT [3]" happens to be. The label's own available
@@ -1028,7 +1028,7 @@ def draw(stdscr, box, ctx, module_name):
         elif kind == "error":
             # No-silent-failure (VISION.md, R3): distinct from "empty"
             # both visually (urgent, same role power_menu's confirm=true
-            # actions and sessions.py's DEL use) and in meaning — the
+            # actions and winrestore.py's DEL use) and in meaning — the
             # backend couldn't be reached at all, not "genuinely
             # nothing there".
             try:
@@ -1877,7 +1877,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
     never something a user can see selected-but-undrawn). See this
     module's own "level-2 browsing" section docstring for why this is
     a real mode_stack claim (main.py's handle_connectivity_browsing)
-    rather than the orthogonal two-level-expand mechanism sessions.py/
+    rather than the orthogonal two-level-expand mechanism winrestore.py/
     media.py/sysmon.py use — draw() keeps rendering BOTH sections in
     full regardless of browsing state, only what's reachable here
     changes.
@@ -2016,7 +2016,7 @@ def handle_wifi_header(ctx, item, cfg):
     module's own "level-2 browsing" section) — main.py notices
     is_browsing() right after this returns and pushes the
     "connectivity_browsing" mode_stack tier on its own behalf, same
-    idiom as sessions.py's start_naming()/is_naming(). Jumps straight
+    idiom as winrestore.py's start_naming()/is_naming(). Jumps straight
     to the first real network (via ActionContext.reselect_item_id +
     main.py's existing do_apply_reselect()) rather than leaving
     selection sitting on the now-unreachable header id.

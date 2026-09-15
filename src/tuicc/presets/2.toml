@@ -1,6 +1,6 @@
 # Layout preset — minimal, preview-focused: a compact workspace picker,
 # launcher across the top, preview filling the rest. No full sidebar
-# (no window listing) and none of the power_menu/connectivity/sessions
+# (no window listing) and none of the power_menu/connectivity/winrestore
 # panels preset 1 has — for anyone who mostly just wants to look at
 # their windows and jump between workspaces without much else on screen.
 #

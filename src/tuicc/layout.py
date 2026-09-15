@@ -30,7 +30,7 @@ box can use `w`/`h` (ratio, as above) OR `fw`/`fh` (fixed columns/rows
 — an absolute terminal-cell count, never scaled). Found live (height
 first — width mirrors it exactly, added once the same real need showed
 up on that axis too): some modules (control's toggle list,
-connectivity/media/sysmon's fixed-row tables, sessions/power_menu/
+connectivity/media/sysmon's fixed-row tables, winrestore/power_menu/
 launcher/rwb's own compact strips) need a SPECIFIC row count to look
 right — fewer rows and real content gets clipped/unusable, more rows
 and it's just wasted empty space, so scaling them proportionally with
@@ -86,7 +86,7 @@ opts a box that's already in `fh` mode into having that number
 RECOMPUTED from its own module's real content every time the layout is
 (re)built — see render.py's `AUTO_FH_PROVIDERS`/`apply_auto_fh()` for
 the actual computation, and each of control.py/connectivity.py/
-media.py/sessions.py/rwb.py's own `required_fh()` for what each one
+media.py/winrestore.py/rwb.py's own `required_fh()` for what each one
 counts. Only meaningful alongside `fh` (raises if set on a `h`-ratio
 box — nothing to recompute). Found live: `fh` was originally just a
 number Rafi hand-tuned via F2 to fit his OWN config's content exactly

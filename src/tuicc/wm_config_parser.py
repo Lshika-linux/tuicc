@@ -239,6 +239,50 @@ def resolve_workspace_target(bare_id: str, candidate_names: list[str] | None) ->
     return bare_id
 
 
+def bare_workspace_id(region_id: str) -> str:
+    """region_id's own bare leading number, tolerating an ALREADY-
+    resolved value ("8:VIII") as well as a genuinely bare one ("8") —
+    returns "8" either way (a bare region_id's own leading number is
+    itself, a no-op). Needed because loop_state.focus_id (main.py) is
+    NOT always bare like Region.id/a saved entry's target_region are:
+    pending_moves.process() sets it to result.resolved_target_regions[-1]
+    (frame_update.py) once a spawn resolves, which can itself already
+    be a resolved "N:Name" — found live (real bug report, not
+    theoretical): a launcher spawn's `floating`/"into S1" placement
+    silently did nothing whenever loop_state.focus_id happened to
+    already hold a resolved name, because Provider.set_floating_geometry()/
+    list_container_groups() both look up the target workspace by an
+    EXACT `str(workspace.num) == region_id` match — unlike
+    move_window_to_region()'s own `workspace number <target>` IPC
+    command, which tolerates either form via sway/i3's own leading-
+    digit prefix matching (see resolve_workspace_target()'s own
+    docstring for why that command behaves that way in the first
+    place). Falls back to region_id unchanged if it doesn't start with
+    a number at all (shouldn't happen for a real workspace id, but
+    never worth guessing over).
+    """
+    return _leading_number(region_id) or region_id
+
+
+def workspace_display_label(ws_id: str) -> str:
+    """ws_id as it should actually be shown on screen — the "number:name"
+    convention (e.g. "8:VIII") this module already resolves against
+    real sway/i3 config text is great for `workspace number <target>`
+    (see resolve_workspace_target()'s own docstring) but redundant to
+    LOOK at: the sidebar already shows the number as the slot's own
+    position, so a configured "8:VIII" reads as "VIII" here — only the
+    part after the first ":" survives. ws_id unchanged when there's no
+    "digits:" prefix to strip at all (a bare number like "3", or a name
+    with no leading number like "chat") — [wm] show_workspace_number
+    (config.py) is what flips this back to showing ws_id in full.
+
+    Deliberately display-only: every caller still keys/matches/sends
+    WM commands with the real ws_id, never this label.
+    """
+    m = re.match(r"^\d+:(.+)$", ws_id)
+    return m.group(1) if m else ws_id
+
+
 def get_wm_config(conn) -> WmConfigInfo | None:
     """Thin IPC-issuing wrapper shared by SwayProvider/I3Provider (both
     just delegate their own wm_config() to this — identical either way,

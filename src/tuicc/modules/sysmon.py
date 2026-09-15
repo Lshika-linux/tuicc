@@ -8,8 +8,8 @@ OOM + deduped general errors; hover shows the full breakdown via
 preview.py).
 
 Window rows use the same two-level browsing/expanded row model as
-sessions.py (CLOSE/KILL/NICE), and NICE opens its own inline numeric
-input like sessions.py's rename field. See
+winrestore.py (CLOSE/KILL/NICE), and NICE opens its own inline numeric
+input like winrestore.py's rename field. See
 CLAUDE/NOTES/design-decisions.md#sysmon-module-design for the full
 reasoning, NICE's write-range restriction, and how CLOSE/KILL reuse
 existing pieces rather than adding new ones.
@@ -39,12 +39,12 @@ def is_expanded() -> bool:
 
 
 def collapse() -> str | None:
-    """Mirrors sessions.py's collapse() exactly — returns the window_id
+    """Mirrors winrestore.py's collapse() exactly — returns the window_id
     that WAS expanded (None if none was) so the caller can reselect
     "sysmon:<window_id>:row" directly; nav_items() stops reporting the
     just-selected action id the instant this collapses, which would
     otherwise trip main.py's stale-selection recovery into jumping to
-    the sidebar (see sessions.py's own collapse() docstring for the
+    the sidebar (see winrestore.py's own collapse() docstring for the
     full live-found reasoning).
     """
     global _expanded_window_id
@@ -78,7 +78,7 @@ def start_nice_edit(window_id: str, pid: int, current: int | None) -> None:
 
 
 def handle_nice_key(key: int) -> bool:
-    """Same still_claiming shape as sessions.py's handle_naming_key —
+    """Same still_claiming shape as winrestore.py's handle_naming_key —
     False only on Escape. Accepts digits only (see this module's own
     docstring for why NICE is positive-only 0..19, no sign character
     needed at all as a result).
@@ -755,7 +755,7 @@ def nav_items(box, ctx, module_name) -> list[NavItem]:
 
 def handle_row(ctx, item, cfg):
     """Enter on a browsing-level window row expands it — mirrors
-    sessions.py's handle_row exactly, including the reselect_item_id
+    winrestore.py's handle_row exactly, including the reselect_item_id
     fix-up (see ActionContext's own docstring).
     """
     global _expanded_window_id

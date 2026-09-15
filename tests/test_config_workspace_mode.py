@@ -80,3 +80,19 @@ def test_invalid_workspace_mode_raises(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(ValueError, match="workspace_mode"):
         _load_config_with_wm_overrides(tmp_path, monkeypatch, 'workspace_mode = "bogus"\n')
+
+
+def test_show_workspace_number_defaults_false(tmp_path, monkeypatch):
+    # The packaged default's own commented-out `# show_workspace_number
+    # = true` line, unchanged — .get()-with-default covers both "never
+    # set" and "predates this key entirely" the same way.
+    cfg = _load_config_with_wm_overrides(tmp_path, monkeypatch, 'workspace_mode = "autodetect"')
+    assert cfg.show_workspace_number is False
+
+
+def test_show_workspace_number_true_when_set(tmp_path, monkeypatch):
+    cfg = _load_config_with_wm_overrides(
+        tmp_path, monkeypatch,
+        'workspace_mode = "autodetect"\nshow_workspace_number = true\n',
+    )
+    assert cfg.show_workspace_number is True

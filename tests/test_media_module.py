@@ -1,7 +1,7 @@
 """Tests for modules/media.py's pure logic (_player_label, marquee_text,
 _build_rows, nav_items, handle_row) plus the expand/collapse state
 machinery (is_expanded/collapse/_reconcile_expanded_state), the same
-two-level model sessions.py established — see test_sessions_module.py's
+two-level model winrestore.py established — see test_winrestore_module.py's
 own docstring for why module-level state is reset per-test by hand
 rather than via an autouse fixture. draw() needs a real curses screen,
 left untested here, same as every other module.

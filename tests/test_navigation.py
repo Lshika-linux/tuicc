@@ -417,7 +417,7 @@ def test_resolve_selection_non_region_item_keeps_focus_id_unchanged():
 # ---------- same_row_neighbor ----------
 # The fix for main.py's Left/Right (module_next_keys/module_prev_keys)
 # jumping to a whole different module the instant you try to step
-# across a module's own horizontal row of items (e.g. sessions.py's
+# across a module's own horizontal row of items (e.g. winrestore.py's
 # expanded LOAD/SAVE/DEL/NAME). Left/Right try this first; None (the
 # overwhelmingly common case for a single-column module) means they
 # fall back to their usual jump-to-module behavior, unaffected.

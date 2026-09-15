@@ -20,7 +20,7 @@ from tuicc.config import (
     set_active_preset,
     set_theme_color,
     set_theme_colors,
-    set_session_name,
+    set_winrestore_name,
     get_raw_theme_values,
     get_raw_navigation_keys,
     get_raw_power_menu_actions,
@@ -28,7 +28,7 @@ from tuicc.config import (
     save_new_theme_preset,
     load_theme_preset,
     available_theme_preset_numbers,
-    _build_session_names,
+    _build_winrestore_names,
     _build_control_toggles,
     _build_weather_config,
     _build_sysmon_blocks,
@@ -707,46 +707,46 @@ def test_get_raw_power_menu_actions_missing_section_returns_empty_list(tmp_path,
     assert get_raw_power_menu_actions() == []
 
 
-# ---------- _build_session_names ----------
+# ---------- _build_winrestore_names ----------
 
-def test_build_session_names_uses_configured_values():
-    user_data = {"sessions": {"name_1": "Work", "name_2": "Gaming", "name_3": "Slot 3"}}
+def test_build_winrestore_names_uses_configured_values():
+    user_data = {"winrestore": {"name_1": "Work", "name_2": "Gaming", "name_3": "Slot 3"}}
 
-    assert _build_session_names(user_data) == {1: "Work", 2: "Gaming", 3: "Slot 3"}
-
-
-def test_build_session_names_missing_section_falls_back_to_slot_n():
-    # config.toml predating this feature — no [sessions] at all.
-    assert _build_session_names({}) == {1: "Slot 1", 2: "Slot 2", 3: "Slot 3"}
+    assert _build_winrestore_names(user_data) == {1: "Work", 2: "Gaming", 3: "Slot 3"}
 
 
-def test_build_session_names_missing_individual_key_falls_back_to_slot_n():
-    user_data = {"sessions": {"name_1": "Work"}}
+def test_build_winrestore_names_missing_section_falls_back_to_slot_n():
+    # config.toml predating this feature — no [winrestore] at all.
+    assert _build_winrestore_names({}) == {1: "Slot 1", 2: "Slot 2", 3: "Slot 3"}
 
-    assert _build_session_names(user_data) == {1: "Work", 2: "Slot 2", 3: "Slot 3"}
+
+def test_build_winrestore_names_missing_individual_key_falls_back_to_slot_n():
+    user_data = {"winrestore": {"name_1": "Work"}}
+
+    assert _build_winrestore_names(user_data) == {1: "Work", 2: "Slot 2", 3: "Slot 3"}
 
 
-def test_build_session_names_empty_value_falls_back_to_slot_n():
+def test_build_winrestore_names_empty_value_falls_back_to_slot_n():
     # Clearing a rename back to "" (see apply_naming's docstring) must
     # redisplay as the default next load, not a literal blank name.
-    user_data = {"sessions": {"name_2": ""}}
+    user_data = {"winrestore": {"name_2": ""}}
 
-    assert _build_session_names(user_data) == {1: "Slot 1", 2: "Slot 2", 3: "Slot 3"}
+    assert _build_winrestore_names(user_data) == {1: "Slot 1", 2: "Slot 2", 3: "Slot 3"}
 
 
-# ---------- set_session_name ----------
+# ---------- set_winrestore_name ----------
 
-def test_set_session_name_rewrites_only_the_target_slot(tmp_path, monkeypatch):
+def test_set_winrestore_name_rewrites_only_the_target_slot(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[sessions]\n"
+        "[winrestore]\n"
         "# a hand-written comment that must survive\n"
         'name_1 = "Slot 1"\n'
         'name_2 = "Slot 2"\n'
     )
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
-    set_session_name(2, "Gaming")
+    set_winrestore_name(2, "Gaming")
 
     result = config_path.read_text()
     assert 'name_1 = "Slot 1"\n' in result
@@ -754,10 +754,10 @@ def test_set_session_name_rewrites_only_the_target_slot(tmp_path, monkeypatch):
     assert "# a hand-written comment that must survive\n" in result
 
 
-def test_set_session_name_appends_missing_key_within_existing_section(tmp_path, monkeypatch):
+def test_set_winrestore_name_appends_missing_key_within_existing_section(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[sessions]\n"
+        "[winrestore]\n"
         'name_1 = "Slot 1"\n'
         "\n"
         "[network]\n"
@@ -765,34 +765,34 @@ def test_set_session_name_appends_missing_key_within_existing_section(tmp_path, 
     )
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
-    set_session_name(2, "Gaming")
+    set_winrestore_name(2, "Gaming")
 
     result = config_path.read_text()
     assert 'name_1 = "Slot 1"\n' in result
     assert 'name_2 = "Gaming"\n' in result
-    # Landed inside [sessions], not accidentally inside [network] below it.
-    sessions_pos = result.index("[sessions]")
+    # Landed inside [winrestore], not accidentally inside [network] below it.
+    winrestore_pos = result.index("[winrestore]")
     network_pos = result.index("[network]")
     name_2_pos = result.index('name_2 = "Gaming"')
-    assert sessions_pos < name_2_pos < network_pos
+    assert winrestore_pos < name_2_pos < network_pos
     assert 'wifi_backend = "iwd"\n' in result
 
 
-def test_set_session_name_appends_missing_key_when_section_is_last_in_file(tmp_path, monkeypatch):
+def test_set_winrestore_name_appends_missing_key_when_section_is_last_in_file(tmp_path, monkeypatch):
     # No subsequent "[" line to bound the insertion point against —
     # section_end must fall back to end-of-file, not lose the line.
     config_path = tmp_path / "config.toml"
-    config_path.write_text('[sessions]\nname_1 = "Slot 1"\n')
+    config_path.write_text('[winrestore]\nname_1 = "Slot 1"\n')
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
-    set_session_name(2, "Gaming")
+    set_winrestore_name(2, "Gaming")
 
-    assert config_path.read_text() == '[sessions]\nname_1 = "Slot 1"\nname_2 = "Gaming"\n'
+    assert config_path.read_text() == '[winrestore]\nname_1 = "Slot 1"\nname_2 = "Gaming"\n'
 
 
-def test_set_session_name_appends_a_brand_new_section_when_missing_entirely(tmp_path, monkeypatch):
-    # The exact upgrade case set_session_name's docstring calls out —
-    # an existing user's config.toml predating [sessions] entirely.
+def test_set_winrestore_name_appends_a_brand_new_section_when_missing_entirely(tmp_path, monkeypatch):
+    # The exact upgrade case set_winrestore_name's docstring calls out —
+    # an existing user's config.toml predating [winrestore] entirely.
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "[layout]\n"
@@ -800,36 +800,36 @@ def test_set_session_name_appends_a_brand_new_section_when_missing_entirely(tmp_
     )
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
-    set_session_name(1, "Work")
+    set_winrestore_name(1, "Work")
 
     result = config_path.read_text()
-    assert "[sessions]\n" in result
+    assert "[winrestore]\n" in result
     assert 'name_1 = "Work"\n' in result
     assert "preset = 1\n" in result  # untouched
 
 
-def test_set_session_name_escapes_a_literal_quote_in_the_value(tmp_path, monkeypatch):
-    # Typed straight from the sessions module's rename field, which
+def test_set_winrestore_name_escapes_a_literal_quote_in_the_value(tmp_path, monkeypatch):
+    # Typed straight from the winrestore module's rename field, which
     # accepts any printable char (see handle_naming_key) — a raw
     # f-string embed (the old implementation) breaks config.toml the
     # moment the name itself contains a `"`.
     config_path = tmp_path / "config.toml"
-    config_path.write_text('[sessions]\nname_1 = "Slot 1"\n')
+    config_path.write_text('[winrestore]\nname_1 = "Slot 1"\n')
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
-    set_session_name(1, 'quoted "name" here')
+    set_winrestore_name(1, 'quoted "name" here')
 
     result = config_path.read_text()
-    assert tomllib.loads(result)["sessions"]["name_1"] == 'quoted "name" here'
+    assert tomllib.loads(result)["winrestore"]["name_1"] == 'quoted "name" here'
 
 
-def test_set_session_name_can_write_an_empty_value(tmp_path, monkeypatch):
+def test_set_winrestore_name_can_write_an_empty_value(tmp_path, monkeypatch):
     # Clearing a custom name back to the default (see apply_naming).
     config_path = tmp_path / "config.toml"
-    config_path.write_text('[sessions]\nname_1 = "Work"\n')
+    config_path.write_text('[winrestore]\nname_1 = "Work"\n')
     monkeypatch.setattr(config_module, "USER_CONFIG_PATH", config_path)
 
-    set_session_name(1, "")
+    set_winrestore_name(1, "")
 
     assert 'name_1 = ""\n' in config_path.read_text()
 

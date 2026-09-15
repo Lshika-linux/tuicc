@@ -123,13 +123,13 @@ def same_row_neighbor(
     """The next item left (direction=-1) or right (+1) of the selected
     one, within the SAME module and exact row (rect's y) — lets
     Left/Right step across a module's own horizontal row (e.g.
-    sessions.py's LOAD/SAVE/DEL/NAME) before falling back to jump-to-
+    winrestore.py's LOAD/SAVE/DEL/NAME) before falling back to jump-to-
     next-module. None if there's no selection or no row-mate (the
     common single-column case, a no-op). Narrower than the removed
     spatial nearest-neighbor search (see module docstring): same
     module, same exact row only, no ambiguity to get wrong. wrap=True
     (opt-in — see main.py's call sites) cycles instead of returning
-    None at the row's end, for level-2 sessions.py-style exceptions.
+    None at the row's end, for level-2 winrestore.py-style exceptions.
     """
     if selected_id is None:
         return None
@@ -171,7 +171,7 @@ def first_item_in_module(items: list[NavItem], module_name: str) -> NavItem | No
 # never in it. main.py re-queries the target module's own nav_items()
 # directly with this sentinel in place of the real selected_id when
 # rolling backward (Shift+Tab) into a module that needs it — see its
-# own "sidebar" branch, mirroring the pre-existing "sessions always
+# own "sidebar" branch, mirroring the pre-existing "winrestore always
 # rolls in on slot 1" exception right above it in the same dispatch.
 LAST_ITEM_QUERY = "__navigation_query_last_item__"
 

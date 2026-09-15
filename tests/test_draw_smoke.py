@@ -34,7 +34,7 @@ from tuicc.model import WMState
 from tuicc.context import RenderContext
 from tuicc.providers.sway import parse_tree
 from tuicc.modules import connectivity as connectivity_mode
-from tuicc.modules import sessions as sessions_mode
+from tuicc.modules import winrestore as winrestore_mode
 from tuicc.modules import sysmon as sysmon_mode
 from tuicc.modules import media as media_mode
 from tuicc.modules import control as control_mode
@@ -170,16 +170,16 @@ def test_connectivity_draw_during_forget_confirm(tmp_path, monkeypatch):
         connectivity_mode.stop_browsing()
 
 
-def test_sessions_draw_during_rename(tmp_path, monkeypatch):
+def test_winrestore_draw_during_rename(tmp_path, monkeypatch):
     cfg = load_packaged_default_config(tmp_path, monkeypatch)
-    sessions_mode.start_naming(1, "old name")
+    winrestore_mode.start_naming(1, "old name")
     try:
-        ctx = _ctx(cfg, active_module="sessions")
+        ctx = _ctx(cfg, active_module="winrestore")
         stdscr = _FakeStdscr()
-        sessions_mode.draw(stdscr, (0, 0, 40, 10), ctx, "sessions")
+        winrestore_mode.draw(stdscr, (0, 0, 40, 10), ctx, "winrestore")
         assert stdscr.calls
     finally:
-        sessions_mode.handle_naming_key(27)  # Escape — the real cancel path
+        winrestore_mode.handle_naming_key(27)  # Escape — the real cancel path
 
 
 def test_sysmon_draw_during_nice_edit(tmp_path, monkeypatch):
@@ -197,7 +197,7 @@ def test_sysmon_draw_during_nice_edit(tmp_path, monkeypatch):
 def test_media_draw_with_a_player_expanded(tmp_path, monkeypatch):
     cfg = load_packaged_default_config(tmp_path, monkeypatch)
     # No public setter for the expanded bus name (only collapse()) —
-    # same module-global pattern connectivity.py/sessions.py/sysmon.py
+    # same module-global pattern connectivity.py/winrestore.py/sysmon.py
     # expose through start_*()/is_*() pairs, just without one here
     # since nothing outside media.py itself ever needed to set it
     # directly until now.

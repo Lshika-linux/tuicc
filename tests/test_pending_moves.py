@@ -29,6 +29,10 @@ from tuicc.pending_moves import (
     MOVE_TIMEOUT_SECONDS,
     RESTORE_STAGGER_SECONDS,
     SETTLE_SECONDS,
+    PlacementQueue,
+    PendingPlacement,
+    advance_placements,
+    DEFAULT_FLOATING_RECT,
 )
 
 
@@ -48,12 +52,21 @@ class _FakeProvider:
         self.resolved_pids = resolved_pids or {}
         self.resolve_pid_calls = []
         self.no_focus_next_window_calls = []
+        self.layout_calls = []
+        self.group_move_calls = []
+        # Ordered log of ("move"|"float", ...) across BOTH methods below
+        # — .moved/.floated alone can't tell you which happened first,
+        # and that order is load-bearing (see
+        # test_process_floats_before_moving_for_the_final_workspace).
+        self.call_order = []
 
     def move_window_to_region(self, window_id, region_id):
         self.moved.append((window_id, region_id))
+        self.call_order.append(("move", window_id, region_id))
 
     def set_floating_geometry(self, window_id, region_id, rect):
         self.floated.append((window_id, region_id, rect))
+        self.call_order.append(("float", window_id, region_id, rect))
 
     def focus_self(self, fullscreen=False, force_relayout=False):
         self.focus_self_calls += 1
@@ -66,6 +79,12 @@ class _FakeProvider:
 
     def no_focus_next_window(self, pid):
         self.no_focus_next_window_calls.append(pid)
+
+    def set_container_layout(self, window_id, layout):
+        self.layout_calls.append((window_id, layout))
+
+    def move_window_to_group(self, window_id, container_id):
+        self.group_move_calls.append((window_id, container_id))
 
 
 # ---------- basic matching ----------
@@ -298,7 +317,7 @@ def test_queue_launcher_spawn_never_carries_floating_or_rect():
     assert entry == {
         "target_region": "2", "known_ids": {"1"}, "pid": 99,
         "root_pid": 99, "known_pids": {99},
-        "app_id": "firefox", "started_at": 1.0, "log_path": None,
+        "app_id": "firefox", "started_at": 1.0, "tag": None, "log_path": None,
     }
 
 
@@ -346,14 +365,17 @@ def test_promote_restore_queue_stagger_gating_blocks_too_soon(monkeypatch):
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(1) or 1)
     provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=10.0)
-    restore_queue = [{"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"}]
+    restore_queue = [{"target_region": "1", "app_id": "kitty", "floating": False}]
 
     promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0 + RESTORE_STAGGER_SECONDS / 2)
 
     assert queue.entries == []
-    assert restore_queue == [{"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"}]
+    assert restore_queue == [{"target_region": "1", "app_id": "kitty", "floating": False}]
     assert calls == []
     assert provider.no_focus_next_window_calls == []
+
+
+_KITTY_FIREFOX_DESKTOP_APPS = [("kitty", "kitty", "kitty"), ("Firefox", "firefox", "firefox")]
 
 
 def test_promote_restore_queue_pops_one_and_spawns_it(monkeypatch):
@@ -361,49 +383,87 @@ def test_promote_restore_queue_pops_one_and_spawns_it(monkeypatch):
     provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=0.0)
     restore_queue = [
-        {"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"},
-        {"cmdline": ["firefox"], "target_region": "2", "app_id": "firefox"},
+        {"target_region": "1", "app_id": "kitty", "floating": False},
+        {"target_region": "2", "app_id": "firefox", "floating": False},
     ]
 
-    promote_restore_queue(queue, provider, restore_queue, known_ids={"x"}, now=10.0)
+    promote_restore_queue(queue, provider, restore_queue, known_ids={"x"}, now=10.0, desktop_apps=_KITTY_FIREFOX_DESKTOP_APPS)
 
     assert len(restore_queue) == 1
     assert len(queue.entries) == 1
-    assert queue.entries[0]["pid"] == 4242
+    # pid is deliberately None here, even though spawn_detached() really
+    # did return 4242 — see queue_restore_entry()'s own docstring for
+    # why: winrestore entries match by app_id-tier only, never pid.
+    assert queue.entries[0]["pid"] is None
     assert queue.entries[0]["target_region"] == "1"
 
 
 def test_promote_restore_queue_passes_a_log_path_under_spawn_log_dir(monkeypatch, tmp_path):
-    # See spawn_detached's docstring and
-    # CLAUDE/NOTES/known-limitations.md#restore-relaunch-crash — a saved
-    # cmdline that crashes on relaunch looks identical to "never
-    # started" from the outside without this captured somewhere.
+    # See spawn_detached's docstring — a spawn that crashes fast looks
+    # identical to "never started" from the outside without this
+    # captured somewhere.
     calls = []
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(k) or 4242)
     monkeypatch.setattr(pending_moves, "SPAWN_LOG_DIR", tmp_path / "logs")
     provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=0.0)
-    restore_queue = [{"cmdline": ["electron", "obsidian.asar"], "target_region": "2", "app_id": "obsidian"}]
+    restore_queue = [{"target_region": "2", "app_id": "obsidian", "floating": False}]
 
-    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0, desktop_apps=[("Obsidian", "obsidian", "obsidian")])
 
     log_path = calls[0]["log_path"]
     assert log_path.parent == tmp_path / "logs"
-    assert log_path.name.startswith("restore_obsidian_")
+    assert log_path.name.startswith("winrestore_obsidian_")
 
 
 def test_promote_restore_queue_calls_no_focus_next_window_with_spawned_pid(monkeypatch):
     # See Provider.no_focus_next_window()'s docstring — called right
     # after the pid is known, before the restored window can steal
-    # focus/fullscreen from tuicc.
+    # focus/fullscreen from tuicc. Uses the REAL spawned pid (unrelated
+    # to matching, see queue_restore_entry()'s own docstring).
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: 4242)
     provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=0.0)
-    restore_queue = [{"cmdline": ["kitty"], "target_region": "1", "app_id": "kitty"}]
+    restore_queue = [{"target_region": "1", "app_id": "kitty", "floating": False}]
 
-    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0, desktop_apps=_KITTY_FIREFOX_DESKTOP_APPS)
 
     assert provider.no_focus_next_window_calls == [4242]
+    assert queue.last_restore_launch == 10.0
+
+
+def test_promote_restore_queue_resolves_launch_argv_via_desktop_apps(monkeypatch):
+    # See winrestore.resolve_launch_argv()'s own docstring and
+    # CLAUDE/NOTES/design-decisions.md#winrestore-app-id-capture —
+    # promote_restore_queue relaunches by app_id through the app's own
+    # .desktop Exec=, not a captured cmdline (that no longer exists).
+    calls = []
+    monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: calls.append(a) or 4242)
+    monkeypatch.setattr(pending_moves, "resolve_launch_argv", lambda app_id, desktop_apps: ["resolved"])
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(last_restore_launch=0.0)
+    restore_queue = [{"target_region": "1", "app_id": "spotify", "floating": False}]
+
+    promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0, desktop_apps=[("Spotify", "spotify", "spotify")])
+
+    assert calls[0][0] == ["resolved"]
+
+
+def test_promote_restore_queue_returns_failure_message_when_no_desktop_entry_matches():
+    # resolve_launch_argv() returns None when nothing in desktop_apps
+    # matches — no process is ever spawned at all, distinct from
+    # spawn_detached() itself failing (next test below).
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(last_restore_launch=0.0)
+    restore_queue = [{"target_region": "1", "app_id": "obsidian", "floating": False}]
+
+    message = promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0, desktop_apps=[])
+
+    assert message is not None
+    assert "obsidian" in message
+    assert "no launcher entry found" in message
+    assert queue.entries == []
+    assert provider.no_focus_next_window_calls == []
     assert queue.last_restore_launch == 10.0
 
 
@@ -415,9 +475,9 @@ def test_promote_restore_queue_returns_failure_message_when_spawn_fails(monkeypa
     monkeypatch.setattr(pending_moves, "spawn_detached", lambda *a, **k: None)
     provider = _FakeProvider()
     queue = PendingMovesQueue(last_restore_launch=0.0)
-    restore_queue = [{"cmdline": ["/nonexistent"], "target_region": "1", "app_id": "obsidian"}]
+    restore_queue = [{"target_region": "1", "app_id": "obsidian", "floating": False}]
 
-    message = promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0)
+    message = promote_restore_queue(queue, provider, restore_queue, known_ids=set(), now=10.0, desktop_apps=[("Obsidian", "obsidian", "obsidian")])
 
     assert message is not None
     assert "obsidian" in message
@@ -563,6 +623,102 @@ def test_process_floating_entry_calls_set_floating_geometry():
     process(queue, provider, current, dismissed=False, now=1.0)
 
     assert provider.floated == [("1", "3", (0.1, 0.2, 0.3, 0.4))]
+
+
+def test_process_floats_before_moving_for_the_final_workspace():
+    # Live-confirmed real sway bug this order fixes: `floating enable`
+    # re-homes a container onto whatever's CURRENTLY FOCUSED, silently
+    # undoing an EARLIER move_window_to_region() call to the real
+    # target — floating has to happen first, then the move, not the
+    # other way around. See CLAUDE/NOTES/design-decisions.md
+    # #floating-enable-workspace-reparenting.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "floating": True, "rect": (0.1, 0.2, 0.3, 0.4),
+    }])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.call_order == [
+        ("float", "1", "3", (0.1, 0.2, 0.3, 0.4)),
+        ("move", "1", "3"),
+    ]
+
+
+# ---------- placed_by_wm (append_layout-placed tiled entries) ----------
+# See CLAUDE/NOTES/design-decisions.md#append-layout-tiled-restore.
+
+def test_process_placed_by_wm_skips_move_window_to_region():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{
+        "known_ids": set(), "target_region": "3", "started_at": 0.0, "placed_by_wm": True,
+    }])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.moved == []
+
+
+def test_process_placed_by_wm_false_still_moves_normally():
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{
+        "known_ids": set(), "target_region": "3", "started_at": 0.0, "placed_by_wm": False,
+    }])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.moved == [("1", "3")]
+
+
+def test_process_entry_with_no_placed_by_wm_key_moves_normally():
+    # Every entry queue_launcher_spawn() builds has no placed_by_wm key
+    # at all — must default to "needs normal placement", not crash.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{"known_ids": set(), "target_region": "3", "started_at": 0.0}])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.moved == [("1", "3")]
+
+
+def test_process_placed_by_wm_floating_still_skips_set_floating_geometry():
+    # Never actually happens together in practice (append_layout never
+    # covers floating windows — see winrestore.prepare_restore_entries()'s
+    # own docstring), but the conditional itself must cover both calls,
+    # not just move_window_to_region.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "floating": True, "rect": (0.1, 0.2, 0.3, 0.4), "placed_by_wm": True,
+    }])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.moved == []
+    assert provider.floated == []
+
+
+def test_process_placed_by_wm_still_reclaims_focus_and_lingers():
+    # Everything ELSE about a matched entry stays exactly the same,
+    # regardless of placed_by_wm — only the explicit placement calls
+    # are skipped.
+    provider = _FakeProvider()
+    queue = PendingMovesQueue(entries=[{
+        "known_ids": set(), "target_region": "3", "started_at": 0.0, "placed_by_wm": True,
+    }])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert provider.focus_self_calls == 1
+    assert len(queue.entries) == 1
+    assert queue.entries[0]["last_matched_at"] == 1.0
 
 
 def test_process_no_match_within_timeout_stays_pending():
@@ -1214,3 +1370,143 @@ def test_process_still_matches_the_exact_pid_when_no_fork_happened(monkeypatch):
     process(queue, provider, current, dismissed=False, now=1.0)
 
     assert provider.moved == [("1", "3")]
+
+# ---------- tag / resolved_tags (shared by winrestore's tree-builder and the launcher's placement-mode picker) ----------
+
+def test_process_populates_resolved_tags_for_a_tagged_entry():
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": None, "app_id": "kitty", "tag": "mytag",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert queue.resolved_tags == {"mytag": "1"}
+
+
+def test_process_never_populates_resolved_tags_for_an_untagged_entry():
+    provider = _FakeProvider()
+    entry = {
+        "known_ids": set(), "target_region": "3", "started_at": 0.0,
+        "pid": None, "app_id": "kitty",
+    }
+    queue = PendingMovesQueue(entries=[entry])
+    current = [_window("1", "kitty")]
+
+    process(queue, provider, current, dismissed=False, now=1.0)
+
+    assert queue.resolved_tags == {}
+
+
+def test_queue_launcher_spawn_passes_tag_through():
+    queue = PendingMovesQueue()
+
+    queue_launcher_spawn(queue, target_region="2", known_ids={"1"}, pid=99, app_id_hint="firefox", now=1.0, tag="placement_99")
+
+    assert queue.entries[0]["tag"] == "placement_99"
+
+
+# ---------- PlacementQueue / advance_placements ----------
+
+def test_advance_placements_no_op_when_nothing_pending():
+    state = PlacementQueue()
+    provider = _FakeProvider()
+    moves = PendingMovesQueue()
+
+    advance_placements(state, moves, provider)  # must not raise
+
+    assert provider.layout_calls == []
+    assert provider.group_move_calls == []
+
+
+def test_advance_placements_waits_until_tag_resolves():
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="stack_new", container_id=None, region_id="2")})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue()
+
+    advance_placements(state, moves, provider)
+
+    assert provider.layout_calls == []
+    assert "t1" in state.pending  # still pending, not consumed
+
+
+def test_advance_placements_stack_new_calls_set_container_layout():
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="stack_new", container_id=None, region_id="2")})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})
+
+    advance_placements(state, moves, provider)
+
+    assert provider.layout_calls == [("42", "stacked")]
+    assert state.pending == {}
+    assert moves.resolved_tags == {}
+
+
+def test_advance_placements_tab_new_calls_set_container_layout():
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="tab_new", container_id=None, region_id="2")})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})
+
+    advance_placements(state, moves, provider)
+
+    assert provider.layout_calls == [("42", "tabbed")]
+
+
+def test_advance_placements_existing_group_calls_move_window_to_group():
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="S1", container_id="20", region_id="2")})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})
+
+    advance_placements(state, moves, provider)
+
+    assert provider.group_move_calls == [("42", "20")]
+    assert provider.layout_calls == []
+
+
+def test_advance_placements_floating_calls_set_floating_geometry_with_default_rect():
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="floating", container_id=None, region_id="2")})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})
+
+    advance_placements(state, moves, provider)
+
+    assert provider.floated == [("42", "2", DEFAULT_FLOATING_RECT)]
+
+
+def test_advance_placements_floating_re_moves_to_region_after_floating():
+    # By the time advance_placements() runs, process() has ALREADY
+    # moved this window to its target region once (the ordinary,
+    # unconditional move every entry gets) — set_floating_geometry()'s
+    # own `floating enable` then silently re-homes it onto whatever's
+    # currently focused (see CLAUDE/NOTES/design-decisions.md
+    # #floating-enable-workspace-reparenting), so this has to move it
+    # back to the real target region AFTER floating, not skip that step.
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="floating", container_id=None, region_id="2")})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})
+
+    advance_placements(state, moves, provider)
+
+    assert provider.call_order == [
+        ("float", "42", "2", DEFAULT_FLOATING_RECT),
+        ("move", "42", "2"),
+    ]
+
+
+def test_advance_placements_handles_multiple_simultaneous_tags():
+    # Unlike winrestore's tree-builder (one tag at a time by
+    # construction), several launcher spawns can be in flight together.
+    state = PlacementQueue(pending={
+        "t1": PendingPlacement(mode="stack_new", container_id=None, region_id="2"),
+        "t2": PendingPlacement(mode="tab_new", container_id=None, region_id="3"),
+    })
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})  # only t1 resolved so far
+
+    advance_placements(state, moves, provider)
+
+    assert provider.layout_calls == [("42", "stacked")]
+    assert "t2" in state.pending  # untouched, still waiting

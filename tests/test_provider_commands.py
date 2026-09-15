@@ -23,14 +23,27 @@ class _FakeConfigReply:
         self.config = config
 
 
+class _FakeCommandReply:
+    def __init__(self, success):
+        self.success = success
+
+
 class FakeConnection:
-    def __init__(self, tree=None, config_text=None):
+    def __init__(self, tree=None, config_text=None, command_results=None):
         self.commands = []
         self._tree = tree
         self._config_text = config_text
+        # Popped in call order, one bool (success) per .command() call —
+        # only the set_container_layout-related tests care about this at
+        # all (every other test here never inspects .command()'s own
+        # return value). Runs out -> defaults to success=True, so the
+        # overwhelming majority of tests need never pass this.
+        self._command_results = list(command_results) if command_results is not None else None
 
     def command(self, cmd):
         self.commands.append(cmd)
+        success = self._command_results.pop(0) if self._command_results else True
+        return [_FakeCommandReply(success)]
 
     def get_tree(self):
         return self._tree
@@ -451,3 +464,256 @@ def test_i3_wm_config_delegates_to_get_config():
     result = provider.wm_config()
 
     assert result.routing_rules == {"Discord": "chat"}
+
+
+# ---------- get_tiled_tree / set_container_layout ----------
+# See CLAUDE/NOTES/design-decisions.md#append-layout-doesnt-exist-on-sway.
+
+def _tree_with_workspace(num, nodes, floating_nodes=()):
+    return Con({
+        "id": 1, "type": "root",
+        "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+        "nodes": [{
+            "id": 2, "type": "workspace", "num": num, "name": str(num),
+            "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+            "floating_nodes": list(floating_nodes),
+            "nodes": list(nodes),
+        }],
+    }, None, None)
+
+
+def _window_node(id_, app_id=None, window_class=None):
+    # window_class must be nested under window_properties.class — i3ipc's
+    # own Con parser only ever reads it from there (confirmed against
+    # its real source), never from a flat top-level "window_class" key.
+    node = {
+        "id": id_, "type": "con", "app_id": app_id,
+        "name": "w", "focused": False, "marks": [], "pid": None,
+        "rect": {"x": 0, "y": 0, "width": 500, "height": 800}, "nodes": [], "floating_nodes": [],
+    }
+    if window_class is not None:
+        node["window_properties"] = {"class": window_class}
+    return node
+
+
+def test_sway_get_tiled_tree_walks_the_real_workspace():
+    tree = _tree_with_workspace(3, [_window_node(50, app_id="firefox")])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    assert provider.get_tiled_tree("3") == {"type": "window", "app_id": "firefox"}
+
+
+def test_sway_get_tiled_tree_accepts_an_already_resolved_region_id():
+    # Regression: loop_state.focus_id (main.py) isn't always guaranteed
+    # bare — see bare_workspace_id()'s own docstring for the real bug
+    # this covers. workspace.num stays the bare "3" regardless of the
+    # workspace's own real "3:III" name (independent fields on the wire).
+    tree = Con({
+        "id": 1, "type": "root",
+        "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+        "nodes": [{
+            "id": 2, "type": "workspace", "num": 3, "name": "3:III",
+            "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+            "floating_nodes": [], "nodes": [_window_node(50, app_id="firefox")],
+        }],
+    }, None, None)
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    assert provider.get_tiled_tree("3:III") == {"type": "window", "app_id": "firefox"}
+
+
+def test_sway_get_tiled_tree_none_for_unknown_region():
+    tree = _tree_with_workspace(3, [_window_node(50, app_id="firefox")])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    assert provider.get_tiled_tree("9") is None
+
+
+def test_i3_get_tiled_tree_walks_the_real_workspace():
+    tree = _tree_with_workspace(3, [_window_node(50, window_class="Firefox")])
+    conn = FakeConnection(tree=tree)
+    provider = I3Provider(conn=conn)
+
+    assert provider.get_tiled_tree("3") == {"type": "window", "app_id": "Firefox"}
+
+
+def _tree_with_group(member_id, wrapper_id, layout):
+    # Simulates the tree AFTER "[con_id=<member_id>] layout <layout>"
+    # already ran — set_container_layout()'s own job is just reading
+    # this back, not building it (see tiled_tree.py's dedicated tests
+    # for the pure read-back logic itself). Providers only need to
+    # confirm they delegate to it correctly with the right conn.
+    return Con({
+        "id": 1, "type": "root",
+        "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+        "nodes": [{
+            "id": wrapper_id, "type": "con", "layout": layout,
+            "rect": {"x": 0, "y": 0, "width": 1000, "height": 800},
+            "floating_nodes": [],
+            "nodes": [_window_node(member_id, app_id="firefox")],
+        }],
+    }, None, None)
+
+
+def test_sway_set_container_layout_delegates_to_tiled_tree():
+    tree = _tree_with_group(member_id=3, wrapper_id=2, layout="tabbed")
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    result = provider.set_container_layout("3", "tabbed")
+
+    assert result == "2"
+    assert conn.commands == ["[con_id=3] layout tabbed"]
+
+
+def test_sway_set_container_layout_translates_stacked_keyword():
+    tree = _tree_with_group(member_id=3, wrapper_id=2, layout="stacked")
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    provider.set_container_layout("3", "stacked")
+
+    assert conn.commands == ["[con_id=3] layout stacking"]
+
+
+def test_sway_set_container_layout_returns_none_on_failure():
+    conn = FakeConnection(command_results=[False], tree=_tree_with_group(3, 2, "tabbed"))
+    provider = SwayProvider(conn=conn)
+
+    assert provider.set_container_layout("3", "tabbed") is None
+
+
+def test_i3_set_container_layout_delegates_to_tiled_tree():
+    tree = _tree_with_group(member_id=3, wrapper_id=2, layout="tabbed")
+    conn = FakeConnection(tree=tree)
+    provider = I3Provider(conn=conn)
+
+    result = provider.set_container_layout("3", "tabbed")
+
+    assert result == "2"
+    assert conn.commands == ["[con_id=3] layout tabbed"]
+
+
+def _group_node(id_, layout, member_ids):
+    return {
+        "id": id_, "type": "con", "layout": layout,
+        "rect": {"x": 0, "y": 0, "width": 500, "height": 800},
+        "floating_nodes": [],
+        "nodes": [_window_node(m, app_id="firefox") for m in member_ids],
+    }
+
+
+def test_sway_list_container_groups_walks_the_real_workspace():
+    tree = _tree_with_workspace(3, [_group_node(10, "stacked", [11, 12])])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    assert provider.list_container_groups("3") == [{"label": "S1", "container_id": "10"}]
+
+
+def test_sway_list_container_groups_accepts_an_already_resolved_region_id():
+    tree = _tree_with_workspace(3, [_group_node(10, "stacked", [11, 12])])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    assert provider.list_container_groups("3:III") == [{"label": "S1", "container_id": "10"}]
+
+
+def test_sway_list_container_groups_empty_for_unknown_region():
+    tree = _tree_with_workspace(3, [_group_node(10, "stacked", [11, 12])])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    assert provider.list_container_groups("9") == []
+
+
+def test_i3_list_container_groups_walks_the_real_workspace():
+    tree = _tree_with_workspace(3, [_group_node(10, "tabbed", [11, 12])])
+    conn = FakeConnection(tree=tree)
+    provider = I3Provider(conn=conn)
+
+    assert provider.list_container_groups("3") == [{"label": "T1", "container_id": "10"}]
+
+
+def test_sway_move_window_to_group_delegates_to_tiled_tree():
+    conn = FakeConnection()
+    provider = SwayProvider(conn=conn)
+
+    result = provider.move_window_to_group("10", "20")
+
+    assert result is True
+    assert len(conn.commands) == 3
+    assert conn.commands[0].startswith("[con_id=20] mark --add ")
+    assert conn.commands[1].startswith("[con_id=10] move window to mark ")
+
+
+def test_i3_move_window_to_group_delegates_to_tiled_tree():
+    conn = FakeConnection()
+    provider = I3Provider(conn=conn)
+
+    result = provider.move_window_to_group("10", "20")
+
+    assert result is True
+    assert len(conn.commands) == 3
+
+
+# ---------- set_floating_geometry ----------
+# No prior direct coverage of this method existed — the real, live-
+# reported bug (a launcher spawn's "floating" placement silently doing
+# nothing whenever loop_state.focus_id already held a resolved "N:Name"
+# value) slipped through partly because of that gap; see
+# bare_workspace_id()'s own docstring (wm_config_parser.py) for the
+# root cause and fix.
+
+def test_sway_set_floating_geometry_computes_absolute_pixels_from_workspace_rect():
+    tree = _tree_with_workspace(3, [_window_node(50, app_id="firefox")])
+    tree.workspaces()[0].rect.x = 100
+    tree.workspaces()[0].rect.y = 50
+    tree.workspaces()[0].rect.width = 1000
+    tree.workspaces()[0].rect.height = 800
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    provider.set_floating_geometry("50", "3", (0.25, 0.25, 0.5, 0.5))
+
+    assert conn.commands == [
+        "[con_id=50] floating enable, resize set 500px 400px, move position 350px 250px"
+    ]
+
+
+def test_sway_set_floating_geometry_accepts_an_already_resolved_region_id():
+    # The actual regression: this used to silently no-op (workspace
+    # lookup returned None, `return` with zero commands issued) whenever
+    # region_id was "3:III" instead of bare "3".
+    tree = _tree_with_workspace(3, [_window_node(50, app_id="firefox")])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    provider.set_floating_geometry("50", "3:III", (0.25, 0.25, 0.5, 0.5))
+
+    assert len(conn.commands) == 1
+    assert conn.commands[0].startswith("[con_id=50] floating enable")
+
+
+def test_sway_set_floating_geometry_no_op_for_unknown_region():
+    tree = _tree_with_workspace(3, [_window_node(50, app_id="firefox")])
+    conn = FakeConnection(tree=tree)
+    provider = SwayProvider(conn=conn)
+
+    provider.set_floating_geometry("50", "9", (0.25, 0.25, 0.5, 0.5))
+
+    assert conn.commands == []
+
+
+def test_i3_set_floating_geometry_accepts_an_already_resolved_region_id():
+    tree = _tree_with_workspace(3, [_window_node(50, window_class="Firefox")])
+    conn = FakeConnection(tree=tree)
+    provider = I3Provider(conn=conn)
+
+    provider.set_floating_geometry("50", "3:III", (0.25, 0.25, 0.5, 0.5))
+
+    assert len(conn.commands) == 1
+    assert conn.commands[0].startswith("[con_id=50] floating enable")

@@ -1626,7 +1626,7 @@ def test_wifi_header_status_segments_dims_everything_until_controllable():
     # is_controllable=False (level-1 — the collapsed header row merely
     # selected/hovered, not real level-2 browsing) — Rafi's own call:
     # the whole legend reads as quiet background info until P/S/A can
-    # actually be pressed, same instinct sessions.py's own dimmed
+    # actually be pressed, same instinct winrestore.py's own dimmed
     # LOAD/SAVE/DEL/NAME already apply for their own expanded-or-not
     # state.
     segments = _wifi_header_status_segments(_theme(), powered=True, scanning=True, is_controllable=False)

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from tuicc.navigation import NavItem
 from tuicc.render_utils import draw_box_outline, display_width, wc_truncate
+from tuicc.keybinds import key_label
 
 
 DESKTOP_DIRS = [
@@ -188,6 +189,18 @@ class LauncherState:
     # Reset to None on both typing-mode boundaries, same as
     # manual_target_app_id.
     pre_routing_focus_id: str | None = None
+    # The launcher's own placement-mode picker (CLAUDE/NOTES/
+    # design-decisions.md#launcher-placement-mode) — "tiled" (default,
+    # today's exact behavior), "stack_new"/"tab_new" (group with
+    # whatever's already on the target workspace), an existing group's
+    # own label ("S1"/"T1"/... — Provider.list_container_groups()'s own
+    # shape), or "floating". Cycled by Tab/Shift+Tab in main.py's
+    # handle_launcher() (inert during typing otherwise), reset to
+    # default_placement_mode()'s own answer every time the target
+    # region changes (Up/Down, or once right after typing starts) —
+    # never sticky across a workspace change, since a group label only
+    # means something on the workspace it came from.
+    placement_mode: str = "tiled"
 
 
 def resolve_selected(state: LauncherState):
@@ -227,6 +240,149 @@ def routed_target(state: LauncherState, wm_config) -> str | None:
     return wm_config.routing_rules.get(app_id_hint)
 
 
+def placement_mode_options(groups: list[dict]) -> list[str]:
+    """The full, ordered placement-mode cycle for a target region whose
+    current existing groups are `groups` (Provider.list_container_groups()'s
+    own shape) — tiled, then "start a new stack/tab here", then one
+    entry per EXISTING group by its own label (S1/S2/T1/...), then
+    floating. Rafi's own example ordering, verbatim: "tiled, stacked,
+    tabbed, into S1, into S2, into T1, into T2, floating".
+    """
+    return ["tiled", "stack_new", "tab_new"] + [g["label"] for g in groups] + ["floating"]
+
+
+def default_placement_mode(groups: list[dict]) -> str:
+    """The natural starting choice for a target region: its own FIRST
+    existing group if it has one (you just made a stack — you probably
+    want to keep adding to it), else plain "tiled" (today's exact
+    behavior, unchanged when nothing's grouped yet).
+    """
+    return groups[0]["label"] if groups else "tiled"
+
+
+def placement_mode_display(mode: str) -> str:
+    """Human-friendly text for the sidebar's own "launching here (...)"
+    label (modules/sidebar.py) — "S1"/"T1"/etc already read naturally on
+    their own ("into S1"), everything else needs a small friendly name.
+    """
+    if mode == "stack_new":
+        return "stacked (new)"
+    if mode == "tab_new":
+        return "tabbed (new)"
+    if mode in ("tiled", "floating"):
+        return mode
+    return f"into {mode}"
+
+
+def _row_label(mode: str) -> str:
+    """Short, row-specific label for one placement_mode_options() entry
+    — the 4 fixed modes get a plain capitalized word (matching the
+    row's own established look), a real existing group's own label
+    ("S1"/"T1"/...) reuses placement_mode_display()'s "into S1" text
+    verbatim (asked for live: "taky by se v tom seznamu měl objevovat
+    into S1, T1 cokoliv if applicable" — every REAL option the picker
+    can reach shows up as its own entry, not collapsed into a generic
+    "Stacked"/"Tabbed" bucket).
+    """
+    if mode == "tiled":
+        return "Tiled"
+    if mode == "stack_new":
+        return "Stacked"
+    if mode == "tab_new":
+        return "Tabbed"
+    if mode == "floating":
+        return "Floating"
+    return placement_mode_display(mode)
+
+
+def _draw_placement_row(stdscr, row, x, w, mode, options, tab_key_label, theme, prefix=None):
+    """Draws "[Tab] [● Tiled] [○ Stacked] [○ into S1] [○ Tabbed]
+    [○ Floating]" on row — one entry per item in options
+    (placement_mode_options()'s own live-computed order, including any
+    real existing group for the current target region, not just the 4
+    fixed modes) — one addstr call per differently-colored piece
+    (curses can't mix colors within a single addstr string): the
+    active entry's own bracket group lit in accent/bold with a filled
+    ● dot, every other stays dim with a hollow ○, same ●/○ "is this
+    the current state" convention modules/connectivity.py's own header
+    legend already established. Stops drawing once a piece would cross
+    the box's own inner right edge, same "truncate the row, don't
+    overflow into whatever's next door" discipline the rest of this
+    codebase applies — never raises past that; a curses.error on any
+    individual write (a genuinely too-narrow terminal) is swallowed
+    the same way every other draw call in this module already does.
+
+    prefix (default None): the routing-rule hint, drawn first — asked
+    for live, once it became clear a real box has plenty of spare
+    WIDTH on this exact row even when it's genuinely short on HEIGHT
+    ("druhý řádek je uplně prázdný" — the row this already draws on
+    sat mostly empty) — sharing the row horizontally needs no extra
+    row at all, unlike the earlier (rejected) attempt to literally
+    replace this row's own content with the rule's.
+    """
+    right_edge = x + w - 1
+    cx = x + 2
+    dim = theme.get("text", 0) | curses.A_DIM
+    lit = theme.get("accent", 0) | curses.A_BOLD
+
+    def put(text, color):
+        nonlocal cx
+        if cx >= right_edge:
+            return False
+        try:
+            stdscr.addstr(row, cx, wc_truncate(text, max(right_edge - cx, 0)), color)
+        except curses.error:
+            pass
+        cx += display_width(text)
+        return cx < right_edge
+
+    if prefix and not put(f"{prefix}    ", dim):
+        return
+    if not put(f"[{tab_key_label}] ", dim):
+        return
+    for option in options:
+        is_active = option == mode
+        color = lit if is_active else dim
+        dot = "●" if is_active else "○"
+        if not put(f"[{dot} {_row_label(option)}] ", color):
+            return
+
+
+def cycle_placement_mode(current: str, options: list[str], step: int) -> str:
+    """Moves current by step (+1/-1) through options, wrapping both
+    directions. Falls back to options[0] if current isn't in the list
+    at all (e.g. the target region changed and current was a group
+    label — "S1" — that only ever meant something on the PREVIOUS
+    workspace; main.py resets placement_mode outright on a region
+    change anyway, this is just a defensive fallback, never load-
+    bearing in practice) — never raises on an unexpected value.
+    """
+    if not options:
+        return current
+    try:
+        index = options.index(current)
+    except ValueError:
+        return options[0]
+    return options[(index + step) % len(options)]
+
+
+def _placement_hint_position(box_x: int, box_w: int, query_width: int, mode_width: int) -> int | None:
+    """Where draw() should put the placement-mode hint text (e.g.
+    "[stacked (new)]") on the launcher's own query row, right-aligned
+    against the box's own inner right edge — or None if there isn't
+    room without it overlapping the search query text itself. The
+    query always wins that fight (a search in progress is the more
+    important thing on that row) — this returns None rather than some
+    truncated, half-legible mode label crammed in wherever it fits.
+    """
+    right_edge = box_x + box_w - 2
+    mode_x = right_edge - mode_width
+    query_end = box_x + 2 + query_width
+    if mode_x <= query_end + 1:
+        return None
+    return mode_x
+
+
 def enter_typing_mode(state: LauncherState, selected_id, active_module, focus_id, initial_query="") -> None:
     """Saves the pre-typing selection so handle_typing_key's Escape/
     Backspace-to-empty exit (or a successful confirm) can restore it
@@ -262,6 +418,7 @@ def exit_typing_mode(state: LauncherState) -> None:
     state.search_selected_index = 0
     state.manual_target_app_id = None
     state.pre_routing_focus_id = None
+    state.placement_mode = "tiled"
 
 
 def handle_typing_key(state: LauncherState, key, cfg) -> bool:
@@ -350,7 +507,6 @@ def draw(stdscr, box, ctx, module_name):
         return
 
     query_row = y + 1
-    items_row = y + 2 if h > 3 else y + 1
     avail_w = max(w - 4, 0)
 
     query_text = f"> {ctx.search_query}"
@@ -364,6 +520,60 @@ def draw(stdscr, box, ctx, module_name):
         pass
 
     results = filter_apps(ctx.search_query, _get_apps())
+    sel = min(ctx.search_selected_index, len(results) - 1) if results else None
+    sel_app_id = results[sel][2] if sel is not None else None
+
+    # GitHub issue #9's routing-rule follow-on: a status line, not a
+    # new keybind — Up/Down (not a new [TAB] binding) already move
+    # focus_id without leaving typing mode (see main.py's own
+    # handle_launcher() comment), so the hint just names the key that
+    # already does this. ctx.focus_id, by the time draw() runs this
+    # frame, already reflects whatever main.py's handle_launcher() just
+    # decided (its own auto-default, or the user's manual Up/Down
+    # override) — showing it directly here, rather than re-deriving the
+    # same precedence logic a second time, keeps this a pure "what will
+    # actually happen" readout.
+    routing_target = None
+    if sel_app_id is not None and ctx.wm_config and sel_app_id in ctx.wm_config.routing_rules:
+        routing_target = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
+    routing_hint = f'Routing rule — ws "{routing_target}"' if routing_target is not None else None
+
+    # Placement-mode row (CLAUDE/NOTES/design-decisions.md
+    # #launcher-placement-mode) — its own dedicated row, right under
+    # the query, whenever the box is tall enough to spare one. The
+    # routing-rule hint (GitHub issue #9's own follow-on) shares this
+    # SAME row, prefixed on the left, rather than needing a row of its
+    # own — found live, once it was actually pointed at: this row has
+    # plenty of spare WIDTH even on a box that's genuinely short on
+    # HEIGHT, so there was never a real height problem to solve here in
+    # the first place (an earlier attempt at a genuinely separate row
+    # was scrapped the same round). A tiny box with no room for a
+    # dedicated row at all falls back to squeezing just the rule (the
+    # more urgent of the two) onto the query row's own right edge.
+    show_mode_row = h > 4
+    if show_mode_row:
+        mode_row = y + 2
+        items_row = y + 3
+        options = ctx.launcher_placement_options or [ctx.launcher_placement_mode]
+        _draw_placement_row(
+            stdscr, mode_row, x, w, ctx.launcher_placement_mode, options,
+            key_label(ctx.config.keybinds["tab"]), theme, prefix=routing_hint,
+        )
+    else:
+        # Tiny box, no room for a dedicated row at all — same
+        # "the rule wins the one available slot" priority as above,
+        # squeezed onto the query row's own right edge instead; see
+        # _placement_hint_position()'s own docstring for why a long
+        # in-progress search silently wins over showing either of them.
+        items_row = y + 2 if h > 3 else y + 1
+        text = routing_hint if routing_hint is not None else f"[{placement_mode_display(ctx.launcher_placement_mode)}]"
+        text_x = _placement_hint_position(x, w, display_width(wc_truncate(query_text, avail_w)), display_width(text))
+        if text_x is not None:
+            try:
+                stdscr.addstr(query_row, text_x, text, theme.get("text", 0) | curses.A_DIM)
+            except curses.error:
+                pass
+
     if not results:
         try:
             stdscr.addstr(items_row, x + 2, "(no match)", theme.get("urgent", 0))
@@ -371,7 +581,6 @@ def draw(stdscr, box, ctx, module_name):
             pass
         return
 
-    sel = min(ctx.search_selected_index, len(results) - 1)
     shown = _build_window(results, sel, avail_w)
 
     cx = x + 2
@@ -397,31 +606,6 @@ def draw(stdscr, box, ctx, module_name):
         remaining = len(results) - 1 - shown[-1]
         try:
             stdscr.addstr(items_row, cx, f"+{remaining}", theme.get("text", 0) | curses.A_DIM)
-        except curses.error:
-            pass
-
-    # GitHub issue #9's routing-rule follow-on: a status line, not a
-    # new keybind — Up/Down (not a new [TAB] binding) already move
-    # focus_id without leaving typing mode (see main.py's own
-    # handle_launcher() comment), so the hint just names the key that
-    # already does this. ctx.focus_id, by the time draw() runs this
-    # frame, already reflects whatever main.py's handle_launcher() just
-    # decided (its own auto-default, or the user's manual Up/Down
-    # override) — showing it directly here, rather than re-deriving the
-    # same precedence logic a second time, keeps this a pure "what will
-    # actually happen" readout. Only drawn when there's a spare row
-    # below the results (same h > 3 threshold items_row's own fallback
-    # already uses).
-    _sel_name, _sel_cmd, sel_app_id = results[sel]
-    hint_row = items_row + 1
-    if (
-        sel_app_id is not None and ctx.wm_config and sel_app_id in ctx.wm_config.routing_rules
-        and hint_row < y + h - 1
-    ):
-        target = ctx.focus_id if ctx.focus_id is not None else ctx.state.focused_region_id
-        hint = f'Routing rule detected — spawning at ws "{target}"  [↑↓] to change'
-        try:
-            stdscr.addstr(hint_row, x + 2, wc_truncate(hint, avail_w), theme.get("text", 0) | curses.A_DIM)
         except curses.error:
             pass
 

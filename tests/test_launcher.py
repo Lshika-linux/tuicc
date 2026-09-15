@@ -14,6 +14,12 @@ from tuicc.modules.launcher import (
     exit_typing_mode,
     resolve_selected,
     routed_target,
+    placement_mode_options,
+    default_placement_mode,
+    placement_mode_display,
+    cycle_placement_mode,
+    _placement_hint_position,
+    _row_label,
 )
 from tuicc.wm_config_parser import WmConfigInfo
 
@@ -377,3 +383,111 @@ def test_routed_target_none_when_no_search_results(monkeypatch):
     wm_config = WmConfigInfo(routing_rules={"discord": "chat"})
 
     assert routed_target(state, wm_config) is None
+
+
+# ---------- placement-mode picker (CLAUDE/NOTES/design-decisions.md#launcher-placement-mode) ----------
+
+def test_placement_mode_options_no_existing_groups():
+    assert placement_mode_options([]) == ["tiled", "stack_new", "tab_new", "floating"]
+
+
+def test_placement_mode_options_lists_existing_groups_between_new_and_floating():
+    groups = [{"label": "S1", "container_id": "10"}, {"label": "T1", "container_id": "20"}]
+
+    assert placement_mode_options(groups) == ["tiled", "stack_new", "tab_new", "S1", "T1", "floating"]
+
+
+def test_default_placement_mode_is_tiled_with_no_groups():
+    assert default_placement_mode([]) == "tiled"
+
+
+def test_default_placement_mode_is_first_existing_group():
+    groups = [{"label": "S1", "container_id": "10"}, {"label": "T1", "container_id": "20"}]
+
+    assert default_placement_mode(groups) == "S1"
+
+
+def test_placement_mode_display_new_stack_and_tab():
+    assert placement_mode_display("stack_new") == "stacked (new)"
+    assert placement_mode_display("tab_new") == "tabbed (new)"
+
+
+def test_placement_mode_display_tiled_and_floating_verbatim():
+    assert placement_mode_display("tiled") == "tiled"
+    assert placement_mode_display("floating") == "floating"
+
+
+def test_placement_mode_display_existing_group_label():
+    assert placement_mode_display("S1") == "into S1"
+    assert placement_mode_display("T2") == "into T2"
+
+
+def test_cycle_placement_mode_forward():
+    options = ["tiled", "stack_new", "tab_new", "floating"]
+
+    assert cycle_placement_mode("tiled", options, 1) == "stack_new"
+
+
+def test_cycle_placement_mode_wraps_forward_past_the_end():
+    options = ["tiled", "stack_new", "tab_new", "floating"]
+
+    assert cycle_placement_mode("floating", options, 1) == "tiled"
+
+
+def test_cycle_placement_mode_wraps_backward_past_the_start():
+    options = ["tiled", "stack_new", "tab_new", "floating"]
+
+    assert cycle_placement_mode("tiled", options, -1) == "floating"
+
+
+def test_cycle_placement_mode_falls_back_to_first_option_when_current_is_stale():
+    # E.g. the target region changed and "S1" only ever meant something
+    # on the PREVIOUS workspace — main.py resets outright on a region
+    # change anyway, this is just a defensive fallback.
+    options = ["tiled", "stack_new", "tab_new", "floating"]
+
+    assert cycle_placement_mode("S1", options, 1) == "tiled"
+
+
+def test_exit_typing_mode_resets_placement_mode():
+    state = LauncherState(placement_mode="S1")
+
+    exit_typing_mode(state)
+
+    assert state.placement_mode == "tiled"
+
+
+# ---------- _placement_hint_position ----------
+
+def test_placement_hint_position_right_aligns_against_the_box_when_there_is_room():
+    # box_x=0, box_w=40 -> inner right edge at 38 (box_x + box_w - 2);
+    # a short query leaves plenty of room for an 8-wide mode label.
+    pos = _placement_hint_position(box_x=0, box_w=40, query_width=9, mode_width=8)
+
+    assert pos == 30  # 38 - 8
+
+
+def test_placement_hint_position_none_when_it_would_collide_with_a_long_query():
+    pos = _placement_hint_position(box_x=0, box_w=40, query_width=30, mode_width=8)
+
+    assert pos is None
+
+
+def test_placement_hint_position_respects_a_non_zero_box_origin():
+    pos = _placement_hint_position(box_x=10, box_w=40, query_width=9, mode_width=8)
+
+    assert pos == 40  # (10 + 40 - 2) - 8
+
+
+# ---------- _row_label ----------
+
+def test_row_label_fixed_modes():
+    assert _row_label("tiled") == "Tiled"
+    assert _row_label("stack_new") == "Stacked"
+    assert _row_label("tab_new") == "Tabbed"
+    assert _row_label("floating") == "Floating"
+
+
+def test_row_label_existing_group_reuses_placement_mode_display():
+    assert _row_label("S1") == "into S1"
+    assert _row_label("T2") == "into T2"
