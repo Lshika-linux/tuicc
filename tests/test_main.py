@@ -589,6 +589,32 @@ def test_handle_launcher_confirm_with_stack_new_registers_a_pending_placement(tm
     assert moves.entries[0]["tag"] is not None
 
 
+def test_handle_launcher_confirm_with_floating_cascades_successive_spawns(tmp_path, monkeypatch):
+    # Spawning several floating windows back-to-back (without either
+    # resolving first) must not stack them on top of each other — each
+    # confirm registers its own cascaded rect and advances
+    # placements.floating_index, regardless of match order later.
+    monkeypatch.setattr(main.launcher_mode, "_apps_cache", [("kitty", "kitty", "kitty")])
+    pids = iter([100, 101, 102])
+    monkeypatch.setattr(main, "spawn_detached", lambda *a, **k: next(pids))
+    cfg = _launcher_cfg()
+    provider = _FakeProvider()
+    moves = main.pending_moves.PendingMovesQueue()
+    placements = main.pending_moves.PlacementQueue()
+    app = SimpleNamespace(wm_config=None)
+    loop_state = LoopState(focus_id="2")
+    state = WMState(regions=[Region(id="2", name="2", windows=[])], focused_region_id="2")
+
+    for _ in range(3):
+        launcher = LauncherState(typing_mode=True, search_query="kitty", search_selected_index=0, placement_mode="floating")
+        main.handle_launcher(cfg.keybinds["confirm"], loop_state, cfg, state, launcher, provider, moves, app, placements)
+
+    assert placements.floating_index == 3
+    rects = [p.rect for p in placements.pending.values()]
+    assert rects == [main.pending_moves.cascade_floating_rect(i) for i in range(3)]
+    assert len(set(rects)) == 3  # each spawn actually got a distinct offset
+
+
 def test_handle_launcher_confirm_with_stale_group_label_falls_back_to_tiled(tmp_path, monkeypatch):
     # The picked group ("S1") no longer exists by confirm time — must
     # quietly degrade to plain tiled placement, not error.

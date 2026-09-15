@@ -715,8 +715,20 @@ def handle_launcher(key, loop_state, cfg, state, launcher, provider, moves, app,
                             mode = "tiled"
                     if mode != "tiled":
                         tag = f"placement_{pid}"
+                        rect = None
+                        if mode == "floating":
+                            # Cascades each successive floating spawn
+                            # down-and-right instead of stacking them all
+                            # in the same spot — see
+                            # PlacementQueue.floating_index's own
+                            # docstring. Incremented here (registration
+                            # time), not in advance_placements(), so a
+                            # run of confirms in a row each gets a
+                            # distinct offset regardless of match order.
+                            rect = pending_moves.cascade_floating_rect(placements.floating_index)
+                            placements.floating_index += 1
                         placements.pending[tag] = pending_moves.PendingPlacement(
-                            mode=mode, container_id=container_id, region_id=target_region,
+                            mode=mode, container_id=container_id, region_id=target_region, rect=rect,
                         )
                 pending_moves.queue_launcher_spawn(
                     moves, target_region, known_ids, pid, app_id_hint, time.monotonic(), log_path, tag=tag,

@@ -616,6 +616,31 @@ def process(
 # set_floating_geometry() already expects.
 DEFAULT_FLOATING_RECT = (0.25, 0.25, 0.5, 0.5)
 
+# How far (in the same 0..1 normalized space) each successive
+# back-to-back floating spawn shifts down-and-right from
+# DEFAULT_FLOATING_RECT, and how many steps before it wraps back to 0 —
+# see cascade_floating_rect()'s own docstring for why these two values
+# specifically.
+FLOATING_CASCADE_STEP = 0.04
+FLOATING_CASCADE_STEPS = 6
+
+
+def cascade_floating_rect(index: int) -> tuple[float, float, float, float]:
+    """DEFAULT_FLOATING_RECT, offset down-and-right by FLOATING_CASCADE_STEP
+    * index (wrapping every FLOATING_CASCADE_STEPS) — so spawning several
+    `floating`-placed windows back-to-back doesn't stack them exactly on
+    top of each other, the same "cascade" convention real desktop
+    environments use for a freshly-mapped window with no saved position.
+    Only x/y move, w/h stay fixed: DEFAULT_FLOATING_RECT's own x=y=0.25,
+    w=h=0.5 already leaves exactly 0.25 of slack before x+w or y+h would
+    push the window off the right/bottom edge, so FLOATING_CASCADE_STEPS
+    (6) * FLOATING_CASCADE_STEP (0.04) == 0.24 fits inside that slack
+    with room to spare, then wraps rather than walking further.
+    """
+    x, y, w, h = DEFAULT_FLOATING_RECT
+    offset = (index % FLOATING_CASCADE_STEPS) * FLOATING_CASCADE_STEP
+    return (x + offset, y + offset, w, h)
+
 
 @dataclass
 class PendingPlacement:
@@ -626,11 +651,15 @@ class PendingPlacement:
     container_id set), or "floating" (Provider.set_floating_geometry());
     "tiled" never reaches here at all — see queue_launcher_spawn()'s own
     docstring, main.py only registers a PendingPlacement for anything
-    OTHER than plain tiled placement.
+    OTHER than plain tiled placement. rect is only meaningful for
+    "floating" — the caller's own cascaded DEFAULT_FLOATING_RECT (see
+    PlacementQueue.floating_index) — None falls back to the plain,
+    un-cascaded DEFAULT_FLOATING_RECT (e.g. a hand-built entry in tests).
     """
     mode: str
     container_id: str | None
     region_id: str
+    rect: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -649,8 +678,18 @@ class PlacementQueue:
     already an ordinary, supported case — see GUIDE.md's own
     verification checklist), so this is a plain dict, not a
     single-slot state machine.
+
+    floating_index counts every `floating`-mode PendingPlacement ever
+    registered (main.py increments it right there, before queuing the
+    spawn) — never reset, just cycled by cascade_floating_rect()'s own
+    modulo, so a run of back-to-back floating spawns cascades down-and-
+    right instead of stacking on top of each other. Incrementing at
+    registration time, not once the placement actually resolves, means
+    several floating spawns confirmed in a row each get a distinct
+    offset regardless of which one's window happens to map first.
     """
     pending: dict = field(default_factory=dict)
+    floating_index: int = 0
 
 
 def advance_placements(state: PlacementQueue, moves: PendingMovesQueue, provider) -> None:
@@ -664,7 +703,9 @@ def advance_placements(state: PlacementQueue, moves: PendingMovesQueue, provider
     docstring); an existing group's label -> Provider.move_window_to_group()
     (precise, mark-based targeting of ONE specific group, not just
     "whatever's there"); "floating" -> Provider.set_floating_geometry()
-    with DEFAULT_FLOATING_RECT. A provider that doesn't support the
+    with placement.rect (main.py's own cascaded offset — see
+    PlacementQueue.floating_index — falling back to plain
+    DEFAULT_FLOATING_RECT if unset). A provider that doesn't support the
     needed method just no-ops via its own default (False/None) — no
     further fallback needed here, since main.py's own confirm-time
     resolution (handle_launcher()) already downgrades to plain `tiled`
@@ -682,7 +723,7 @@ def advance_placements(state: PlacementQueue, moves: PendingMovesQueue, provider
         elif placement.mode == "tab_new":
             provider.set_container_layout(window_id, "tabbed")
         elif placement.mode == "floating":
-            provider.set_floating_geometry(window_id, placement.region_id, DEFAULT_FLOATING_RECT)
+            provider.set_floating_geometry(window_id, placement.region_id, placement.rect or DEFAULT_FLOATING_RECT)
             # set_floating_geometry()'s own `floating enable` re-homes
             # the container onto WHATEVER'S CURRENTLY FOCUSED — a real,
             # live-confirmed sway behavior (CLAUDE/NOTES/design-

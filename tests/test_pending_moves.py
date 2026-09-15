@@ -33,6 +33,9 @@ from tuicc.pending_moves import (
     PendingPlacement,
     advance_placements,
     DEFAULT_FLOATING_RECT,
+    cascade_floating_rect,
+    FLOATING_CASCADE_STEP,
+    FLOATING_CASCADE_STEPS,
 )
 
 
@@ -1474,6 +1477,32 @@ def test_advance_placements_floating_calls_set_floating_geometry_with_default_re
     advance_placements(state, moves, provider)
 
     assert provider.floated == [("42", "2", DEFAULT_FLOATING_RECT)]
+
+
+def test_cascade_floating_rect_offsets_down_and_right_per_index():
+    x, y, w, h = DEFAULT_FLOATING_RECT
+    assert cascade_floating_rect(0) == (x, y, w, h)
+    assert cascade_floating_rect(1) == (x + FLOATING_CASCADE_STEP, y + FLOATING_CASCADE_STEP, w, h)
+    assert cascade_floating_rect(2) == (x + 2 * FLOATING_CASCADE_STEP, y + 2 * FLOATING_CASCADE_STEP, w, h)
+
+
+def test_cascade_floating_rect_wraps_back_to_the_default_after_steps_cycles():
+    # A long run of back-to-back floating spawns must not walk off the
+    # right/bottom edge — wraps every FLOATING_CASCADE_STEPS instead.
+    assert cascade_floating_rect(FLOATING_CASCADE_STEPS) == cascade_floating_rect(0)
+    assert cascade_floating_rect(FLOATING_CASCADE_STEPS + 3) == cascade_floating_rect(3)
+
+
+def test_advance_placements_floating_uses_the_placement_own_cascaded_rect():
+    cascaded = cascade_floating_rect(2)
+    state = PlacementQueue(pending={"t1": PendingPlacement(mode="floating", container_id=None, region_id="2", rect=cascaded)})
+    provider = _FakeProvider()
+    moves = PendingMovesQueue(resolved_tags={"t1": "42"})
+
+    advance_placements(state, moves, provider)
+
+    assert provider.floated == [("42", "2", cascaded)]
+    assert cascaded != DEFAULT_FLOATING_RECT
 
 
 def test_advance_placements_floating_re_moves_to_region_after_floating():
