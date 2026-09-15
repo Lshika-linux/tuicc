@@ -11,7 +11,7 @@ underlying KeyError this reproduces at the module level.
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
-from tuicc.modules.rwb import _weather_line, _build_weather_preview, required_fh, _weather_configured
+from tuicc.modules.rwb import _icon_gap, _weather_line, _build_weather_preview, required_fh, _weather_configured
 from tuicc.weather import WeatherNow, DayForecast
 
 
@@ -170,3 +170,53 @@ def test_weather_preview_shows_error_when_configured_but_erroring():
 
     assert lines is not None
     assert any("API unreachable" in text for text, _color in lines)
+
+
+# ---------- _icon_gap: the single-width ▥ FOG exception ----------
+# See _icon_gap's own docstring — found live, a fog day in the daily
+# outlook rendered as "▥11-23°C", cramped against wide icons' own
+# "🌧️ 13-18°C" on the same line, because ▥ is weather.py's one
+# genuinely single-width icon and never gets the wide glyph's own
+# extra terminal column of visual gap "for free".
+
+def test_icon_gap_is_empty_for_a_wide_icon():
+    assert _icon_gap("☀️") == ""
+
+
+def test_icon_gap_is_a_space_for_the_single_width_fog_icon():
+    assert _icon_gap("▥") == " "
+
+
+def test_weather_line_puts_a_space_after_the_single_width_fog_icon():
+    fog_weather = WeatherNow(
+        location_name="Praha", temperature_c=11.0, apparent_temperature_c=10.0,
+        humidity_pct=90, wind_speed_kmh=5.0, icon="▥", description="Fog",
+        days=[],
+    )
+    ctx = _FakeCtx(status=_FakeStatus(registered_domains=("weather",), snapshot=fog_weather))
+
+    text, _color = _weather_line(ctx)
+
+    assert "▥ 11°C" in text
+
+
+def test_weather_line_has_no_space_after_a_wide_icon():
+    ctx = _FakeCtx(status=_FakeStatus(registered_domains=("weather",), snapshot=_weather()))
+
+    text, _color = _weather_line(ctx)
+
+    assert "☀️18°C" in text
+
+
+def test_weather_preview_outlook_puts_a_space_after_a_fog_day():
+    weather = WeatherNow(
+        location_name="Praha", temperature_c=18.0, apparent_temperature_c=16.0,
+        humidity_pct=60, wind_speed_kmh=10.0, icon="☀️", description="Clear",
+        days=[DayForecast(date="15.09", icon="▥", high_c=23.0, low_c=11.0)],
+    )
+    ctx = _FakeCtx(status=_FakeStatus(registered_domains=("weather",), snapshot=weather))
+
+    lines = _build_weather_preview(ctx)
+
+    outlook_text = lines[-1][0]
+    assert "▥ 11-23°C" in outlook_text

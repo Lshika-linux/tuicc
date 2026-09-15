@@ -15,7 +15,25 @@ import curses
 from datetime import datetime
 
 from tuicc.navigation import NavItem
-from tuicc.render_utils import draw_box_outline, centered_x, draw_width_safe
+from tuicc.render_utils import draw_box_outline, centered_x, display_width, draw_width_safe
+
+
+def _icon_gap(icon: str) -> str:
+    """A single space when icon renders single-width, "" otherwise.
+
+    The "no space between icon and temperature" decision below (both
+    _weather_line and _build_weather_preview) assumed every icon is a
+    wide/double-column emoji glyph, whose own extra terminal column
+    already reads as a visual gap — true for every icon in
+    weather.py's _WMO_ICONS except ▥ (FOG), documented there as
+    deliberately single-width (no classic dingbat covers fog well).
+    Found live: a fog day in the daily outlook rendered as "▥11-23°C",
+    visibly cramped next to the wide icons' "🌧️ 13-18°C" on the same
+    line. Adding the space back only when the icon doesn't already have
+    the extra column fixes that one case without touching the
+    deliberate no-space behavior for every wide icon.
+    """
+    return "" if display_width(icon) >= 2 else " "
 
 
 def _weather_configured(cfg) -> bool:
@@ -69,13 +87,17 @@ def _weather_line(ctx):
     error = ctx.status.get_error("weather")
     if weather is not None:
         code = f"{ctx.config.weather_city_code} " if ctx.config.weather_city_code else ""
-        # No space between icon and temperature: the icon's own
-        # double-column emoji presentation already reads as visually
-        # wider than a plain character, so a following space made the
-        # gap look oversized next to it — confirmed live from a
-        # screenshot of the real box (☀️ 27°C had a noticeably bigger
-        # gap than the code-to-icon or date-to-city-code gaps).
-        return f"{code}{weather.icon}{weather.temperature_c:.0f}°C", theme.get("text", 0)
+        # No space between icon and temperature for wide icons: the
+        # icon's own double-column emoji presentation already reads as
+        # visually wider than a plain character, so a following space
+        # made the gap look oversized next to it — confirmed live from
+        # a screenshot of the real box (☀️ 27°C had a noticeably bigger
+        # gap than the code-to-icon or date-to-city-code gaps). A
+        # single-width icon (▥ FOG) doesn't get that free column, so
+        # _icon_gap() puts a real space back just for it — see its own
+        # docstring.
+        gap = _icon_gap(weather.icon)
+        return f"{code}{weather.icon}{gap}{weather.temperature_c:.0f}°C", theme.get("text", 0)
     if error is not None:
         return "⚠ unavailable", theme.get("urgent", 0) | curses.A_BOLD
     return None, 0  # not configured, or not polled yet
@@ -103,17 +125,14 @@ def _build_weather_preview(ctx) -> list[tuple[str, int]] | None:
             ("⚠ Weather unavailable", theme.get("urgent", 0) | curses.A_BOLD),
             (error, theme.get("urgent", 0)),
         ]
-    # No space between icon and temperature — same fix as
-    # _weather_line's own compact box line: the icon's wide emoji
-    # presentation already reads as visually wider than a plain
-    # character, so a trailing space next to it looked oversized
-    # compared to the other gaps on the same line (confirmed live from
-    # a screenshot of the real preview panel).
+    # No space between icon and temperature for wide icons — same fix,
+    # and same _icon_gap() exception for single-width ▥ FOG, as
+    # _weather_line's own compact box line above.
     outlook = "   ".join(
-        f"{day.date} {day.icon}{day.low_c:.0f}-{day.high_c:.0f}°C" for day in weather.days
+        f"{day.date} {day.icon}{_icon_gap(day.icon)}{day.low_c:.0f}-{day.high_c:.0f}°C" for day in weather.days
     )
     return [
-        (f"{weather.location_name}   {weather.icon}{weather.temperature_c:.0f}°C   {weather.description}", theme.get("accent", 0)),
+        (f"{weather.location_name}   {weather.icon}{_icon_gap(weather.icon)}{weather.temperature_c:.0f}°C   {weather.description}", theme.get("accent", 0)),
         (f"feels {weather.apparent_temperature_c:.0f}°C   wind {weather.wind_speed_kmh:.0f} km/h   humidity {weather.humidity_pct}%", theme.get("text", 0)),
         ("", 0),
         (outlook, theme.get("text", 0)),
