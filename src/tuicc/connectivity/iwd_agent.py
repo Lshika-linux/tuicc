@@ -15,14 +15,13 @@ for as long as the daemon should be able to call back into it, which
 io.blocking's per-call open/close pattern doesn't provide.
 """
 
-import queue
 import threading
 from dataclasses import dataclass
 
-from jeepney import HeaderFields, MatchRule, MessageFlag, MessageType, new_error, new_method_return
+from jeepney import HeaderFields, MatchRule, MessageFlag, MessageType, new_error
 from jeepney.io.threading import DBusRouter, open_dbus_connection
 
-from tuicc.connectivity.agent_mailbox import AgentMailbox
+from tuicc.connectivity.dbus_agent import DBusAgentBase
 from tuicc.connectivity.base import WifiAgent
 from tuicc.connectivity.util import dbus_call
 
@@ -33,11 +32,6 @@ AGENT_PATH = "/org/tuicc/WifiAgent"
 
 CANCELED_ERROR = "net.connman.iwd.Agent.Error.Canceled"
 UNKNOWN_METHOD_ERROR = "org.freedesktop.DBus.Error.UnknownMethod"
-
-# How long the dispatch loop's queue.get() blocks per iteration before
-# re-checking the stop flag — short enough that stop() returns
-# promptly, long enough not to busy-loop.
-POLL_INTERVAL_SECONDS = 0.5
 
 
 @dataclass
@@ -65,19 +59,7 @@ def build_reply_for(member, request, answer):
     return "error", UNKNOWN_METHOD_ERROR, ()
 
 
-class IwdAgent(WifiAgent):
-    def __init__(self):
-        self.mailbox = AgentMailbox()
-        self._connection = None
-        self._router = None
-        self._filter = None
-        self._thread = None
-        self._stop = threading.Event()
-        self._error = None  # str | None — a real registration/setup failure only
-
-    def get_error(self):
-        return self._error
-
+class IwdAgent(DBusAgentBase, WifiAgent):
     def start(self) -> None:
         """No-op if already running. Registration failure (iwd not
         running, SYSTEM bus unreachable) is caught and stored via
@@ -130,18 +112,6 @@ class IwdAgent(WifiAgent):
             pass
         self._cleanup()
 
-    def _cleanup(self):
-        if self._filter is not None:
-            self._filter.close()
-        if self._router is not None:
-            self._router.close()
-        if self._connection is not None:
-            self._connection.close()
-        self._filter = None
-        self._router = None
-        self._connection = None
-        self._thread = None
-
     def reply_passphrase(self, passphrase: str) -> None:
         """Called from the render thread once the UI has a typed
         passphrase. Builds and sends the real D-Bus reply directly —
@@ -166,20 +136,6 @@ class IwdAgent(WifiAgent):
         if request is None:
             return
         self._router.send(new_error(request._msg, CANCELED_ERROR))
-
-    def _send_reply(self, msg, kind, name_or_sig, body):
-        if kind == "return":
-            self._router.send(new_method_return(msg, name_or_sig, body))
-        else:
-            self._router.send(new_error(msg, name_or_sig, None, body))
-
-    def _dispatch_loop(self):
-        while not self._stop.is_set():
-            try:
-                msg = self._filter.queue.get(timeout=POLL_INTERVAL_SECONDS)
-            except queue.Empty:
-                continue
-            self._handle_message(msg)
 
     def _handle_message(self, msg):
         if msg.header.message_type != MessageType.method_call:
