@@ -33,7 +33,6 @@ AGENT_CAPABILITY = "KeyboardDisplay"
 REJECTED_ERROR = "org.bluez.Error.Rejected"
 UNKNOWN_METHOD_ERROR = "org.freedesktop.DBus.Error.UnknownMethod"
 
-
 # kind values: "confirm" (RequestConfirmation, has a passkey to show
 # for the user to compare against the device's own display) or
 # "authorize" ("Just Works" pairing, RequestAuthorization, nothing to

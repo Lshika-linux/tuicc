@@ -1,10 +1,11 @@
-"""The D-Bus plumbing every agent shares.
+"""Connection/dispatch plumbing shared by every D-Bus agent.
 
-BluezAgent, IwdAgent and NetworkManagerAgent each open a system-bus connection, filter
-method calls at one object path, pump them on a daemon thread and answer with a
-method-return or an error. That part was the same code three times, byte for byte; what
-differs - which manager to register with, which methods arrive, how to answer them - stays
-in the subclass.
+BluezAgent, IwdAgent and NetworkManagerAgent all open a system-bus
+connection, filter method calls at one object path, pump them on a
+daemon thread and answer with a method-return or an error. Only that
+mechanical part lives here; registration (which manager, which
+methods) and the answers themselves stay in each agent, since those
+are what actually differ per daemon.
 """
 
 import queue
@@ -14,13 +15,17 @@ from jeepney import new_error, new_method_return
 
 from tuicc.connectivity.agent_mailbox import AgentMailbox
 
+# How long the dispatch loop's queue.get() blocks per iteration before
+# re-checking the stop flag — short enough that stop() returns
+# promptly, long enough not to busy-loop.
 POLL_INTERVAL_SECONDS = 0.5
 
 
 class DBusAgentBase:
-    """Connection, router, filter and dispatch thread; subclasses add registration and
-    message handling. Not an ABC on purpose: BluezAgent has no interface of its own, and
-    the two Wi-Fi agents already inherit WifiAgent for theirs."""
+    """Not an ABC on purpose: BluezAgent has no interface of its own,
+    and the two wifi agents already get theirs from WifiAgent. Listed
+    first in their bases so its concrete get_error() satisfies
+    WifiAgent's abstract one."""
 
     def __init__(self):
         self.mailbox = AgentMailbox()
@@ -29,7 +34,7 @@ class DBusAgentBase:
         self._filter = None
         self._thread = None
         self._stop = threading.Event()
-        self._error = None
+        self._error = None  # str | None — a real registration/setup failure only
 
     def get_error(self):
         return self._error
